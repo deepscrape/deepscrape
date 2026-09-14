@@ -1,3 +1,10 @@
+# [0.9.0-beta.4](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.3...v0.9.0-beta.4) (2026-09-14)
+
+
+### Bug Fixes
+
+* **deps:** stop the path-to-regexp override breaking container startup ([77b5103](https://github.com/deepscrape/deepscrape/commit/77b51030e65bf1f763ea17b05cbf6507a7d59f41))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

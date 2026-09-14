@@ -1,6 +1,6 @@
 {
   "name": "deepscrape",
-  "version": "0.9.0-beta.2",
+  "version": "0.9.0-beta.4",
   "scripts": {
     "ng": "ng",
     "dev": "npm run prbuild && ng serve --configuration=development",

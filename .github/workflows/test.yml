@@ -153,3 +153,49 @@ jobs:
           FIREBASE_CONFIG: '{"projectId":"test-project","storageBucket":"","databaseURL":""}'
           DB_NAME: undefined
           AUTHZ_STRICT_ORG_MODE: 'false'
+
+  # ─────────────────────────────────────────────
+  # Job 3: BFF (Bun + Elysia) unit tests
+  # ─────────────────────────────────────────────
+  bff-tests:
+    name: BFF Tests (Bun + Elysia)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Three dependency trees: bff/ imports ../src/config (root deps),
+      # ../functions/src (functions deps), plus its own bff/bun.lock.
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install functions dependencies
+        working-directory: ./functions
+        run: bun install --frozen-lockfile
+
+      - name: Install BFF dependencies
+        working-directory: ./bff
+        run: bun install --frozen-lockfile
+
+      - name: Run BFF tests
+        working-directory: ./bff
+        run: bun test
+        env:
+          # Placeholders: BFF imports the function's env module at import time.
+          FUNCTIONS_ENV_JSON: '{}'
+          GCLOUD_PROJECT: test-project
+          FIREBASE_CONFIG: '{"projectId":"test-project","storageBucket":"","databaseURL":""}'
+          DB_NAME: undefined
+          AUTHZ_STRICT_ORG_MODE: 'false'

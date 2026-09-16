@@ -16,6 +16,7 @@ jobs:
       functions: ${{ steps.changes.outputs.functions }}
       angular: ${{ steps.changes.outputs.angular }}
       hosting: ${{ steps.changes.outputs.hosting }}
+      bff: ${{ steps.changes.outputs.bff }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v2
@@ -32,6 +33,9 @@ jobs:
               - 'package.json'
               - 'bun.lockb'
               - 'dist/**'
+            bff:
+              - 'bff/**'
+              - 'Dockerfile'
 
   build_and_deploy:
     needs: detect_changes
@@ -126,7 +130,9 @@ jobs:
           API_ARACHNEFLY_URL: ${{ vars.API_ARACHNEFLY_URL }}
       # Build Angular App in production mode
       - name: Build Angular App
-        if: needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.hosting == 'true'
+        # The BFF image embeds dist/deepscrape/browser (Dockerfile COPY), so a
+        # bff-only change still needs the Angular build.
+        if: needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.hosting == 'true' || needs.detect_changes.outputs.bff == 'true'
         run: bun run build
         env:
           PRODUCTION: true
@@ -163,6 +169,29 @@ jobs:
         if: needs.detect_changes.outputs.functions == 'true'
         working-directory: ./functions
         run: bun run build
+
+      # Cloud Run FIRST: firebase.json rewrites `**` -> run/deepscrape-bff, so
+      # Hosting must never be pointed at an image this run did not rebuild.
+      - name: Build & deploy BFF (Cloud Run)
+        if: needs.detect_changes.outputs.bff == 'true' || needs.detect_changes.outputs.functions == 'true' || needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.hosting == 'true'
+        run: |
+          set -euo pipefail
+          image="us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest"
+          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+          gcloud config set project "$FIREBASE_PROJECT_ID" --quiet
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker build -f Dockerfile -t "$image" .
+          docker push "$image"
+          gcloud run deploy deepscrape-bff \
+            --image "$image" \
+            --region us-central1 \
+            --allow-unauthenticated \
+            --port 8080 \
+            --memory 512Mi --cpu 1 \
+            --min-instances 1 \
+            --set-env-vars PRODUCTION=true \
+            --set-secrets FUNCTIONS_ENV_JSON=FUNCTIONS_ENV_JSON:latest,FIRE_SERVICE_ACCOUNT_KEY=FIRE_SERVICE_ACCOUNT_KEY:latest \
+            --quiet
 
       # Deploy to Firebase Hosting
       - name: Deploy to Firebase Hosting

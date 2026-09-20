@@ -1,3 +1,10 @@
+# [0.9.0-beta.10](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.9...v0.9.0-beta.10) (2026-09-20)
+
+
+### Bug Fixes
+
+* **auth:** read the session script as { payload, status } ([1a6d31f](https://github.com/deepscrape/deepscrape/commit/1a6d31f4766e38aeab137abe7ecc5f76607293ae))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

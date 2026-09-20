@@ -78,14 +78,12 @@ export class DeviceVerificationService {
     const browserScreen = browserWindow?.screen
 
     if (!browserWindow || !browserNavigator || !browserScreen) {
-      const randomUuid = globalThis.crypto?.randomUUID?.()
-      const fallbackDeviceId = randomUuid
-        ? `browser-fallback-${randomUuid}`
-        : this.hashString(`browser-fallback-${Date.now()}-${Math.random()}`)
       return {
         userAgent: 'unknown',
         ipAddress: '',
-        deviceId: fallbackDeviceId,
+        // Same persisted identity: a per-call id here would make an exotic browser look
+        // like a new device on every visit.
+        deviceId: this.getOrCreateDeviceId(),
         timestamp: new Date()
       }
     }
@@ -96,29 +94,7 @@ export class DeviceVerificationService {
     // entropy — the out-of-band code carries it — and a copied cookie is no weaker than a
     // copied canvas hash. Reintroduce passive signals only if device trust becomes a
     // server-side control rather than a client-side prompt.
-    let deviceId = ''
-    try {
-      deviceId = this.cookieService.get(DeviceVerificationService.DEVICE_ID_COOKIE)
-    } catch {
-      deviceId = ''
-    }
-    if (!deviceId) {
-      deviceId = globalThis.crypto?.randomUUID?.()
-        ?? this.hashString(`device-${Date.now()}-${Math.random()}`)
-      try {
-        this.cookieService.set(
-          DeviceVerificationService.DEVICE_ID_COOKIE,
-          deviceId,
-          DeviceVerificationService.DEVICE_ID_DAYS,
-          '/',
-          '',
-          true,
-          'Lax',
-        )
-      } catch {
-        // A blocked cookie store (private mode) only means verifying again next visit.
-      }
-    }
+    const deviceId = this.getOrCreateDeviceId()
 
     return {
       userAgent: browserNavigator.userAgent,
@@ -126,6 +102,45 @@ export class DeviceVerificationService {
       deviceId,
       timestamp: new Date()
     }
+  }
+
+  /**
+   * The device identity, done the way mainstream SaaS platforms do it: one random id,
+   * minted once and kept in a first-party cookie — Stripe's `__stripe_mid`, Mixpanel's
+   * `mp_*`. Passive signals (canvas, UA, screen) are risk inputs, never the identity:
+   * they drift on browser updates and canvas randomisation, which is what used to make an
+   * already-trusted device verify again.
+   *
+   * Every caller must key on this value. An id built per login (anything with a timestamp
+   * in it) can never match `trusted_devices/{deviceId}`.
+   */
+  getOrCreateDeviceId(): string {
+    let deviceId = ''
+    try {
+      deviceId = this.cookieService.get(DeviceVerificationService.DEVICE_ID_COOKIE)
+    } catch {
+      deviceId = ''
+    }
+    if (deviceId) {
+      return deviceId
+    }
+
+    deviceId = globalThis.crypto?.randomUUID?.()
+      ?? this.hashString(`device-${Date.now()}-${Math.random()}`)
+    try {
+      this.cookieService.set(
+        DeviceVerificationService.DEVICE_ID_COOKIE,
+        deviceId,
+        DeviceVerificationService.DEVICE_ID_DAYS,
+        '/',
+        '',
+        true,
+        'Lax',
+      )
+    } catch {
+      // A blocked cookie store (private mode) only means verifying again next visit.
+    }
+    return deviceId
   }
 
   /**

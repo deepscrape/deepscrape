@@ -3,6 +3,7 @@ import { isPlatformBrowser } from '@angular/common';
 import { CookieService } from 'ngx-cookie-service';
 import { cleanAndParseJSON, getBrowser, getDeviceFingerprintHash } from 'src/app/core/functions';
 import { Guest, loginHistoryInfo } from '../types';
+import { DeviceVerificationService } from './device-verification.service';
 import { FirestoreService } from './firestore.service';
 import { LocalStorage } from './storage.service';
 import { WindowToken } from './window.service';
@@ -59,6 +60,7 @@ type ResolvedSessionMetrics = {
 @Injectable({ providedIn: 'root' })
 export class GuestTrackingService {
   private readonly cookieService = inject(CookieService);
+  private readonly deviceVerification = inject(DeviceVerificationService);
   private readonly firestoreService = inject(FirestoreService);
   private readonly localStorage = inject(LocalStorage);
   private readonly platformId = inject<object>(PLATFORM_ID);
@@ -251,8 +253,13 @@ export class GuestTrackingService {
     const browser = await getBrowser(navigatorRef) || 'Unknown';
     const userAgent = navigatorRef?.userAgent || 'Unknown';
     const deviceType = navigatorRef?.platform || 'Unknown';
+    // The guest fingerprint stays a risk signal — it is guest-scoped and drifts.
     const deviceFingerprintHash = await getDeviceFingerprintHash(state.guestFingerprint, this.window);
-    const deviceId = deviceFingerprintHash || `${deviceType}-${browser}-${Date.now()}`;
+    // ponytail: identity, not entropy. The old fallback was
+    // `${deviceType}-${browser}-${Date.now()}` — a NEW id on every login, so
+    // `trusted_devices/{deviceId}` could never match and the user re-verified forever.
+    // This is the same persisted id DeviceVerificationService already owns.
+    const deviceId = this.deviceVerification.getOrCreateDeviceId();
 
     const metrics: Partial<loginHistoryInfo> = {
       ipAddress: '0.0.0.0',

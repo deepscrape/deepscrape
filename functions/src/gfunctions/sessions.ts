@@ -1,15 +1,18 @@
 /* eslint-disable max-len */
 /* eslint-disable object-curly-spacing */
-/* eslint-disable require-jsdoc */
-import { randomInt, randomUUID } from "node:crypto"
+import { randomInt, randomUUID, timingSafeEqual } from "node:crypto"
 import { onDocumentWritten } from "firebase-functions/v2/firestore"
 import { onSchedule } from "firebase-functions/v2/scheduler"
-import { HttpsError, onCall } from "firebase-functions/v2/https"
+import { HttpsError } from "firebase-functions/v2/https"
+// ponytail: session/device-trust/OTP callables now metered per UID. Aliased — no call
+// site changes. Callables are user-initiated (the 60s heartbeat and analytics pings
+// go to the /event Express routes), so 60/min sits far above real traffic.
+import { guardedOnCall as onCall } from "../infrastructure/callable-limiter"
 import { Timestamp } from "firebase-admin/firestore"
 import { Resend } from "resend"
 import { db, dbName, auth as adminAuth } from "../app/config"
 import { env, functionsEnvJson } from "../config/env"
-import { parseCachedJson, redis } from "../app/cacheConfig"
+import { parseCachedJson, redis, redisEval } from "../app/cacheConfig"
 import {
   FIXED_WINDOW_INCREMENT,
   MERGE_SESSION_CACHE,
@@ -29,33 +32,18 @@ import {
   sessionKey,
   signedOutKey,
   trustedDeviceKey,
+  verificationAttemptKey,
   verificationKey,
   verificationRateLimitKey,
 } from "../../../src/config/redis-keys"
 import { GeoLookupRequestContext, lookupGeoByIp, normalizeGeoLookupRoles, normalizePublicIp } from "./analytics"
+import { emitGeoDimensions, type GeoDimensionSource } from "./analytics-realtime"
+import { NON_ROUTABLE_GEO_LABEL, isNonRoutableIp } from "../domain/analytics-helpers"
+import { detectNewLoginLocation } from "../domain/notifications/login-alerts"
 import { validateCallableData } from "../infrastructure/validate"
 import { z } from "zod"
 
 const DATABASE_NAME = dbName || "easyscrape"
-
-/**
- * `@upstash/redis` exposes `eval`, but the no-op fallback client models only the
- * commands the app uses. Routing every script through this helper keeps the
- * degraded path explicit instead of surfacing a TypeError mid-request.
- *
- * @param {string} script - The Lua script source to execute.
- * @param {string[]} keys - Redis keys the script may access.
- * @param {(string | number)[]} args - Positional arguments passed to the script.
- * @return {Promise<TData>} Whatever the script returns.
- */
-const redisEval = async <TData>(
-  script: string,
-  keys: string[],
-  args: (string | number)[],
-): Promise<TData> =>
-  (redis as unknown as {
-    eval: (script: string, keys: string[], args: (string | number)[]) => Promise<TData>
-  }).eval(script, keys, args)
 
 type ResolvedSessionGeo = {
   ip: string
@@ -99,6 +87,11 @@ const REVOKES_PER_BATCH = 80
  * @param {string} sessionId - Session whose cache entry is patched.
  * @param {Record<string, unknown>} patch - Fields to merge into the payload.
  * @return {Promise<void>} Resolves once the merge has been issued.
+ */
+/**
+ * updateSessionRedisCache
+ * @param {*} sessionId
+ * @param {*} patch
  */
 async function updateSessionRedisCache(sessionId: string, patch: Record<string, unknown>): Promise<void> {
   try {
@@ -242,7 +235,7 @@ const buildMfaDisabledEmailHtml = (): string => `
           <tr>
             <td style="padding:32px 32px 8px 32px;text-align:center;">
               <div style="width:48px;height:48px;background-color:#dc2626;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
-                <span style="color:#fff;font-size:24px;line-height:48px;">\\u26A0\\uFE0F</span>
+                <span style="color:#fff;font-size:24px;line-height:48px;">\u26A0\uFE0F</span>
               </div>
               <h1 style="margin:0;font-size:20px;font-weight:700;color:#111318;letter-spacing:-0.3px;">Security alert</h1>
               <p style="margin:8px 0 0 0;font-size:14px;color:#5f6b7a;line-height:1.5;">
@@ -259,13 +252,13 @@ const buildMfaDisabledEmailHtml = (): string => `
               </div>
               <hr style="border:none;border-top:1px solid #e9edf2;margin:16px 0;">
               <p style="margin:0;font-size:12px;color:#8a95a6;text-align:center;">
-                If you didn\\'t make this change, secure your account immediately and contact support.
+                If you didn't make this change, secure your account immediately and contact support.
               </p>
             </td>
           </tr>
         </table>
         <p style="margin:12px 0 0 0;font-size:11px;color:#b0b8c4;text-align:center;">
-          Deepscrape \\u2022 Security notice
+          Deepscrape \u2022 Security notice
         </p>
       </td>
     </tr>
@@ -309,7 +302,7 @@ const buildVerificationEmailHtml = (code: string, expiresInMin = 10): string => 
             <td style="padding:0 32px 24px 32px;">
               <hr style="border:none;border-top:1px solid #e9edf2;margin:0 0 16px 0;">
               <p style="margin:0;font-size:12px;color:#8a95a6;text-align:center;">
-                If you didn\\'t request this code, someone else may be trying to access your account.
+                If you didn't request this code, someone else may be trying to access your account.
                 <br>Please secure your account or contact support.
               </p>
             </td>
@@ -389,6 +382,11 @@ const writeSecurityAuditAndTimeline = async (args: {
   ])
 }
 
+/**
+ * getRequestIp
+ * @param {*} request
+ * @return {*}
+ */
 function getRequestIp(request: unknown): string {
   const rawRequest = (request as { rawRequest?: { headers?: Record<string, string | string[] | undefined>; ip?: string; socket?: { remoteAddress?: string } } })?.rawRequest
   const forwarded = rawRequest?.headers?.["x-forwarded-for"]
@@ -397,6 +395,11 @@ function getRequestIp(request: unknown): string {
   return normalizePublicIp(forwardedValue || rawRequest?.ip || rawRequest?.socket?.remoteAddress || "")
 }
 
+/**
+ * resolveSessionGeo
+ * @param {*} request
+ * @param {*} fallbackIp
+ */
 async function resolveSessionGeo(request: unknown, fallbackIp: string): Promise<ResolvedSessionGeo> {
   const requestIp = getRequestIp(request)
   const normalizedFallbackIp = normalizePublicIp(fallbackIp)
@@ -447,15 +450,25 @@ async function resolveSessionGeo(request: unknown, fallbackIp: string): Promise<
   }
 }
 
+/**
+ * shouldSkipGeoEnrichment
+ * @param {*} ipInput
+ * @return {*}
+ */
 function shouldSkipGeoEnrichment(ipInput: string | null | undefined): boolean {
-  const ip = normalizePublicIp(ipInput).trim().toLowerCase()
-  if (!ip) {
-    return true
-  }
-
-  return ip === "0.0.0.0" || ip === "::" || ip === "::1" || ip === "127.0.0.1" || ip === "localhost"
+  // The five literals this compared against covered loopback and nothing else, so a
+  // reserved or private address still reached the provider and came back as "no-match":
+  // the same terminal state as a lookup that genuinely found nothing. Sharing the
+  // guest-indexing predicate is what keeps "we did not ask" distinguishable from
+  // "nobody knows", which is the difference the panel needs.
+  return isNonRoutableIp(normalizePublicIp(ipInput))
 }
 
+/**
+ * resolveGeoLookupUserRoles
+ * @param {*} userId
+ * @param {*} token
+ */
 async function resolveGeoLookupUserRoles(userId: string, token?: Record<string, unknown>): Promise<string[]> {
   const roleValues: unknown[] = []
 
@@ -490,11 +503,23 @@ async function resolveGeoLookupUserRoles(userId: string, token?: Record<string, 
   }
 
   await Promise.all([
+    /**
+     * Failed to read auth claims for geo lookup roles
+     */
+    /**
+     * Failed to read auth claims for geo lookup roles
+     */
     collectSafely("Failed to read auth claims for geo lookup roles", async () => {
       const authUser = await adminAuth.getUser(userId)
       const claims = (authUser.customClaims || {}) as Record<string, unknown>
       collectRoleValues(claims.role, claims.roles)
     }),
+    /**
+     * Failed to read user document roles for geo lookup
+     */
+    /**
+     * Failed to read user document roles for geo lookup
+     */
     collectSafely("Failed to read user document roles for geo lookup", async () => {
       const userDoc = await db.collection("users").doc(userId).get()
       if (userDoc.exists) {
@@ -502,6 +527,12 @@ async function resolveGeoLookupUserRoles(userId: string, token?: Record<string, 
         collectRoleValues(userData.role, userData.roles)
       }
     }),
+    /**
+     * Failed to read membership roles for geo lookup
+     */
+    /**
+     * Failed to read membership roles for geo lookup
+     */
     collectSafely("Failed to read membership roles for geo lookup", async () => {
       const memberships = await db.collection("memberships").where("userId", "==", userId).limit(100).get()
       for (const membershipDoc of memberships.docs) {
@@ -515,6 +546,10 @@ async function resolveGeoLookupUserRoles(userId: string, token?: Record<string, 
   return resolvedRoles.length > 0 ? resolvedRoles : ["guest"]
 }
 
+/**
+ * enrichSessionGeoIntelligence
+ * @param {*} args
+ */
 async function enrichSessionGeoIntelligence(args: {
   sessionId: string
   userId: string
@@ -646,6 +681,10 @@ export const createLoginSession = onCall(
     memory: "256MiB",
     secrets: [functionsEnvJson],
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const data = validateCallableData(
       z.object({
@@ -680,6 +719,20 @@ export const createLoginSession = onCall(
       const resolvedIp = resolvedGeo.ip || metrics.ip || "0.0.0.0"
       const deviceFingerprint = `${metrics.userAgent || ""}|${resolvedIp}`
       const sessionId = `${userId}-${deviceId}-${Date.now()}-${randomUUID()}`
+
+      // Security: warn when this login comes from a country the user has never used.
+      // Awaited (not fire-and-forget) because Cloud Functions can reclaim background
+      // work after the response; the helper swallows its own errors, so a failure to
+      // *warn* can never become a failure to *log in*.
+      await detectNewLoginLocation({
+        uid: userId,
+        sessionId,
+        ip: resolvedIp,
+        country: resolvedGeo.country,
+        region: resolvedGeo.region,
+        location: resolvedLocation,
+        userAgent: metrics.userAgent,
+      })
 
       // Create session record
       const sessionData = {
@@ -769,6 +822,10 @@ export const revokeMyLoginSession = onCall(
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { loginId, reason } = validateCallableData(z.object({ loginId: z.string().min(1).max(128), reason: z.string().max(256).optional() }), request.data)
     const auth = request.auth
@@ -807,6 +864,17 @@ export const revokeMyLoginSession = onCall(
     }
   })
 
+/**
+ * performSessionRevoke
+ * @param {*} actorUid
+ * @param {*} loginId
+ * @param {*} reason
+ * @param {*} requireAdmin
+ * @param {*} actorCanManageSessions
+ * @param {*} actorRole
+ * @param {*} allowCrossUserRevoke
+ * @param {*} collector
+ */
 async function performSessionRevoke(
   actorUid: string,
   loginId: string,
@@ -1202,6 +1270,12 @@ export const revokeAllUserSessionsByAdmin = onCall(
   },
 )
 
+/**
+ * performSessionSignOut
+ * @param {*} userId
+ * @param {*} loginId
+ * @param {*} signOutReason
+ */
 async function performSessionSignOut(userId: string, loginId: string, signOutReason: string) {
   const signedOutAt = Timestamp.now()
 
@@ -1286,6 +1360,10 @@ export const signOutLoginSession = onCall(
     enforceAppCheck: true,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { loginId } = validateCallableData(z.object({ loginId: z.string().min(1).max(128) }), request.data)
     const auth = request.auth
@@ -1325,6 +1403,10 @@ export const getMyLoginSessionStatus = onCall(
     cors: true,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { loginId } = validateCallableData(z.object({ loginId: z.string().min(1).max(128) }), request.data)
     const auth = request.auth
@@ -1396,6 +1478,10 @@ export const recordLogoutMetrics = onCall(
     enforceAppCheck: false,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { loginId } = validateCallableData(z.object({ loginId: z.string().min(1).max(128) }), request.data)
     const auth = request.auth
@@ -1435,6 +1521,10 @@ export const getMyLoginSessions = onCall(
     cors: true,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { limit } = validateCallableData(z.object({ limit: z.number().int().min(1).max(200).default(50) }), request.data)
     const auth = request.auth
@@ -1457,6 +1547,10 @@ export const getMyLoginSessions = onCall(
         .limit(queryLimit)
         .get()
 
+      /**
+       * callback
+       * @param {*} doc
+       */
       const sessions = snapshot.docs.map((doc) => ({
         loginId: doc.id,
         ...doc.data(),
@@ -1558,6 +1652,10 @@ export const validateSessionCookie = onCall(
     enforceAppCheck: false,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { sessionId } = validateCallableData(z.object({ sessionId: z.string().min(1).max(256) }), request.data)
     const auth = request.auth
@@ -1678,6 +1776,10 @@ export const recordGuestPresence = onCall(
     enforceAppCheck: false,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { guestId } = validateCallableData(z.object({ guestId: z.string().min(1).max(128) }), request.data)
 
@@ -1715,6 +1817,9 @@ export const cleanupExpiredSessions = onSchedule(
     timeZone: "UTC",
     region: "us-central1",
   },
+  /**
+   * callback
+   */
   async () => {
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -1763,6 +1868,10 @@ export const onLoginHistoryCreated = onDocumentWritten(
     document: "login_metrics/{userId}/login_history_Info/{loginId}",
     database: DATABASE_NAME,
   },
+  /**
+   * callback
+   * @param {*} event
+   */
   async (event) => {
     const before = event.data?.before.data()
     const after = event.data?.after.data()
@@ -1845,6 +1954,11 @@ export const enrichLoginSessionGeo = onDocumentWritten(
   },
 )
 
+/**
+ * getContinentFromTimezone
+ * @param {*} timezone
+ * @return {*}
+ */
 function getContinentFromTimezone(timezone: string): string {
   if (!timezone) return "Unknown"
   if (timezone.startsWith("Europe/")) return "Europe"
@@ -1866,7 +1980,7 @@ export const enrichGuestGeo = onDocumentWritten(
   },
   async (event) => {
     const before = event.data?.before.data() as { ip?: { raw?: string }; intelligenceStatus?: string; intelligenceSourceIp?: string; intelligenceUpdatedAt?: unknown } | undefined
-    const after = event.data?.after.data() as { ip?: { raw?: string }; intelligenceStatus?: string; intelligenceSourceIp?: string; intelligenceUpdatedAt?: unknown } | undefined
+    const after = event.data?.after.data() as (GeoDimensionSource & { ip?: { raw?: string }; intelligenceStatus?: string; intelligenceSourceIp?: string; intelligenceUpdatedAt?: unknown }) | undefined
 
     if (!after) {
       return
@@ -1876,6 +1990,13 @@ export const enrichGuestGeo = onDocumentWritten(
     const ipAddress = normalizePublicIp(String(after.ip?.raw || ""))
     const currentSourceIp = normalizePublicIp(String(after.intelligenceSourceIp || ""))
     const currentStatus = String(after.intelligenceStatus || "").trim().toLowerCase()
+
+    // `onGuestCreated` counts a guest the moment the document appears, when every geo
+    // field is still a placeholder, so the geo dimensions are counted HERE instead.
+    // A guest already terminal before this run was counted by its first enrichment:
+    // an IP change re-resolves the document but must not count it twice.
+    const previousStatus = String(before?.intelligenceStatus || "").trim().toLowerCase()
+    const geoAlreadyCounted = ["resolved", "skipped", "no-match"].includes(previousStatus)
 
     if (!guestId || !ipAddress) {
       return
@@ -1896,12 +2017,30 @@ export const enrichGuestGeo = onDocumentWritten(
     const guestRef = db.collection("guests").doc(guestId)
     const enrichmentTimestamp = Timestamp.now()
 
+    // One write per terminal state, and the geo counters ride along with it. The patch
+    // is merged over the stored snapshot, so a branch that resolves nothing still counts
+    // the guest once instead of dropping it out of the distributions entirely. What it
+    // counts as is the point: "Unknown" is what a FAILED resolution leaves behind, and a
+    // reserved address must not hide inside it.
+    const finishEnrichment = async (patch: Record<string, unknown>): Promise<void> => {
+      await guestRef.set(patch, { merge: true })
+      if (!geoAlreadyCounted) {
+        await emitGeoDimensions({ ...(after as GeoDimensionSource), ...patch } as GeoDimensionSource)
+      }
+    }
+
     if (shouldSkipGeoEnrichment(ipAddress)) {
-      await guestRef.set({
+      await finishEnrichment({
+        // Own bucket rather than the "Unknown" a failed lookup leaves: the long-range
+        // panels rebuild from these document fields and the short-range ones from the
+        // counters emitted below, so labelling here covers both.
+        country: NON_ROUTABLE_GEO_LABEL,
+        region: NON_ROUTABLE_GEO_LABEL,
+        location: NON_ROUTABLE_GEO_LABEL,
         intelligenceSourceIp: ipAddress,
         intelligenceUpdatedAt: enrichmentTimestamp,
         intelligenceStatus: "skipped" as GuestGeoEnrichmentStatus,
-      }, { merge: true })
+      })
       return
     }
 
@@ -1913,16 +2052,16 @@ export const enrichGuestGeo = onDocumentWritten(
         forwardedFor: ipAddress,
       })
       if (!geoData) {
-        await guestRef.set({
+        await finishEnrichment({
           intelligenceSourceIp: ipAddress,
           intelligenceUpdatedAt: enrichmentTimestamp,
           intelligenceStatus: "no-match" as GuestGeoEnrichmentStatus,
-        }, { merge: true })
+        })
         return
       }
 
       const timezone = geoData.timeZone || "UTC"
-      await guestRef.set({
+      await finishEnrichment({
         country: geoData.countryLong || "Unknown",
         region: geoData.region || "Unknown",
         location: geoData.city || "Unknown",
@@ -1938,7 +2077,7 @@ export const enrichGuestGeo = onDocumentWritten(
         intelligenceSourceIp: ipAddress,
         intelligenceUpdatedAt: enrichmentTimestamp,
         intelligenceStatus: "resolved" as GuestGeoEnrichmentStatus,
-      }, { merge: true })
+      })
 
       console.log(`✅ Guest intelligence enriched for ${guestId}`)
     } catch (error) {
@@ -1959,6 +2098,10 @@ export const sendDeviceVerificationCode = onCall(
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { userId, method, sessionId } = validateCallableData(
       z.object({
@@ -2005,6 +2148,10 @@ export const sendDeviceVerificationCode = onCall(
       const userSnap = await db.doc(`users/${userId}`).get()
       const userData = userSnap.data() as Record<string, unknown> | undefined
       const enrolledFactors = userRecord.multiFactor?.enrolledFactors || []
+      /**
+       * callback
+       * @param {*} factor
+       */
       const phoneMfaFactor = enrolledFactors.find((factor) => factor.factorId === "phone")
       const hasMfaEnabled = enrolledFactors.length > 0
       const hasPhoneNumber = typeof userRecord.phoneNumber === "string" && userRecord.phoneNumber.length > 0
@@ -2263,6 +2410,11 @@ export const notifyMfaRiskEvent = onCall(
     if (!hasEnrolledMfa) {
       await db.collection("users").doc(userId).collection("alerts").add({
         type: "warning",
+        // The fan-out trigger sends the push for this; email stays here because it
+        // honours the separate `riskEmailNotifications` preference. See
+        // alert-presentation.ts for the full reasoning.
+        category: "mfa_disabled",
+        severity: "warning",
         title: "MFA disabled",
         message: "Your account currently has no enrolled second factor. Re-enable MFA to reduce account takeover risk.",
         createdAt: Timestamp.now(),
@@ -2311,6 +2463,10 @@ export const verifyAndTrustDevice = onCall(
     enforceAppCheck: true,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { userId, code, deviceId, deviceName, sessionId, mfaVerified } = validateCallableData(
       z.object({
@@ -2368,20 +2524,43 @@ export const verifyAndTrustDevice = onCall(
       const isMfaVerified = mfaVerified === true && verificationData.method === "sms"
 
       if (!isMfaVerified) {
-        // Verify code
-        if (verificationData.code !== code) {
-          // Increment attempts
-          await verificationDoc.ref.update({
-            attempts: (verificationData.attempts || 0) + 1,
-          })
+        // ponytail: the Firestore attempt counter that used to live here could not
+        // work, so the "lock after 5 wrong attempts" was decorative:
+        //   * `attempts + 1` is a read-modify-write — N concurrent guesses all read
+        //     the same value, so the counter never advances;
+        //   * the lock predicate read the PRE-update snapshot, so it tripped on the
+        //     6th wrong attempt, not the 5th;
+        //   * `verified: false` was already false, so no lock was ever persisted.
+        // A 6-digit space (900k) behind a 10-minute TTL with no working counter is
+        // an unlimited parallel brute force → trusted_devices/{deviceId}, which is a
+        // 90-day reauth bypass. Reuse the atomic fixed-window counter that
+        // sendDeviceVerificationCode already uses, on its own budget.
+        const [attemptCount] = await redisEval<[number, number]>(
+          FIXED_WINDOW_INCREMENT,
+          [verificationAttemptKey(userId)],
+          [VERIFICATION_RATE_LIMIT_WINDOW_SECONDS],
+        )
 
-          // Lock after 5 wrong attempts
-          if ((verificationData.attempts || 0) >= 4) {
-            await verificationDoc.ref.update({ verified: false })
-            throw new Error("Too many failed attempts. Please request a new code.")
-          }
+        // 2x the send budget: room for honest typos, still nowhere near enough
+        // parallel guesses to cover a 900k space inside the code's lifetime.
+        if (attemptCount > VERIFICATION_RATE_LIMIT_MAX * 2) {
+          throw new HttpsError(
+            "resource-exhausted",
+            "Too many verification attempts. Please request a new code."
+          )
+        }
 
-          throw new Error("Invalid verification code")
+        // ponytail: constant-time compare. `!==` short-circuits on the first
+        // differing byte, leaking the matching prefix through timing. Length is not
+        // secret (the code is fixed at 6 digits) and timingSafeEqual throws when the
+        // buffers differ in length, so gate on that first.
+        const expectedCode = Buffer.from(String(verificationData.code ?? ""), "utf8")
+        const providedCode = Buffer.from(code, "utf8")
+        if (
+          expectedCode.length !== providedCode.length ||
+          !timingSafeEqual(expectedCode, providedCode)
+        ) {
+          throw new HttpsError("invalid-argument", "Invalid verification code")
         }
       }
 
@@ -2398,16 +2577,40 @@ export const verifyAndTrustDevice = onCall(
         .collection("trusted_devices")
         .doc(deviceId)
 
-      await trustedDeviceRef.set({
-        deviceId,
-        deviceName: deviceName || "Trusted Device",
-        trustedAt: Timestamp.now(),
-        trustedUntil: trustedUntilTs,
-        lastUsedAt: Timestamp.now(),
-        browser: "", // Will be filled by client
-        os: "", // Will be filled by client
-        location: "",
-      })
+      await Promise.all([
+        trustedDeviceRef.set({
+          deviceId,
+          deviceName: deviceName || "Trusted Device",
+          trustedAt: Timestamp.now(),
+          trustedUntil: trustedUntilTs,
+          lastUsedAt: Timestamp.now(),
+          browser: "", // Will be filled by client
+          os: "", // Will be filled by client
+          location: "",
+        }),
+        // A trusted device skips device verification for 90 days, so the owner has
+        // to learn about it. Written concurrently with the trust record, and its
+        // failure is swallowed: a missing notice must never fail a trust grant.
+        // Email + push are handled by onSecurityAlertCreated.
+        db.collection("users").doc(userId).collection("alerts").add({
+          type: "warning",
+          category: "new_trusted_device",
+          severity: "warning",
+          title: "New device trusted",
+          message: `${deviceName || "A new device"} was added to your trusted devices. If this wasn't you, remove it and change your password.`,
+          createdAt: Timestamp.now(),
+          read: false,
+          metadata: {
+            source: "verifyAndTrustDevice",
+            deviceId,
+            deviceName: deviceName || "Trusted Device",
+            sessionId: sessionId || null,
+            trustedUntil: trustedUntil.toISOString(),
+          },
+        }).catch((error) => {
+          console.warn(`Failed to write trusted-device alert for ${userId}:`, error)
+        }),
+      ])
 
       // Cache in Redis
       await redis.setex(trustedDeviceKey(userId, deviceId), TRUSTED_DEVICE_TTL_SECONDS, JSON.stringify({
@@ -2446,6 +2649,10 @@ export const isDeviceTrusted = onCall(
     enforceAppCheck: false,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { userId, deviceId } = validateCallableData(z.object({ userId: z.string().min(1).max(128), deviceId: z.string().min(1).max(256) }), request.data)
     const auth = request.auth
@@ -2518,6 +2725,10 @@ export const getTrustedDevices = onCall(
     enforceAppCheck: false,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const auth = request.auth
 
@@ -2536,6 +2747,10 @@ export const getTrustedDevices = onCall(
         .orderBy("lastUsedAt", "desc")
         .get()
 
+      /**
+       * callback
+       * @param {*} doc
+       */
       const devices = snapshot.docs.map((doc) => ({
         deviceId: doc.id,
         ...doc.data(),
@@ -2562,6 +2777,10 @@ export const removeTrustedDevice = onCall(
     enforceAppCheck: true,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const { deviceId } = validateCallableData(z.object({ deviceId: z.string().min(1).max(256) }), request.data)
     const auth = request.auth

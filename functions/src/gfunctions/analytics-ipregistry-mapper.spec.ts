@@ -1,5 +1,4 @@
 /* eslint-disable max-len */
-/* eslint-disable require-jsdoc */
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import assert from "node:assert/strict"
 import test from "node:test"

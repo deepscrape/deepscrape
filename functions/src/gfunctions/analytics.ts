@@ -1,25 +1,27 @@
-/* eslint-disable valid-jsdoc */
 /* eslint-disable object-curly-spacing */
-/* eslint-disable require-jsdoc */
 /* eslint-disable max-len */
 /* eslint-disable linebreak-style */
 import { Request, Response, NextFunction } from "express"
 import { getClientIp } from "request-ip"
 import { parseUA } from "../infrastructure/ua-parser"
-import { ANALYTICS_EVENTS, buildAnalyticsEvent, Guest } from "../domain"
-import { parseCachedJson, redis } from "../app/cacheConfig"
+import { ANALYTICS_EVENTS, buildAnalyticsEvent, Guest, hasAnalyticsConsent, isIndexableGuestIp, isNonRoutableIp, normalizeUtm, resolveGuestIdentity, shouldPersistGuestLastSeen, toEventHour } from "../domain"
+import { normalizeClientAnalyticsEvent, UNKNOWN_CLIENT_ANALYTICS_EVENT } from "../../../src/config/analytics-events"
+import { isRedisEnabled, parseCachedJson, redis } from "../app/cacheConfig"
 import {
   ANALYTICS_EVENTS_KEY,
   CLIENT_EVENT_LIST_MAX,
   CLIENT_EVENT_MAX,
+  DRAIN_CHUNKS_PER_RUN,
   CLIENT_EVENT_PROP_MAX,
   GEO_CACHE_FAILURE_TTL_SECONDS,
   GEO_CACHE_TTL_SECONDS,
   GUEST_FINGERPRINT_TTL_SECONDS,
+  GUEST_IP_TTL_SECONDS,
   GUEST_LAST_SEEN_WRITE_INTERVAL_MS,
   PRESENCE_TTL_SECONDS,
   geoCacheKey,
   guestFingerprintKey,
+  guestIpKey,
   presenceGuestKey,
 } from "../../../src/config/redis-keys"
 import { db } from "../app/config"
@@ -60,8 +62,6 @@ const geoFailureCacheTtlSeconds = GEO_CACHE_FAILURE_TTL_SECONDS
 // guest/session enrichment on one first-seen visitor) into a single provider call.
 // Instance-local only; Redis cache dedupes across instances and over time.
 const inflightGeoLookups = new Map<string, Promise<ResolvedGeoData | null>>()
-
-let geoInitializationPromise: Promise<void> | null = null
 
 export type ResolvedGeoData = {
   ip: string
@@ -166,6 +166,11 @@ export type GeoLookupRequestContext = {
   forwardedFor?: string | null
 }
 
+/**
+ * normalizeGeoLookupRoles
+ * @param {*} values
+ * @return {*}
+ */
 export function normalizeGeoLookupRoles(...values: unknown[]): string[] {
   const roles: string[] = []
 
@@ -197,10 +202,20 @@ export function normalizeGeoLookupRoles(...values: unknown[]): string[] {
   return Array.from(new Set(roles))
 }
 
+/**
+ * compactRoleHeader
+ * @param {*} value
+ * @return {*}
+ */
 function compactRoleHeader(value: GeoLookupRequestContext["userRoles"]): string {
   return normalizeGeoLookupRoles(value).join(",")
 }
 
+/**
+ * createGeoRequestId
+ * @param {*} input
+ * @return {*}
+ */
 function createGeoRequestId(input: string | null | undefined): string {
   const requestId = String(input || "").trim()
   if (requestId) {
@@ -210,6 +225,12 @@ function createGeoRequestId(input: string | null | undefined): string {
   return `geo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+/**
+ * buildGeoLookupHeaders
+ * @param {*} ip
+ * @param {*} context
+ * @return {*}
+ */
 function buildGeoLookupHeaders(
   ip: string,
   context?: GeoLookupRequestContext
@@ -229,6 +250,11 @@ function buildGeoLookupHeaders(
   return headers
 }
 
+/**
+ * normalizePublicIp
+ * @param {*} value
+ * @return {*}
+ */
 export function normalizePublicIp(value: string | null | undefined): string {
   const raw = String(value || "").trim()
   if (!raw) {
@@ -243,6 +269,11 @@ export function normalizePublicIp(value: string | null | undefined): string {
   return first
 }
 
+/**
+ * buildGeoLookupUrl
+ * @param {*} ip
+ * @return {*}
+ */
 function buildGeoLookupUrl(ip: string): string {
   const url = new URL(geoApiBaseUrl)
   if (ip) {
@@ -251,6 +282,11 @@ function buildGeoLookupUrl(ip: string): string {
   return url.toString()
 }
 
+/**
+ * sanitizeText
+ * @param {*} value
+ * @return {*}
+ */
 function sanitizeText(value: unknown): string | null {
   const text = String(value || "").trim()
   if (!text || text === "-") {
@@ -265,6 +301,11 @@ function sanitizeText(value: unknown): string | null {
   return text
 }
 
+/**
+ * parseNullableNumber
+ * @param {*} value
+ * @return {*}
+ */
 function parseNullableNumber(value: unknown): number | null {
   const text = sanitizeText(value)
   if (!text) {
@@ -275,6 +316,11 @@ function parseNullableNumber(value: unknown): number | null {
   return Number.isFinite(num) ? num : null
 }
 
+/**
+ * resolveProxyConfidence
+ * @param {*} args
+ * @return {*}
+ */
 function resolveProxyConfidence(args: {
   isProxy: boolean
   coverage: GeoLookupApiCoverage | null | undefined
@@ -286,6 +332,12 @@ function resolveProxyConfidence(args: {
   return args.coverage?.proxy === true ? "none" : "unknown"
 }
 
+/**
+ * mapGeoLookupResponse
+ * @param {*} payload
+ * @param {*} fallbackIp
+ * @return {*}
+ */
 function mapGeoLookupResponse(payload: GeoLookupApiResponse, fallbackIp: string): ResolvedGeoData | null {
   const lookupPayload = payload.data?.lookup && typeof payload.data.lookup === "object" ? payload.data.lookup : payload
 
@@ -412,6 +464,12 @@ type IpregistryPayload = {
   }
 }
 
+/**
+ * mapIpregistryResponse
+ * @param {*} payload
+ * @param {*} fallbackIp
+ * @return {*}
+ */
 export function mapIpregistryResponse(
   payload: IpregistryPayload,
   fallbackIp: string
@@ -482,8 +540,15 @@ export function mapIpregistryResponse(
   }
 }
 
+/**
+ * fetchIpregistryLookup
+ * @param {*} ip
+ */
 async function fetchIpregistryLookup(ip: string): Promise<ResolvedGeoData | null> {
   const controller = new AbortController()
+  /**
+   * callback
+   */
   const timeout = setTimeout(() => controller.abort(), 8000)
 
   try {
@@ -511,11 +576,19 @@ async function fetchIpregistryLookup(ip: string): Promise<ResolvedGeoData | null
   }
 }
 
+/**
+ * fetchGeoLookup
+ * @param {*} ip
+ * @param {*} context
+ */
 async function fetchGeoLookup(
   ip: string,
   context?: GeoLookupRequestContext
 ): Promise<ResolvedGeoData | null> {
   const controller = new AbortController()
+  /**
+   * callback
+   */
   const timeout = setTimeout(() => controller.abort(), 8000)
 
   try {
@@ -540,11 +613,20 @@ async function fetchGeoLookup(
   }
 }
 
+/**
+ * buildGeoCacheKey
+ * @param {*} ip
+ * @return {*}
+ */
 function buildGeoCacheKey(ip: string): string {
   const digest = crypto.createHash("sha256").update(ip).digest("hex")
   return geoCacheKey(digest)
 }
 
+/**
+ * readCachedGeoLookup
+ * @param {*} ip
+ */
 async function readCachedGeoLookup(ip: string): Promise<CachedGeoLookup> {
   try {
     const cached = await redis.get(buildGeoCacheKey(ip))
@@ -563,6 +645,11 @@ async function readCachedGeoLookup(ip: string): Promise<CachedGeoLookup> {
   }
 }
 
+/**
+ * writeCachedGeoLookup
+ * @param {*} ip
+ * @param {*} data
+ */
 async function writeCachedGeoLookup(ip: string, data: ResolvedGeoData | null): Promise<void> {
   try {
     const payload = data ? { data } : { miss: true }
@@ -575,16 +662,11 @@ async function writeCachedGeoLookup(ip: string, data: ResolvedGeoData | null): P
   }
 }
 
-export async function initializeGeoDatabase(): Promise<void> {
-  if (geoInitializationPromise) {
-    return geoInitializationPromise
-  }
-
-  geoInitializationPromise = Promise.resolve().then(() => undefined)
-
-  return geoInitializationPromise
-}
-
+/**
+ * lookupGeoByIp
+ * @param {*} ipInput
+ * @param {*} context
+ */
 export async function lookupGeoByIp(
   ipInput: string | null | undefined,
   context?: GeoLookupRequestContext
@@ -594,9 +676,29 @@ export async function lookupGeoByIp(
     return null
   }
 
+  // A reserved or private address has no country in any database, so the provider can
+  // only answer nulls -- and bills for it. Refusing it here covers every caller at once
+  // (session enrichment, the rate limiter, checkout's currency choice) rather than each
+  // one paying for the same impossible answer.
+  if (isNonRoutableIp(ip)) {
+    return null
+  }
+
   const cachedLookup = await readCachedGeoLookup(ip)
   if (cachedLookup.hit) {
     return cachedLookup.data
+  }
+
+  // A disabled Redis client answers every GET with null and swallows every SET, so the
+  // cache reports a miss forever: EVERY lookup becomes a paid provider call, once per
+  // request, silently, for as long as the function is missing its FUNCTIONS_ENV_JSON
+  // binding. The client-event drain already guards exactly this; the geo path did not,
+  // which is how "one lookup per 24h" becomes "one lookup per request".
+  if (!isRedisEnabled) {
+    console.warn(
+      "[geo] Upstash Redis disabled in this process - the geo cache is inert and every " +
+      "IP lookup will call the provider. FUNCTIONS_ENV_JSON is not bound to this function.",
+    )
   }
 
   // Single-flight: if a sibling path (rate limiter, guest/session enrichment) is
@@ -607,7 +709,6 @@ export async function lookupGeoByIp(
   }
 
   const lookup = (async (): Promise<ResolvedGeoData | null> => {
-    await initializeGeoDatabase()
     try {
       const resolvedData = ipregistryApiKey ? await fetchIpregistryLookup(ip) : await fetchGeoLookup(ip, context)
       await writeCachedGeoLookup(ip, resolvedData)
@@ -629,8 +730,18 @@ export async function lookupGeoByIp(
 // Geo lookup uses the remote ip.deepscrape.dev API.
 /* eslint-disable @typescript-eslint/ban-types */
 // ponytail: first-touch acquisition captured once at guest creation; no UTM infra needed.
+/**
+ * buildGuestAcquisition
+ * @param {*} req
+ * @return {*}
+ */
 function buildGuestAcquisition(req: Request): Guest["acquisition"] {
-  const query = req.query as Record<string, unknown>
+  // The request object here is built by the functions-framework's Express 5 app and
+  // then handed to our Express 4 app, so Express 4's lazy `query` getter is not on the
+  // prototype and `req.query` can be undefined. server.ts:211 already guards its read
+  // (`req.query?._csrf`); this one did not, and threw on every anonymous request —
+  // i.e. a 500 for every visitor without a `gid`/`aid` cookie.
+  const query = (req.query ?? {}) as Record<string, unknown>
   const toText = (value: unknown): string | undefined => {
     const raw = Array.isArray(value) ? value[0] : value
     const text = String(raw ?? "").trim().toLowerCase()
@@ -649,17 +760,32 @@ function buildGuestAcquisition(req: Request): Guest["acquisition"] {
     }
   }
 
+  // UTM values are untrusted query text that ends up in counter keys
+  // (`byChannel.<source>`), so normalise at capture rather than store raw: "Google",
+  // "google " and "google+ads" otherwise minted three channels for one source. The
+  // canonicaliser now lives in domain/analytics-helpers so it is unit tested; the
+  // closure it replaced was unreachable from any test.
   const acquisition = {
-    utmSource: toText(query["utm_source"]),
-    utmMedium: toText(query["utm_medium"]),
-    utmCampaign: toText(query["utm_campaign"]),
-    utmTerm: toText(query["utm_term"]),
-    utmContent: toText(query["utm_content"]),
+    utmSource: normalizeUtm(toText(query["utm_source"])),
+    utmMedium: normalizeUtm(toText(query["utm_medium"])),
+    utmCampaign: normalizeUtm(toText(query["utm_campaign"])),
+    utmTerm: normalizeUtm(toText(query["utm_term"])),
+    utmContent: normalizeUtm(toText(query["utm_content"])),
     referrer: toHost(req.headers.referer || req.headers.referrer),
     landingPath: String(req.path || "").slice(0, 200) || undefined,
   }
 
-  return Object.values(acquisition).some(Boolean) ? acquisition : undefined
+  // Firestore rejects a document containing `undefined` outright, so absent
+  // fields have to be dropped rather than carried. Without this, any visit with
+  // no UTM params produced `{utmSource: undefined, ...}` and the whole guest
+  // write failed (`Cannot use "undefined" as a Firestore value`), swallowed by
+  // the caller's try/catch. `ignoreUndefinedProperties` would also fix this but
+  // globally, hiding the next genuinely-wrong `undefined` instead of throwing.
+  const present = Object.entries(acquisition).filter(
+    ([, value]) => value !== undefined,
+  )
+
+  return present.length ? (Object.fromEntries(present) as Guest["acquisition"]) : undefined
 }
 
 // Guest tracking middleware for Express
@@ -669,6 +795,11 @@ function buildGuestAcquisition(req: Request): Guest["acquisition"] {
 type GuestLastSeenCache = {
   lastSeen?: string
   signedAt?: number
+  /**
+   * Epoch ms of the last Firestore `lastSeen` persist. Tracked here so the write
+   * throttle is decided from the cache instead of reading the guest document.
+   */
+  persistedAt?: number
 }
 
 /**
@@ -676,6 +807,8 @@ type GuestLastSeenCache = {
  * refresh and the Firestore read. A record written before `signedAt` existed
  * fails this check, so the first request after deploy writes one and every
  * request after that is a pure cache hit.
+ * @param {*} cached
+ * @return {*}
  */
 const isGuestCacheFresh = (cached: GuestLastSeenCache | null): boolean => {
   if (!cached) {
@@ -691,10 +824,20 @@ const isGuestCacheFresh = (cached: GuestLastSeenCache | null): boolean => {
   return false
 }
 
+/**
+ * guestTracker
+ * @param {*} req
+ * @param {*} res
+ * @param {*} next
+ */
 export async function guestTracker(req: Request, res: Response, next: NextFunction) {
   let guestId = req.cookies["gid"]
   if (!env.IS_PRODUCTION) {
-    console.log("guestTracker: Incoming request - Guest ID from cookie:", guestId, "Headers:", req.headers) // Debug log
+    // ponytail: this used to log req.headers as well — i.e. `authorization` (the
+    // Firebase ID token) and `cookie` (aid/gid/_csrf_secret/sid) on every request.
+    // It is env-gated, so a single staging misconfiguration promoted it to a
+    // production bearer-token leak. The guest ID is the only useful signal.
+    console.log("guestTracker: Incoming request - Guest ID from cookie:", guestId) // Debug log
   }
 
   const user = req.app.locals["user"] as string | null
@@ -703,13 +846,29 @@ export async function guestTracker(req: Request, res: Response, next: NextFuncti
   // Only track guests, skip if authenticated or has aid cookie
   if (isUser || req.cookies["aid"]) return next()
 
-  // Get IP and fingerprint
-  const { raw } = await getClientIps(req)
+  // ePrivacy Art. 5(3): no consent, no guest record. Before this guard every
+  // anonymous request minted a one-year `gid` cookie and a
+  // `guests/{sha256(ip|ua|os|device)}` document, while the privacy policy
+  // promised analytics "with your consent" -- the record was created before the
+  // visitor could answer. Returning here skips the fingerprint, all three Redis
+  // probes, both mint branches and the lastSeen write; this is the single door
+  // into every one of them, so it is the whole fix.
+  if (!hasAnalyticsConsent(req.cookies)) return next()
+
+  // Get IP and fingerprint. Read once: the create branch below used to call
+  // getClientIps + parseUA a second time for the same request.
+  const { ipv4, ipv6, raw } = await getClientIps(req)
   const ip = raw as string
   const agent = parseUA(req.headers["user-agent"] || "")
   const fingerstring = `${ip}|${agent.family}|${agent.os.family}|${agent.device.family}`
   // Create SHA-256 hash of the fingerprint for privacy
   const fingerprint = crypto.createHash("sha256").update(fingerstring).digest("hex")
+  // Guest IP index digest, hashed for the same reason the fingerprint is. Empty
+  // when the address is not specific enough to identify anybody (private, CGNAT,
+  // loopback, unparseable), which disables the IP fallback for that request.
+  const publicGuestIp = normalizePublicIp(ip)
+  const guestIpDigest = isIndexableGuestIp(publicGuestIp) ? crypto.createHash("sha256")
+    .update(publicGuestIp).digest("hex") : ""
   // One pipeline for both cache probes. This middleware runs on every anonymous
   // request, and the previous shape paid two sequential round-trips plus an
   // unconditional Firestore read for a value that had not changed.
@@ -727,28 +886,61 @@ export async function guestTracker(req: Request, res: Response, next: NextFuncti
   } catch (error) {
     console.warn("guestTracker: Redis unavailable while checking the guest cache", error)
   }
-  if (!guestId && existingGuestId) {
-    guestId = existingGuestId
+  // The IP index is the last resort before minting a guest document, so it is
+  // only probed when the cookie AND the fingerprint have both missed: the common
+  // paths pay nothing for it.
+  let ipGuestId: string | null = null
+  if (!guestId && !existingGuestId && guestIpDigest) {
+    try {
+      const ipHit = await redis.get(guestIpKey(guestIpDigest))
+      ipGuestId = typeof ipHit === "string" && ipHit ? ipHit : null
+    } catch (error) {
+      console.warn("guestTracker: Redis unavailable while checking the guest IP index", error)
+    }
+  }
+  const identity = resolveGuestIdentity({ fingerprintGuestId: existingGuestId, ipGuestId })
+  if (!guestId && identity.guestId) {
+    guestId = identity.guestId
     res.cookie("gid", guestId, { httpOnly: false, secure: isProduction, sameSite: "lax", maxAge: 31536000000 })
+    if (identity.source === "ip") {
+      // An IP match means this fingerprint is new to us: teach the fast path the
+      // fingerprint and slide the IP index forward. Fire-and-forget — the visitor
+      // is already identified, so neither write may delay the response.
+      void Promise.allSettled([
+        redis.setex(guestFingerprintKey(fingerprint), GUEST_FINGERPRINT_TTL_SECONDS, guestId),
+        redis.setex(guestIpKey(guestIpDigest), GUEST_IP_TTL_SECONDS, guestId),
+      ]).catch(() => undefined)
+    }
     // The cache entry is the throttle for both the Redis refresh and the Firestore
     // read: if it is fresh, nothing about this request needs writing at all.
     if (!isGuestCacheFresh(cachedGuestSeen)) {
       const now = new Date()
-      try {
-        await redis.setex(presenceGuestKey(guestId), PRESENCE_TTL_SECONDS, JSON.stringify({
+      const nowMs = now.getTime()
+      // The Firestore write used to be gated by reading `guests/{id}` and comparing
+      // its stored `lastSeen` -- a read per guest per interval for a value the cached
+      // record already tracks. `shouldPersistGuestLastSeen` answers from the cache.
+      const persist = shouldPersistGuestLastSeen(
+        cachedGuestSeen?.persistedAt,
+        nowMs,
+        GUEST_LAST_SEEN_WRITE_INTERVAL_MS,
+      )
+      const [cacheWrite] = await Promise.allSettled([
+        redis.setex(presenceGuestKey(guestId), PRESENCE_TTL_SECONDS, JSON.stringify({
           lastSeen: now,
-          signedAt: now.getTime(),
-        }))
-      } catch (error) {
-        console.warn("guestTracker: Redis unavailable while updating guest lastSeen", error)
-      }
-      // Update lastSeen in Firestore (throttled)
-      const docRef = db.collection("guests").doc(guestId)
-      const doc = await docRef.get()
-      const docData = doc.exists ? doc.data() as Guest : undefined
-      const lastSeen = docData && docData.lastSeen ? new Date(docData.lastSeen) : undefined
-      if (!lastSeen || (now.getTime() - lastSeen.getTime() > GUEST_LAST_SEEN_WRITE_INTERVAL_MS)) {
-        await docRef.set({ lastSeen: now }, { merge: true })
+          signedAt: nowMs,
+          persistedAt: persist ? nowMs : cachedGuestSeen?.persistedAt,
+        })),
+        // The provenance rides along with the write we were already making, so an
+        // over-merged guest (several people behind one IP) can be audited later.
+        persist ?
+          db.collection("guests").doc(guestId).set(
+            identity.source === "ip" ? { lastSeen: now, identitySource: "ip" } : { lastSeen: now },
+            { merge: true },
+          ) :
+          Promise.resolve(),
+      ])
+      if (cacheWrite.status === "rejected") {
+        console.warn("guestTracker: Redis unavailable while updating guest lastSeen", cacheWrite.reason)
       }
     }
     return next()
@@ -760,9 +952,6 @@ export async function guestTracker(req: Request, res: Response, next: NextFuncti
     // Set secure flag conditionally
     res.cookie("gid", guestId, { httpOnly: false, secure: isProduction, sameSite: "lax", maxAge: 31536000000 }) // 1 year
 
-    const { ipv4, ipv6, raw } = await getClientIps(req) // Prefer IPv6 if available
-    const ip = raw as string // Fallback to IPv4 if IPv6 is not available
-    const agent = parseUA(req.headers["user-agent"] || "")
     const guestData: Guest = {
       id: guestId,
       uid: "", // Will be set when linked to a user
@@ -786,6 +975,7 @@ export async function guestTracker(req: Request, res: Response, next: NextFuncti
       createdAt: new Date(),
       lastSeen: new Date(),
       fingerprint,
+      identitySource: "new",
     }
     const guestIntelligenceSeed = {
       intelligenceSourceIp: normalizePublicIp(ip),
@@ -803,6 +993,10 @@ export async function guestTracker(req: Request, res: Response, next: NextFuncti
         // This mapping used to be written with no expiry, so every new IP/UA pair
         // minted a key that never went away. Bounded to match the guest cookie.
         redis.setex(guestFingerprintKey(fingerprint), GUEST_FINGERPRINT_TTL_SECONDS, guestId),
+        // IP index, so the next cookie-less fingerprint from this address is
+        // absorbed into this guest rather than minting a second document for one
+        // visitor. Skipped when the address identifies nobody (see the digest).
+        ...(guestIpDigest ? [redis.setex(guestIpKey(guestIpDigest), GUEST_IP_TTL_SECONDS, guestId)] : []),
         db.collection("guests").doc(guestId).set({ ...guestData, ...guestIntelligenceSeed }, { merge: true }),
       ])
     } catch (error) {
@@ -814,7 +1008,22 @@ export async function guestTracker(req: Request, res: Response, next: NextFuncti
 }
 
 // API endpoint to receive guest fingerprint data from frontend
+/**
+ * guestFingerprintHandler
+ * @param {*} req
+ * @param {*} res
+ */
 export async function guestFingerprintHandler(req: Request, res: Response) {
+  // ePrivacy: the same gate as guestTracker. This is the only writer of
+  // `guest_fp`, and it sets a one-year device fingerprint, so a visitor who
+  // declined must not get one. The caller (`SizeDetectorComponent`) ignores the
+  // body and every consumer of the cookie has a null fallback, so answering with
+  // `fingerprint: null` keeps the contract while storing nothing.
+  if (!hasAnalyticsConsent(req.cookies)) {
+    res.status(200).json({ success: true, fingerprint: null })
+    return
+  }
+
   try {
     const fingerprintData = req.body
     // Hash the fingerprint for privacy
@@ -886,6 +1095,11 @@ export const toClientEvent = (body: unknown, ua: ReturnType<typeof parseUA>): An
  * eviction. One LPUSH + LTRIM per request keeps the list bounded at all times.
  *
  * LPUSH prepends, so `0..MAX-1` retains the newest MAX entries.
+ *
+ * Contract: producer LPUSHes, so the consumer MUST pop the opposite end (RPOP).
+ * Popping this end drains newest-first, which starves the backlog: old events are
+ * never read and are only removed by the LTRIM above, i.e. dropped unprocessed.
+ * @param {*} events
  */
 const appendClientEvents = async (events: string[]): Promise<number> => {
   const pipeline = redis.pipeline()
@@ -896,6 +1110,11 @@ const appendClientEvents = async (events: string[]): Promise<number> => {
 }
 
 // API endpoint to receive analytics events from frontend
+/**
+ * analyticsEventHandler
+ * @param {*} req
+ * @param {*} res
+ */
 export async function analyticsEventHandler(req: Request, res: Response) {
   try {
     const event = toClientEvent(req.body, parseUA(req.headers["user-agent"] || ""))
@@ -907,6 +1126,11 @@ export async function analyticsEventHandler(req: Request, res: Response) {
   }
 }
 
+/**
+ * batchAnalyticsEventHandler
+ * @param {*} req
+ * @param {*} res
+ */
 export async function batchAnalyticsEventHandler(req: Request, res: Response) {
   try {
     const { events } = req.body
@@ -919,6 +1143,10 @@ export async function batchAnalyticsEventHandler(req: Request, res: Response) {
       return res.status(413).json({ error: "Batch too large" })
     }
     const ua = parseUA(req.headers["user-agent"] || "")
+    /**
+     * callback
+     * @param {*} event
+     */
     const analyticsEvents = events.map((event) => JSON.stringify(toClientEvent(event, ua)))
     await appendClientEvents(analyticsEvents)
     return res.status(200).json({ success: true, processed: analyticsEvents.length })
@@ -942,66 +1170,140 @@ const normalizePagePath = (value: unknown): string | null => {
 }
 
 /**
+ * One drain pass: pop a bounded slice, write facts + counters, commit, trim.
+ *
+ * Separate from the caller so the run can repeat it — see DRAIN_CHUNKS_PER_RUN.
+ *
+ * @return {Promise<number>} How many events this pass drained.
+ */
+/**
+ * drainOneChunk
+ */
+async function drainOneChunk(): Promise<number> {
+  // RPOP, not LPOP: the producer LPUSHes, so the oldest entries sit at the tail.
+  // Measured 2026-09-14: the list sat at 3634 with a 2026-05-06 head and a
+  // 2025-11-30 tail — months of backlog the LPOP drain could never reach because
+  // it kept consuming the newest end.
+  const pending = await redis.rpop<string[]>(ANALYTICS_EVENTS_KEY, CLIENT_EVENT_MAX)
+  if (!pending || !pending.length) return 0
+
+  const batch = db.batch()
+  const counters: Record<string, Record<string, number>> = {}
+  // Mirrored into the hour bucket: the 30m/1h/24h ranges merge `clientEvents` and
+  // `byPage` out of `metrics_hourly`, which the daily-only drain never wrote.
+  const hourly: Record<string, Record<string, number>> = {}
+
+  for (const entry of pending) {
+    const parsed = (typeof entry === "string" ? JSON.parse(entry) : entry) as AnalyticsEvent
+    // Allow-list, not free-form: an off-list name minted a permanent counter key
+    // (`clientEvents.<typo>`) that no panel reads, so a typo was invisible from both
+    // ends. Off-list events are still stored as facts for audit but count as `unknown`,
+    // which keeps the rollup keys bounded.
+    const name = normalizeClientAnalyticsEvent(parsed.eventType)
+    if (name === UNKNOWN_CLIENT_ANALYTICS_EVENT && parsed.eventType) {
+      console.warn(`analytics: client event "${String(parsed.eventType).slice(0, 60)}" is not on the allow-list`)
+    }
+    const event = buildAnalyticsEvent({
+      name,
+      ts: new Date(Number(parsed.timestamp) || Date.now()),
+      uid: parsed.userId,
+      guestId: parsed.guestId,
+      isBot: parsed.isBot,
+      botKind: parsed.botKind,
+      props: sanitizeMetadata(parsed.metadata),
+    })
+    batch.set(db.collection(ANALYTICS_EVENTS).doc(), event)
+
+    const day = counters[event.date] || (counters[event.date] = {})
+    // Stale-backlog guard: `metrics_hourly` keeps 7 days, and the list can hold
+    // months of entries, so draining into an expired hour would only create docs
+    // for the pruner to delete.
+    const backlogged = event.ts.getTime() < Date.now() - 7 * 24 * 60 * 60 * 1000
+    const hourKey = toEventHour(event.ts)
+    const hour = backlogged ? null : hourly[hourKey] || (hourly[hourKey] = {})
+    const bump = (key: string) => {
+      day[key] = (day[key] || 0) + 1
+      if (hour) hour[key] = (hour[key] || 0) + 1
+    }
+    // ponytail: bots are kept as facts but excluded from every counter — the same
+    // rule as the funnel, so pageviews and client-event counts stay human.
+    if (event.isBot) continue
+
+    bump(`clientEvents.${event.name}`)
+
+    const page = normalizePagePath(event.props.page ?? event.props.path)
+    if (page) {
+      bump(`byPage.${page.replace(/\./g, "_")}`)
+    }
+  }
+
+  for (const [date, keys] of Object.entries(counters)) {
+    batch.set(db.doc(`metrics_daily/${date}`), Object.fromEntries(
+      Object.entries(keys).map(([key, count]) => [key, FieldValue.increment(count)]),
+    ), { merge: true })
+  }
+
+  for (const [hourKey, keys] of Object.entries(hourly)) {
+    batch.set(db.doc(`metrics_hourly/${hourKey}`), Object.fromEntries(
+      Object.entries(keys).map(([key, count]) => [key, FieldValue.increment(count)]),
+    ), { merge: true })
+  }
+
+  await batch.commit()
+  // Safety cap: keep the newest CLIENT_EVENT_LIST_MAX entries if the drain falls behind.
+  await redis.ltrim(ANALYTICS_EVENTS_KEY, 0, CLIENT_EVENT_LIST_MAX - 1)
+  return pending.length
+}
+
+/**
  * Drain the client-event list into the `analytics_events` fact table.
  * Runs from the existing 30-minute scheduled function — no extra cloud function.
  *
- * ponytail: atomic `LPOP key count` instead of read-then-trim — a concurrent push
+ * ponytail: atomic `RPOP key count` instead of read-then-trim — a concurrent push
  * would shift the list and re-drain (duplicate) the same events.
  */
+/**
+ * drainClientAnalyticsEvents
+ */
 export async function drainClientAnalyticsEvents(): Promise<number> {
-  try {
-    const pending = await redis.lpop<string[]>(ANALYTICS_EVENTS_KEY, CLIENT_EVENT_MAX)
-    if (!pending || !pending.length) return 0
-
-    const batch = db.batch()
-    const counters: Record<string, Record<string, number>> = {}
-
-    for (const entry of pending) {
-      const parsed = (typeof entry === "string" ? JSON.parse(entry) : entry) as AnalyticsEvent
-      const event = buildAnalyticsEvent({
-        name: parsed.eventType || "unknown",
-        ts: new Date(Number(parsed.timestamp) || Date.now()),
-        uid: parsed.userId,
-        guestId: parsed.guestId,
-        isBot: parsed.isBot,
-        botKind: parsed.botKind,
-        props: sanitizeMetadata(parsed.metadata),
-      })
-      batch.set(db.collection(ANALYTICS_EVENTS).doc(), event)
-
-      const day = counters[event.date] || (counters[event.date] = {})
-      // ponytail: bots are kept as facts but excluded from every counter — the same
-      // rule as the funnel, so pageviews and client-event counts stay human.
-      if (event.isBot) continue
-
-      day[`clientEvents.${event.name}`] = (day[`clientEvents.${event.name}`] || 0) + 1
-
-      const page = normalizePagePath(event.props.page ?? event.props.path)
-      if (page) {
-        const pageKey = page.replace(/\./g, "_")
-        day[`byPage.${pageKey}`] = (day[`byPage.${pageKey}`] || 0) + 1
-      }
-    }
-
-    for (const [date, keys] of Object.entries(counters)) {
-      batch.set(db.doc(`metrics_daily/${date}`), Object.fromEntries(
-        Object.entries(keys).map(([key, count]) => [key, FieldValue.increment(count)]),
-      ), { merge: true })
-    }
-
-    await batch.commit()
-    // Safety cap: keep the newest CLIENT_EVENT_LIST_MAX entries if the drain falls behind.
-    await redis.ltrim(ANALYTICS_EVENTS_KEY, 0, CLIENT_EVENT_LIST_MAX - 1)
-    console.log(`✅ Drained ${pending.length} client analytics events`)
-    return pending.length
-  } catch (error) {
-    console.warn("drainClientAnalyticsEvents failed:", error)
+  // A no-op client answers every command successfully, so the only reliable
+  // signal is whether this process was handed credentials at all. Without this
+  // guard a missing secret binding is indistinguishable from an empty queue.
+  if (!isRedisEnabled) {
+    console.warn(
+      "drainClientAnalyticsEvents skipped: Upstash Redis disabled in this " +
+      "process - FUNCTIONS_ENV_JSON is not bound to the calling function.",
+    )
     return 0
   }
+
+  let drained = 0
+  try {
+    // Measured 2026-09-14: the queue sat at 4.6k of its 5k cap — ~11 hours of backlog
+    // at one chunk per 30 minutes — while the oldest entries were already being
+    // trimmed away. Several chunks per run clear it without a second scheduled
+    // function. Chunk 1 failing still reports what earlier chunks committed.
+    for (let chunk = 0; chunk < DRAIN_CHUNKS_PER_RUN; chunk++) {
+      const count = await drainOneChunk()
+      if (!count) break
+      drained += count
+    }
+  } catch (error) {
+    console.warn("drainClientAnalyticsEvents failed:", error)
+  }
+
+  if (drained) {
+    console.log(`✅ Drained ${drained} client analytics events`)
+  }
+  return drained
 }
 
+/**
+ * getClientIps
+ * @param {*} req
+ */
 async function getClientIps(req: Request): Promise<{ ipv4: string | null, ipv6: string | null, raw: string | null }> {
-  const raw = req.headers["x-forwarded-for"] || req.connection.remoteAddress || null
+  // const raw = req.headers["x-forwarded-for"] || req.connection.remoteAddress || null
 
   let rawIp = getClientIp(req) || ""
 
@@ -1019,7 +1321,7 @@ async function getClientIps(req: Request): Promise<{ ipv4: string | null, ipv6: 
     // Special case: localhost "::1" → treat as IPv6
     ipv6 = rawIp
   }
-  console.log("Detected IPs - IPv4:", ipv4, "IPv6:", ipv6, "Raw:", raw)
-  return { ipv4, ipv6, raw: getClientIp(req) }
+  // console.log("Detected IPs - IPv4:", ipv4, "IPv6:", ipv6, "Raw:", raw)
+  return { ipv4, ipv6, raw: rawIp }
 }
 

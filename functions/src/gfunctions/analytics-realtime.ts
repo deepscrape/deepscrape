@@ -1,6 +1,5 @@
 /* eslint-disable max-len */
 /* eslint-disable object-curly-spacing */
-/* eslint-disable require-jsdoc */
 
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
 import { onSchedule } from "firebase-functions/v2/scheduler"
@@ -28,6 +27,7 @@ import {
 } from "../../../src/config/redis-keys"
 import { PRESENCE_WINDOW_COUNTS } from "../../../src/config/redis-scripts"
 import { parseUA } from "../infrastructure/ua-parser"
+import { functionsEnvJson } from "../config/env"
 import { drainClientAnalyticsEvents } from "./analytics"
 
 // ⭐ CRITICAL: Specify named database for v2 triggers
@@ -43,6 +43,17 @@ const mapToTop = (source: Record<string, number> | undefined, key: string, limit
     .slice(0, limit)
     .map(([name, count]) => ({ [key]: name, count }))
 }
+
+// ponytail: a top-15 list is all the panel renders, so keep only the head of any
+// breakdown whose cardinality grows with traffic. `byIP` is the only such group, and an
+// accumulated 90-day map is the one that can cross the 1 MB document limit (which would
+// fail the whole `metrics_range` write, not just the IP card). Ceiling: counts past the
+// cap are dropped for aggregates — move to per-(day, IP) documents queried with
+// orderBy('count','desc').limit(15) if the tail is ever needed.
+const IP_BREAKDOWN_CAP = 500
+const capBreakdown = (breakdown: Record<string, number>, cap: number): Record<string, number> =>
+  Object.keys(breakdown).length <= cap ? breakdown :
+    Object.fromEntries(Object.entries(breakdown).sort((a, b) => b[1] - a[1]).slice(0, cap))
 
 // Realtime triggers store breakdowns as flat dotted fields (byBrowser.Chrome)
 // via set({merge}); scheduled readers expect nested maps. Normalize both forms.
@@ -83,6 +94,166 @@ const toLongitudeBand = (longitude?: number) => {
   return `${Math.floor(lng)}..${Math.floor(lng) + 1}`
 }
 
+/**
+ * Geo/intel dimensions that CANNOT be known when the guest document is created.
+ *
+ * `guestTracker` writes every guest with placeholder geo (`country: "Unknown"`,
+ * `region: "Unknown"`, `timezone: "UTC"`, `latitude: 0`) plus
+ * `intelligenceStatus: "pending"`; the real values arrive later from
+ * `enrichGuestGeo`. Counting these keys in `onGuestCreated` therefore banked
+ * `byCountry.Unknown` for every guest, and the resolution that followed never
+ * re-emitted — so the 30m/1h/24h panels, which merge `metrics_hourly`, could only
+ * ever show Unknown, while 7d/30d/90d looked right because `computeRangeMetric`
+ * rebuilds those from raw guest documents.
+ *
+ * Emitted once from the enrichment instead, into the same `createdAt` buckets the
+ * guest's creation counters landed in, so the timeline stays aligned.
+ */
+export type GeoDimensionSource = {
+  createdAt?: unknown
+  country?: string
+  region?: string
+  location?: string
+  timezone?: string
+  latitude?: number | string | null
+  longitude?: number | string | null
+  network?: {
+    asn?: string | number | null
+    as?: string | null
+    isp?: string | null
+    domain?: string | null
+    usageType?: string | null
+  }
+  proxy?: { isProxy?: boolean; proxyType?: string | null; threat?: string | null }
+}
+
+/** The network/proxy dimension values, in one place so both writers cannot drift.
+ * @alias readNetworkDimensions
+ * @param {GeoDimensionSource} guest - Guest snapshot carrying the resolved geo/network fields.
+ * @return {object} - The network dimensions with fallbacks for missing values.
+ */
+
+export const readNetworkDimensions = (guest: GeoDimensionSource): {
+  asn: string
+  as: string
+  isp: string
+  usageType: string
+  domain: string
+  threat: string
+} => {
+  const network = guest.network
+  const asn = network?.asn != null ? String(network.asn).trim() : ""
+  const organisation = (network?.as || network?.isp || "").trim()
+
+  return {
+    asn: asn || "Unknown",
+    // ipregistry returns one organisation string, so `as` and `isp` coincide there
+    // and only differ under the custom geo API. Both stay exposed because the
+    // dimension names mean different things to the panels that read them.
+    as: organisation || asn || "Unknown",
+    isp: (network?.as || network?.isp || asn || "").trim() || "Unknown",
+    usageType: (network?.usageType || "").trim() || "Unknown",
+    domain: (network?.domain || "").trim() || "Unknown",
+    // Three distinct states: a flagged value, "none" once enrichment resolved the
+    // IP clean, and "Unknown" while the guest still carries placeholder geo.
+    threat: (guest.proxy?.threat || "").trim() || (guest.proxy ? "none" : "Unknown"),
+  }
+}
+
+/**
+ * Keys and fallbacks mirror `computeRangeMetric` and the old `onGuestCreated`
+ * expressions exactly — these maps are MERGED across sources by the admin panels,
+ * so one writer trimming or sanitising differently would split a single country
+ * across two rows.
+ *
+ * @param {GeoDimensionSource} guest - Guest snapshot carrying the resolved geo/network fields.
+ * @return {Record<string, FieldValue>} One dotted-path increment counter per geo dimension.
+ */
+export const buildGeoDimensionCounters = (
+  guest: GeoDimensionSource,
+): Record<string, FieldValue> => {
+  const latitude = Number(guest.latitude)
+  const longitude = Number(guest.longitude)
+  const geoCell =
+    Number.isFinite(latitude) && Number.isFinite(longitude) ?
+      `${latitude.toFixed(1)},${longitude.toFixed(1)}` :
+      "Unknown"
+  const proxyType = guest.proxy?.isProxy ? (guest.proxy.proxyType || "proxy") : "direct"
+  const dimensions = readNetworkDimensions(guest)
+
+  return {
+    [`byCountry.${guest.country || "Unknown"}`]: FieldValue.increment(1),
+    [`byRegion.${guest.region || "Unknown"}`]: FieldValue.increment(1),
+    [`byTimezone.${guest.timezone || "Unknown"}`]: FieldValue.increment(1),
+    [`byLocation.${guest.location || "Unknown"}`]: FieldValue.increment(1),
+    [`byGeoCell.${geoCell}`]: FieldValue.increment(1),
+    [`byLatitudeBand.${toLatitudeBand(latitude)}`]: FieldValue.increment(1),
+    [`byLongitudeBand.${toLongitudeBand(longitude)}`]: FieldValue.increment(1),
+    [`byASN.${dimensions.asn}`]: FieldValue.increment(1),
+    [`byAS.${dimensions.as}`]: FieldValue.increment(1),
+    [`byISP.${dimensions.isp}`]: FieldValue.increment(1),
+    [`byUsageType.${dimensions.usageType}`]: FieldValue.increment(1),
+    [`byDomain.${dimensions.domain}`]: FieldValue.increment(1),
+    [`byProxyType.${proxyType}`]: FieldValue.increment(1),
+    [`byThreat.${dimensions.threat}`]: FieldValue.increment(1),
+  }
+}
+
+/** The summary doc only ever mirrored this subset; keep its field names stable. */
+const SUMMARY_GEO_DIMENSIONS = [
+  "byCountry", "byTimezone", "byASN", "byAS", "byISP", "byUsageType", "byDomain", "byProxyType", "byThreat",
+]
+
+/**
+ * Same bucketing `onGuestCreated` uses, driven by the guest's own `createdAt` so an
+ * enrichment that crosses an hour/day boundary cannot strand the count in a
+ * different slot than the guest's other counters.
+ * ponytail: keeps that handler's UTC-date/local-hour mix for bucket parity; the
+ * functions runtime is UTC, so the two agree in production.
+ *
+ * @param {unknown} createdAt - Guest creation time as a Date, a Firestore Timestamp or an ISO string.
+ * @return {{ date: string, hourKey: string, minuteKey: string }} The UTC day key plus the hour and minute bucket keys.
+ */
+export const guestTimelineBuckets = (createdAt: unknown): { date: string, hourKey: string, minuteKey: string } => {
+  const source = createdAt as { toDate?: () => Date } | undefined
+  const date = source instanceof Date ? source :
+    source && typeof source.toDate === "function" ? source.toDate() :
+      new Date(String(createdAt ?? Date.now()))
+  const day = date.toISOString().split("T")[0]
+  const hourKey = `${day}-${date.getHours().toString().padStart(2, "0")}`
+  return { date: day, hourKey, minuteKey: `${hourKey}-${date.getMinutes().toString().padStart(2, "0")}` }
+}
+
+/**
+ * Count a guest's geo dimensions exactly once, where the values become known.
+ * Never throws: analytics must not fail the enrichment it rode in on.
+ *
+ * @param {GeoDimensionSource} guest - Enriched guest snapshot whose geo fields are now real.
+ * @return {Promise<void>} Resolves once the counters are committed, or the failure is logged.
+ */
+/**
+ * emitGeoDimensions
+ * @param {*} guest
+ */
+export async function emitGeoDimensions(guest: GeoDimensionSource): Promise<void> {
+  const counters = buildGeoDimensionCounters(guest)
+  const { date, hourKey, minuteKey } = guestTimelineBuckets(guest.createdAt)
+  const summaryCounters = Object.fromEntries(
+    Object.entries(counters).filter(([key]) =>
+      SUMMARY_GEO_DIMENSIONS.some((dimension) => key.startsWith(`${dimension}.`))),
+  )
+  try {
+    const batch = db.batch()
+    batch.set(db.doc(`metrics_daily/${date}`), { ...counters, updatedAt: Timestamp.now() }, { merge: true })
+    batch.set(db.doc(`metrics_hourly/${hourKey}`), { ...counters, updatedAt: Timestamp.now() }, { merge: true })
+    batch.set(db.doc(`metrics_minutely/${minuteKey}`), { ...counters, updatedAt: Timestamp.now() }, { merge: true })
+    batch.set(db.doc("metrics_summary/dashboard"), summaryCounters, { merge: true })
+    await batch.commit()
+  } catch (error) {
+    console.error("❌ Error emitting geo dimensions:", error)
+  }
+}
+
 type RangeSummary = {
   byCountry?: Record<string, number>
   byBrowser?: Record<string, number>
@@ -107,15 +278,9 @@ const RETENTION_OFFSETS = [1, 7, 14, 30]
 // client-event volume approaches it.
 const RETENTION_EVENT_LIMIT = 20000
 
-type MetricsDailyExtended = MetricsDaily & {
-  byRegion?: Record<string, number>
-  byLocation?: Record<string, number>
-  byGeoCell?: Record<string, number>
-  byLatitudeBand?: Record<string, number>
-  byLongitudeBand?: Record<string, number>
-  byLanguage?: Record<string, number>
-  byIP?: Record<string, number>
-}
+// MetricsDailyExtended lived here to type the cast that read `byIP` and friends off a
+// daily doc. Those reads now go through collectBreakdown, which takes a plain record —
+// so the cast (and the type) are gone rather than kept alive for one caller.
 
 // ============================================================================
 // REAL-TIME TRIGGERS - Atomic Updates for Live Dashboard
@@ -130,6 +295,10 @@ export const onGuestCreated = onDocumentCreated(
     document: "guests/{guestId}",
     database: DATABASE_NAME, // ⭐ v2 requires database parameter for named databases
   },
+  /**
+   * callback
+   * @param {*} event
+   */
   async (event) => {
     const guest = event.data?.data() as Guest
     if (!guest) return
@@ -138,13 +307,12 @@ export const onGuestCreated = onDocumentCreated(
     const today = now.toISOString().split("T")[0]
     const hour = now.getHours()
     const hourKey = `${today}-${hour.toString().padStart(2, "0")}`
-    const geoCell =
-      Number.isFinite(guest.latitude) && Number.isFinite(guest.longitude) ?
-        `${Number(guest.latitude).toFixed(1)},${Number(guest.longitude).toFixed(1)}` :
-        "Unknown"
-    const latBand = toLatitudeBand(guest.latitude)
-    const lonBand = toLongitudeBand(guest.longitude)
-    const network = (guest as unknown as { network?: { asn?: string | number | null; as?: string | null; isp?: string | null } }).network
+    // Per-minute bucket: the only grain that can answer a rolling 30m window, since an
+    // hour bucket can only ever mean "this hour so far".
+    const minuteKey = `${hourKey}-${now.getMinutes().toString().padStart(2, "0")}`
+    // Geo-dependent dimensions (country, region, timezone, city, geo cell, lat/lon
+    // bands, ASN, ISP, proxy type) are emitted by `emitGeoDimensions` from
+    // `enrichGuestGeo` instead — at this point every one of them is a placeholder.
     const channel = guest.acquisition?.utmSource || "direct"
     const referrer = guest.acquisition?.referrer || "direct"
     const proxyType = guest.proxy?.isProxy ? (guest.proxy.proxyType || "proxy") : "direct"
@@ -171,6 +339,28 @@ export const onGuestCreated = onDocumentCreated(
       funnelCounters[key] = FieldValue.increment(1)
     }
 
+    // One counter map for BOTH time rollups. `analytics-range.service.ts` merges all
+    // of these out of `metrics_hourly` for the 30m/1h/24h periods, so a
+    // hand-maintained subset there silently blanked 12 panels while 7d/30d/90d
+    // (read from `metrics_daily`) looked fine.
+    // ponytail: bounded by construction — a day is a fresh `metrics_daily` doc and an
+    // hour is a fresh `metrics_hourly` doc, so one field per unique IP/ASN/… is capped.
+    // The unbounded risk is the 90-day aggregate, which capBreakdown trims.
+    const dimensionCounters: Record<string, FieldValue> = {
+      // A missing value interpolated into a dotted path lands as a field
+      // literally named `byBrowser.undefined`, so every key needs a fallback.
+      [`byBrowser.${guest.browser || "Unknown"}`]: FieldValue.increment(1),
+      [`byDevice.${guest.device || "Unknown"}`]: FieldValue.increment(1),
+      [`byOS.${guest.os || "Unknown"}`]: FieldValue.increment(1),
+      [`byLanguage.${guest.language || "Unknown"}`]: FieldValue.increment(1),
+      // The raw IP is real at creation (unlike everything enriched).
+      [`byIP.${guest.ip?.raw || guest.ip?.ipv4 || "Unknown"}`]: FieldValue.increment(1),
+      [`byChannel.${channel}`]: FieldValue.increment(1),
+      [`byReferrer.${referrer}`]: FieldValue.increment(1),
+      [`byLandingPath.${toFieldKey(guest.acquisition?.landingPath || "direct")}`]: FieldValue.increment(1),
+      ...funnelCounters,
+    }
+
     try {
     // Single batch transaction for consistency
       const batch = db.batch()
@@ -183,26 +373,8 @@ export const onGuestCreated = onDocumentCreated(
         newGuests: FieldValue.increment(1),
         totalGuests: FieldValue.increment(1),
         activeGuests: FieldValue.increment(1),
-        [`byCountry.${guest.country}`]: FieldValue.increment(1),
-        [`byRegion.${guest.region || "Unknown"}`]: FieldValue.increment(1),
-        [`byLocation.${guest.location || "Unknown"}`]: FieldValue.increment(1),
-        [`byGeoCell.${geoCell}`]: FieldValue.increment(1),
-        [`byLatitudeBand.${latBand}`]: FieldValue.increment(1),
-        [`byLongitudeBand.${lonBand}`]: FieldValue.increment(1),
-        [`byBrowser.${guest.browser}`]: FieldValue.increment(1),
-        [`byDevice.${guest.device}`]: FieldValue.increment(1),
-        [`byOS.${guest.os}`]: FieldValue.increment(1),
-        [`byTimezone.${guest.timezone}`]: FieldValue.increment(1),
-        [`byLanguage.${guest.language || "Unknown"}`]: FieldValue.increment(1),
-        [`byIP.${guest.ip?.raw || guest.ip?.ipv4 || "Unknown"}`]: FieldValue.increment(1),
-        [`byASN.${network?.asn || "Unknown"}`]: FieldValue.increment(1),
-        [`byISP.${network?.as || network?.isp || "Unknown"}`]: FieldValue.increment(1),
-        [`byChannel.${channel}`]: FieldValue.increment(1),
-        [`byReferrer.${referrer}`]: FieldValue.increment(1),
-        [`byProxyType.${proxyType}`]: FieldValue.increment(1),
-        [`byLandingPath.${toFieldKey(guest.acquisition?.landingPath || "direct")}`]: FieldValue.increment(1),
+        ...dimensionCounters,
         [`guestsByHour.${hour}`]: FieldValue.increment(1),
-        ...funnelCounters,
         updatedAt: Timestamp.now(),
       }, { merge: true })
 
@@ -215,12 +387,23 @@ export const onGuestCreated = onDocumentCreated(
         timestamp: Timestamp.now(),
         newGuests: FieldValue.increment(1),
         activeGuests: FieldValue.increment(1),
-        [`byOS.${guest.os || "Unknown"}`]: FieldValue.increment(1),
-        [`byASN.${network?.asn || "Unknown"}`]: FieldValue.increment(1),
-        [`byISP.${network?.as || network?.isp || "Unknown"}`]: FieldValue.increment(1),
-        [`byChannel.${channel}`]: FieldValue.increment(1),
-        [`byProxyType.${proxyType}`]: FieldValue.increment(1),
-        ...funnelCounters,
+        ...dimensionCounters,
+        updatedAt: Timestamp.now(),
+      }, { merge: true })
+
+      // Minutely metrics — same counter map as the hourly bucket, one document per
+      // minute, which is what makes 30m/1h true rolling windows instead of
+      // hour-aligned ones. Read by `buildBucketedRangeMetrics`.
+      const minutelyRef = db.doc(`metrics_minutely/${minuteKey}`)
+      batch.set(minutelyRef, {
+        datetime: minuteKey,
+        date: today,
+        hour: hour,
+        minute: now.getMinutes(),
+        timestamp: Timestamp.now(),
+        newGuests: FieldValue.increment(1),
+        activeGuests: FieldValue.increment(1),
+        ...dimensionCounters,
         updatedAt: Timestamp.now(),
       }, { merge: true })
 
@@ -229,17 +412,12 @@ export const onGuestCreated = onDocumentCreated(
       batch.set(summaryRef, {
         totalGuests: FieldValue.increment(1),
         activeGuests: FieldValue.increment(1),
-        [`byCountry.${guest.country || "Unknown"}`]: FieldValue.increment(1),
         [`byBrowser.${guest.browser || "Unknown"}`]: FieldValue.increment(1),
         [`byDevice.${guest.device || "Unknown"}`]: FieldValue.increment(1),
         [`byOS.${guest.os || "Unknown"}`]: FieldValue.increment(1),
-        [`byTimezone.${guest.timezone || "Unknown"}`]: FieldValue.increment(1),
         [`byLanguage.${guest.language || "Unknown"}`]: FieldValue.increment(1),
-        [`byASN.${network?.asn || "Unknown"}`]: FieldValue.increment(1),
-        [`byISP.${network?.as || network?.isp || "Unknown"}`]: FieldValue.increment(1),
         [`byChannel.${channel}`]: FieldValue.increment(1),
         [`byReferrer.${referrer}`]: FieldValue.increment(1),
-        [`byProxyType.${proxyType}`]: FieldValue.increment(1),
         lastUpdated: Timestamp.now(),
         computedAt: Timestamp.now(),
       }, { merge: true })
@@ -263,6 +441,10 @@ export const onUserRegistered = onDocumentCreated(
     document: "users/{userId}",
     database: DATABASE_NAME, // ⭐ v2 requires database parameter for named databases
   },
+  /**
+   * callback
+   * @param {*} event
+   */
   async (event) => {
     const user = event.data?.data() as Users
     if (!user) return
@@ -369,6 +551,10 @@ export const onLoginEvent = onDocumentCreated(
     document: "login_metrics/{userId}/login_history_Info/{loginId}",
     database: DATABASE_NAME, // ⭐ v2 requires database parameter for named databases
   },
+  /**
+   * callback
+   * @param {*} event
+   */
   async (event) => {
     const loginInfo = event.data?.data() as loginHistoryInfo
     if (!loginInfo) return
@@ -405,6 +591,8 @@ export const onLoginEvent = onDocumentCreated(
       const hourlyRef = db.doc(`metrics_hourly/${hourKey}`)
       batch.set(hourlyRef, {
         totalLogins: FieldValue.increment(1),
+        // The 30m/1h/24h reader merges `byProvider` from the hourly rows.
+        [`byProvider.${providerKey}`]: FieldValue.increment(1),
         ...funnelCounters,
         updatedAt: Timestamp.now(),
       }, { merge: true })
@@ -443,7 +631,12 @@ export const onLoginEvent = onDocumentCreated(
  * 🧹 Backfill dashboard summary from existing metrics
  * Runs every 30 minutes to ensure metrics_summary/dashboard exists
  */
-export const backfillDashboardSummary = onSchedule("*/30 * * * *", async () => {
+export const backfillDashboardSummary = onSchedule({
+  schedule: "*/30 * * * *",
+  // Without this binding the process gets no Upstash credentials and the drain
+  // below silently no-ops, so the client-event queue grows without bound.
+  secrets: [functionsEnvJson],
+}, async () => {
   try {
     // Drain the client-event list first so facts + per-day counters stay current.
     await drainClientAnalyticsEvents()
@@ -477,11 +670,23 @@ export const backfillDashboardSummary = onSchedule("*/30 * * * *", async () => {
 
     const totalGuests = guestCountSnap.data().count || 0
     const totalUsers = userCountSnap.data().count || 0
+    /**
+     * callback
+     * @param {*} sum
+     * @param {*} doc
+     * @return {*}
+     */
     const totalLoginsFromDaily = last30DailySnap.docs.reduce((sum, doc) => {
       const data = doc.data() as MetricsDaily
       return sum + (data.totalLogins || 0)
     }, 0)
     const totalLogins = Math.max(totalLoginsFromDaily, last30LoginCount.data().count || 0)
+    /**
+     * callback
+     * @param {*} sum
+     * @param {*} doc
+     * @return {*}
+     */
     const guestConversions = last30DailySnap.docs.reduce((sum, doc) => {
       const data = doc.data() as MetricsDaily
       return sum + (data.guestConversions || 0)
@@ -525,6 +730,9 @@ export const backfillDashboardSummary = onSchedule("*/30 * * * *", async () => {
 /**
  * 📊 Daily aggregation - Computes trends and optimizes daily metrics
  * Runs every day at 00:05 UTC
+ */
+/**
+ * 5 0 * * *
  */
 export const computeDailyTrends = onSchedule("5 0 * * *", async () => {
   const today = new Date()
@@ -599,6 +807,11 @@ export const computeRangeMetrics = onSchedule({
   }
 })
 
+/**
+ * computeRangeMetric
+ * @param {*} rangeId
+ * @param {*} days
+ */
 async function computeRangeMetric(rangeId: string, days: number) {
   const endDate = new Date()
   const startDate = new Date(endDate.getTime() - (days - 1) * 24 * 60 * 60 * 1000)
@@ -617,14 +830,24 @@ async function computeRangeMetric(rangeId: string, days: number) {
 
   // Generate array of UTC day keys — must match the metrics_daily/{date} keys exactly.
   // ponytail: iterate in UTC; local setDate() drifts a day across DST/month ends.
+  // The getters below must be the UTC family: mixing `getFullYear()` (local) with
+  // Date.UTC() resolves to a *different day* whenever TZ is not UTC, which shifts this
+  // list away from the UTC-based startTs/endExclusiveTs used for the queries below —
+  // so the daily-aggregate totals and the live-query totals would cover different days.
+  // Production runs UTC so it was invisible there, but a local run (or emulator) on a
+  // UTC+3 machine produced a day set that disagreed with production.
   const dates: string[] = []
-  const rangeStartMs = Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
-  const rangeEndMs = Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate())
+  const rangeStartMs = Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate())
+  const rangeEndMs = Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate())
   for (let ms = rangeStartMs; ms <= rangeEndMs; ms += 24 * 60 * 60 * 1000) {
     dates.push(new Date(ms).toISOString().split("T")[0])
   }
 
   // Fetch all daily metrics for the range
+  /**
+   * callback
+   * @param {*} date
+   */
   const dailyMetricsPromises = dates.map((date) => db.doc(`metrics_daily/${date}`).get())
   const [dailySnapshots, loginHistorySnap, usersCreatedSnap, guestsCreatedSnap] = await Promise.all([
     Promise.all(dailyMetricsPromises),
@@ -672,6 +895,10 @@ async function computeRangeMetric(rangeId: string, days: number) {
   const byChannel: { [key: string]: number } = {}
   const byReferrer: { [key: string]: number } = {}
   const byProxyType: { [key: string]: number } = {}
+  const byAS: { [key: string]: number } = {}
+  const byUsageType: { [key: string]: number } = {}
+  const byDomain: { [key: string]: number } = {}
+  const byThreat: { [key: string]: number } = {}
   const byBotKind: { [key: string]: number } = {}
   const funnel: { [key: string]: number } = {guest_created: 0, user_registered: 0, login_succeeded: 0}
   const clientEvents: { [key: string]: number } = {}
@@ -760,13 +987,17 @@ async function computeRangeMetric(rangeId: string, days: number) {
     byOS[guest.os || "Unknown"] = (byOS[guest.os || "Unknown"] || 0) + 1
     byTimezone[guest.timezone || "Unknown"] = (byTimezone[guest.timezone || "Unknown"] || 0) + 1
 
-    // ponytail: ASN/ISP come from the geo `network` object (ipregistry) stored on enriched guests.
-    const guestNetwork = (guest as unknown as { network?: { asn?: string | number | null; as?: string | null; isp?: string | null } }).network
-    const asn = guestNetwork?.asn != null ? String(guestNetwork.asn).trim() : ""
-    const asnKey = asn || "Unknown"
-    const isp = (guestNetwork?.as || guestNetwork?.isp || asn || "").trim() || "Unknown"
-    byASN[asnKey] = (byASN[asnKey] || 0) + 1
-    byISP[isp] = (byISP[isp] || 0) + 1
+    // ponytail: ASN/AS/ISP/usage type/domain come from the geo `network` object
+    // (ipregistry) stored on enriched guests. Read through the same helper as
+    // `buildGeoDimensionCounters`, so the two writers cannot split one
+    // organisation across two rows.
+    const guestDimensions = readNetworkDimensions(guest)
+    byASN[guestDimensions.asn] = (byASN[guestDimensions.asn] || 0) + 1
+    byAS[guestDimensions.as] = (byAS[guestDimensions.as] || 0) + 1
+    byISP[guestDimensions.isp] = (byISP[guestDimensions.isp] || 0) + 1
+    byUsageType[guestDimensions.usageType] = (byUsageType[guestDimensions.usageType] || 0) + 1
+    byDomain[guestDimensions.domain] = (byDomain[guestDimensions.domain] || 0) + 1
+    byThreat[guestDimensions.threat] = (byThreat[guestDimensions.threat] || 0) + 1
 
     const acquisition = (guest as unknown as { acquisition?: { utmSource?: string; referrer?: string } }).acquisition
     const proxy = (guest as unknown as { proxy?: { isProxy?: boolean; proxyType?: string | null } }).proxy
@@ -799,55 +1030,57 @@ async function computeRangeMetric(rangeId: string, days: number) {
       totalLogins += finalTotalLogins
       guestConversions += finalConversions
 
-      // Aggregate dimensions
-      Object.entries(data.byCountry || {}).forEach(([country, count]) => {
+      // Aggregate dimensions. The triggers write every group as a flat dotted field
+      // (`byIP.1.2.3.4`), so each read goes through collectBreakdown — reading
+      // `data.byX` directly silently yields nothing, and the panel then falls back to
+      // all-time dashboard numbers for the selected range instead of the range's own.
+      const dataRecord = data as unknown as Record<string, unknown>
+
+      Object.entries(collectBreakdown(dataRecord, "byCountry")).forEach(([country, count]) => {
         byCountry[country] = (byCountry[country] || 0) + count
       })
 
-      const dataExt = data as MetricsDailyExtended
-
-      Object.entries(dataExt.byRegion || {}).forEach(([region, count]) => {
-        byRegion[region] = (byRegion[region] || 0) + (count as number)
+      Object.entries(collectBreakdown(dataRecord, "byRegion")).forEach(([region, count]) => {
+        byRegion[region] = (byRegion[region] || 0) + count
       })
 
-      Object.entries(dataExt.byLocation || {}).forEach(([location, count]) => {
-        byLocation[location] = (byLocation[location] || 0) + (count as number)
+      Object.entries(collectBreakdown(dataRecord, "byLocation")).forEach(([location, count]) => {
+        byLocation[location] = (byLocation[location] || 0) + count
       })
 
-      Object.entries(dataExt.byGeoCell || {}).forEach(([cell, count]) => {
-        byGeoCell[cell] = (byGeoCell[cell] || 0) + (count as number)
+      Object.entries(collectBreakdown(dataRecord, "byGeoCell")).forEach(([cell, count]) => {
+        byGeoCell[cell] = (byGeoCell[cell] || 0) + count
       })
 
-      Object.entries(dataExt.byLatitudeBand || {}).forEach(([band, count]) => {
-        byLatitudeBand[band] = (byLatitudeBand[band] || 0) + (count as number)
+      Object.entries(collectBreakdown(dataRecord, "byLatitudeBand")).forEach(([band, count]) => {
+        byLatitudeBand[band] = (byLatitudeBand[band] || 0) + count
       })
 
-      Object.entries(dataExt.byLongitudeBand || {}).forEach(([band, count]) => {
-        byLongitudeBand[band] = (byLongitudeBand[band] || 0) + (count as number)
+      Object.entries(collectBreakdown(dataRecord, "byLongitudeBand")).forEach(([band, count]) => {
+        byLongitudeBand[band] = (byLongitudeBand[band] || 0) + count
       })
 
-      Object.entries(data.byBrowser || {}).forEach(([browser, count]) => {
+      Object.entries(collectBreakdown(dataRecord, "byBrowser")).forEach(([browser, count]) => {
         byBrowser[browser] = (byBrowser[browser] || 0) + count
       })
 
-      Object.entries(data.byDevice || {}).forEach(([device, count]) => {
+      Object.entries(collectBreakdown(dataRecord, "byDevice")).forEach(([device, count]) => {
         byDevice[device] = (byDevice[device] || 0) + count
       })
 
-      Object.entries(data.byOS || {}).forEach(([os, count]) => {
+      Object.entries(collectBreakdown(dataRecord, "byOS")).forEach(([os, count]) => {
         byOS[os] = (byOS[os] || 0) + count
       })
 
-      Object.entries(data.byTimezone || {}).forEach(([timezone, count]) => {
+      Object.entries(collectBreakdown(dataRecord, "byTimezone")).forEach(([timezone, count]) => {
         byTimezone[timezone] = (byTimezone[timezone] || 0) + count
       })
 
-      Object.entries(data.byProvider || {}).forEach(([provider, count]) => {
+      Object.entries(collectBreakdown(dataRecord, "byProvider")).forEach(([provider, count]) => {
         byProvider[provider] = (byProvider[provider] || 0) + count
       })
 
       // Bot traffic + funnel come straight off the daily rollup — no extra reads.
-      const dataRecord = data as unknown as Record<string, unknown>
       bots += Number(dataRecord.bots || 0)
       Object.entries(collectBreakdown(dataRecord, "byBotKind")).forEach(([kind, count]) => {
         byBotKind[kind] = (byBotKind[kind] || 0) + count
@@ -878,12 +1111,12 @@ async function computeRangeMetric(rangeId: string, days: number) {
         paidByChannel[channel] = (paidByChannel[channel] || 0) + count
       })
 
-      Object.entries(dataExt.byLanguage || {}).forEach(([lang, count]) => {
-        byLanguage[lang] = (byLanguage[lang] || 0) + (count as number)
+      Object.entries(collectBreakdown(dataRecord, "byLanguage")).forEach(([lang, count]) => {
+        byLanguage[lang] = (byLanguage[lang] || 0) + count
       })
 
-      Object.entries(dataExt.byIP || {}).forEach(([ip, count]) => {
-        byIP[ip] = (byIP[ip] || 0) + (count as number)
+      Object.entries(collectBreakdown(dataRecord, "byIP")).forEach(([ip, count]) => {
+        byIP[ip] = (byIP[ip] || 0) + count
       })
 
       dailyBreakdown.push({
@@ -946,6 +1179,10 @@ async function computeRangeMetric(rangeId: string, days: number) {
         return
       }
       const eventDate = eventDateValue.toISOString().slice(0, 10)
+      /**
+       * callback
+       * @param {*} d
+       */
       const day = dailyBreakdown.find((d) => d.date === eventDate)
       if (day) {
         day.totalLogins += 1
@@ -963,6 +1200,11 @@ async function computeRangeMetric(rangeId: string, days: number) {
   const avgDailyLogins = Math.round(totalLogins / days)
 
   // Find peak day
+  /**
+   * callback
+   * @param {*} peak
+   * @param {*} current
+   */
   const peakDay = dailyBreakdown.reduce((peak, current) =>
     current.totalLogins > peak.totalLogins ? current : peak
   )
@@ -993,10 +1235,14 @@ async function computeRangeMetric(rangeId: string, days: number) {
     byOS: byOS,
     byProvider: byProvider,
     byLanguage: byLanguage,
-    byIP: byIP,
+    byIP: capBreakdown(byIP, IP_BREAKDOWN_CAP),
     byTimezone: byTimezone,
     byASN: byASN,
+    byAS: byAS,
     byISP: byISP,
+    byUsageType: byUsageType,
+    byDomain: byDomain,
+    byThreat: byThreat,
     byChannel: byChannel,
     byReferrer: byReferrer,
     byProxyType: byProxyType,
@@ -1032,6 +1278,9 @@ async function computeRangeMetric(rangeId: string, days: number) {
  * Identity = `uid || guestId`, cohort = the first day that identity was seen.
  * Bots are excluded — crawlers do not come back. A cell is `null` (not 0) while
  * its window has not elapsed yet, so the grid never fakes a retention drop.
+ */
+/**
+ * computeRetention
  */
 async function computeRetention(): Promise<RetentionCohort[]> {
   const end = new Date()
@@ -1100,6 +1349,9 @@ async function computeRetention(): Promise<RetentionCohort[]> {
  * 🧹 Cleanup old analytics data
  * Runs daily at 02:00 UTC
  */
+/**
+ * 0 2 * * *
+ */
 export const cleanupOldAnalytics = onSchedule("0 2 * * *", async () => {
   try {
     // Clean up old hourly metrics (keep only 7 days)
@@ -1117,6 +1369,21 @@ export const cleanupOldAnalytics = onSchedule("0 2 * * *", async () => {
       oldHourlyQuery.docs.forEach((doc) => batch.delete(doc.ref))
       await batch.commit()
       console.log(`🧹 Cleaned up ${oldHourlyQuery.size} old hourly metrics`)
+    }
+
+    // Minutely buckets only serve the rolling 30m/1h windows, so two days is already
+    // generous overlap; without this the series grows by 1440 documents a day forever.
+    const minutelyCutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+    const oldMinutelyQuery = await db.collection("metrics_minutely")
+      .where("date", "<", minutelyCutoff)
+      .limit(400)
+      .get()
+
+    if (!oldMinutelyQuery.empty) {
+      const batch = db.batch()
+      oldMinutelyQuery.docs.forEach((doc) => batch.delete(doc.ref))
+      await batch.commit()
+      console.log(`🧹 Cleaned up ${oldMinutelyQuery.size} old minutely metrics`)
     }
 
     // Clean up expired range metrics
@@ -1190,6 +1457,9 @@ type PresenceCounts = {
  *
  * Returns null when Redis is unavailable, so the caller can fall back.
  */
+/**
+ * readPresenceCountsFromRedis
+ */
 async function readPresenceCountsFromRedis(): Promise<PresenceCounts | null> {
   try {
     const now = Date.now()
@@ -1227,6 +1497,10 @@ async function readPresenceCountsFromRedis(): Promise<PresenceCounts | null> {
  *
  * @param {number} now - Current epoch milliseconds, used to derive the cutoffs.
  * @return {Promise<PresenceCounts>} Presence counts for the three windows.
+ */
+/**
+ * readPresenceCountsFromFirestore
+ * @param {*} now
  */
 async function readPresenceCountsFromFirestore(now: number): Promise<PresenceCounts> {
   const cutoff1m = Timestamp.fromMillis(now - PRESENCE_WINDOWS_MS[0])
@@ -1269,7 +1543,13 @@ export const computeActiveUsersNow = onSchedule(
     schedule: "* * * * *", // every minute
     timeZone: "UTC",
     region: "us-central1",
+    // Presence reads Redis first; without credentials it falls back to six
+    // Firestore count queries every minute.
+    secrets: [functionsEnvJson],
   },
+  /**
+   * callback
+   */
   async () => {
     try {
       const now = Date.now()

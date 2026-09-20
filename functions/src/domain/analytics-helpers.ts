@@ -1,12 +1,169 @@
 /* eslint-disable max-len */
-/* eslint-disable valid-jsdoc */
 /* eslint-disable object-curly-spacing */
 
 import * as admin from "firebase-admin"
+import net from "node:net"
 import { DimensionFilter, MetricsDaily } from "./analytics-optimized.domain"
 
 /**
+ * Whether a guest's `lastSeen` is due to be written to Firestore.
+ *
+ * The throttle reads the timestamp of the previous persist out of the cached guest
+ * record, so the hot path never has to fetch the document just to compare against
+ * its stored `lastSeen`. An unknown timestamp persists once and then tracks itself.
+ *
+ * @param {unknown} persistedAt Epoch ms of the last persist, as cached.
+ * @param {number} nowMs Current epoch ms.
+ * @param {number} intervalMs Minimum interval between persists.
+ * @return {boolean} True when the write is due.
+ */
+export function shouldPersistGuestLastSeen(persistedAt: unknown, nowMs: number, intervalMs: number): boolean {
+  // Absent, non-finite, or ahead of the clock (skew, or a poisoned cache entry):
+  // persist. `persistedAt > nowMs` would otherwise read as "just persisted" and
+  // the guest would stop being reported active until the clock caught up.
+  if (typeof persistedAt !== "number" || !Number.isFinite(persistedAt) || persistedAt <= 0 || persistedAt > nowMs) {
+    return true
+  }
+
+  return nowMs - persistedAt > intervalMs
+}
+
+/**
+ * Canonicalise a UTM value for grouping.
+ *
+ * Raw query strings fragment one campaign across `Spring+Sale`, `spring sale`, and
+ * `SPRING_SALE`, so campaign sizes would depend on each ad platform's case and
+ * separator conventions. Lowercase, collapse whitespace to underscores, cap length.
+ *
+ * @param {unknown} value Raw query-string value.
+ * @return {string | undefined} Canonical value, or undefined when empty.
+ */
+export function normalizeUtm(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const normalized = value.trim().toLowerCase().replace(/[\s+]+/g, "_").slice(0, 60)
+  // Strip the separator we just introduced, or `?utm_source=+` writes a channel
+  // literally named `_` (and `"spring "` writes `spring_`). Caught by
+  // analytics-events.spec.ts, which is the only reason this case is not live.
+  const bounded = normalized.replace(/^_+|_+$/g, "")
+  return bounded || undefined
+}
+
+/**
+ * Which identity a cookie-less visitor is adopted into.
+ *
+ * Precedence matters: the fingerprint is the closest thing to "this same
+ * browser", the IP index is the coarser fallback that stops duplicate guest
+ * documents. Callers pass the lookups they already made; this only picks the
+ * winner, which keeps the rule testable without a live request.
+ * @param {*} candidates
+ * @return {*}
+ */
+export function resolveGuestIdentity(candidates: {
+    fingerprintGuestId?: string | null
+    ipGuestId?: string | null
+}): {guestId: string | null, source: "fingerprint" | "ip" | "new"} {
+  const fingerprint = candidates.fingerprintGuestId || null
+  if (fingerprint) return {guestId: fingerprint, source: "fingerprint"}
+
+  const ip = candidates.ipGuestId || null
+  if (ip) return {guestId: ip, source: "ip"}
+
+  return {guestId: null, source: "new"}
+}
+
+/**
+ * Bucket for a guest whose address no provider can resolve.
+ *
+ * Deliberately distinct from the "Unknown" the geo mappers produce for an answered
+ * request that carried no country: this one means the question was never worth asking,
+ * and the admin panel's region rows are read by operators as "where is my traffic".
+ * Shared so the writer (session enrichment) and the dimension keys cannot drift.
+ */
+export const NON_ROUTABLE_GEO_LABEL = "Non-routable"
+
+/**
+ * Whether an address can never belong to a real remote client.
+ *
+ * IANA special-purpose ranges (RFC 6890) are not globally routed, so no provider
+ * can resolve one: ipregistry answers `203.0.113.9` with a null country, an empty
+ * location, and `security.is_bogon` set -- an artefact of the range, not a fact
+ * about a visitor. The list here and the one in the session enrichment covered
+ * loopback and private ranges but not the documentation and reserved blocks, so a
+ * lookup was still paid for, and the admin panel filed those guests under
+ * "Unknown" regions next to visitors nobody could resolve.
+ *
+ * Also the range a caller can invent: X-Forwarded-For is attacker-influenced up to
+ * the edge, so this has to be decided locally rather than asked of a provider.
+ *
+ * @param {string | null | undefined} ip Candidate address.
+ * @return {boolean} True when no region can ever be resolved for it.
+ */
+export function isNonRoutableIp(ip: string | null | undefined): boolean {
+  const value = String(ip || "").trim().toLowerCase()
+  if (!value || value === "localhost" || net.isIP(value) === 0) return true
+
+  // ponytail: regex heuristic, swap for an ipaddr.js range check if a range is
+  // ever missed. v4-mapped addresses arrive already unwrapped by normalizePublicIp.
+  if (/^(0\.|10\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.0\.0\.|192\.0\.2\.|192\.168\.|198\.(18|19)\.|198\.51\.100\.|203\.0\.113\.|2(2[4-9]|[3-9]\d)\.|(24\d|25[0-5])\.)/.test(value)) {
+    return true
+  }
+
+  // Anchored per alternative on purpose: the previous unanchored `f[cd]` matched a
+  // public address that merely contained those letters.
+  return /^(::|f[cd]|fe80)/.test(value)
+}
+
+/**
+ * Is this client IP specific enough to identify a guest by?
+ *
+ * Headers are attacker-influenced up to the edge, and behind an unforwarded
+ * internal address (Cloud Run, a private network) every visitor shares one
+ * value -- indexing those would merge unrelated guests into a single document,
+ * the opposite of the intent. Exactly the inverse of non-routable, so the two
+ * answers cannot drift apart.
+ * @param {*} ip
+ * @return {*}
+ */
+export function isIndexableGuestIp(ip: string | null | undefined): boolean {
+  return !isNonRoutableIp(ip)
+}
+
+/**
+ * Name of the consent cookie. Written by the Angular banner
+ * (`src/app/core/components/cookie-consent`), read by `guestTracker`.
+ *
+ * ponytail: the literal is repeated in that component -- the cookie is the only
+ * channel between the browser and the middleware, so there is nothing to import
+ * it from. Both sides assert it, which is what catches a rename.
+ */
+export const CONSENT_COOKIE = "consent"
+
+/**
+ * Whether this visitor consented to analytics.
+ *
+ * ePrivacy Art. 5(3) requires consent before a non-essential cookie is set, and
+ * `guestTracker` stores more than a cookie: `sha256(ip|user-agent|os|device)` is
+ * a device fingerprint, which is personal data on its own. The privacy policy
+ * already promised analytics "with your consent", so the record waits for an
+ * answer instead of being created behind the visitor.
+ *
+ * Only an explicit `granted` counts. Absent, `denied`, a typo and a hand-edited
+ * cookie all mean no -- consent is opt-in, so the conservative branch is the
+ * only correct default.
+ * @param {*} cookies Parsed request cookies.
+ * @return {boolean} True only on an explicit grant.
+ */
+export function hasAnalyticsConsent(cookies: Record<string, unknown> | undefined | null): boolean {
+  return String(cookies?.[CONSENT_COOKIE] ?? "").trim().toLowerCase() === "granted"
+}
+
+/**
  * Convert period shorthand to date range
+ */
+/**
+ * periodToDateRange
+ * @param {*} period
+ * @return {*}
  */
 export function periodToDateRange(period: string):
 { startDate: string; endDate: string } {
@@ -64,6 +221,12 @@ export function periodToDateRange(period: string):
 
 /**
  * Filter metrics by dimension filters
+ */
+/**
+ * filterByDimensions
+ * @param {*} data
+ * @param {*} filter
+ * @return {*}
  */
 export function filterByDimensions(data: MetricsDaily[], filter: DimensionFilter): MetricsDaily[] {
   if (!filter.country && !filter.device && !filter.browser && !filter.provider) {
@@ -130,6 +293,12 @@ export function filterByDimensions(data: MetricsDaily[], filter: DimensionFilter
 
 /**
  * Aggregate metrics by granularity (daily, weekly, monthly)
+ */
+/**
+ * aggregateByGranularity
+ * @param {*} data
+ * @param {*} granularity
+ * @return {*}
  */
 export function aggregateByGranularity(
   data: MetricsDaily[],
@@ -241,6 +410,12 @@ export function aggregateByGranularity(
 
 /**
  * Get top N entries from a dimension object
+ */
+/**
+ * getTopN
+ * @param {*} obj
+ * @param {*} n
+ * @return {*}
  */
 export function getTopN<T extends Record<string, number>>(
   obj: T,

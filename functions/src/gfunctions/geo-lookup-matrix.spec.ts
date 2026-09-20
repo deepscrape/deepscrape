@@ -1,5 +1,4 @@
 /* eslint-disable max-len */
-/* eslint-disable require-jsdoc */
 import assert from "node:assert/strict"
 import test from "node:test"
 
@@ -29,10 +28,20 @@ const USER_ID = process.env["GEO_LOOKUP_USER_ID"] || "dev-user-1"
 // Live-integration suite: only runs when explicitly opted in (see scripts/geo-lookup-prod-matrix.ps1).
 const RUN_LIVE_GEO = (process.env["GEO_RUN_LIVE_TESTS"] || "").toLowerCase() === "true"
 
+/**
+ * endpoint
+ * @param {*} path
+ * @return {*}
+ */
 function endpoint(path: string): string {
   return `${BASE_URL}${path}`
 }
 
+/**
+ * callGeoLookup
+ * @param {*} path
+ * @param {*} headers
+ */
 async function callGeoLookup(path: string, headers: Record<string, string> = {}): Promise<CallResult> {
   const response = await fetch(endpoint(path), {
     method: "GET",
@@ -55,11 +64,22 @@ async function callGeoLookup(path: string, headers: Record<string, string> = {})
   }
 }
 
+/**
+ * getResolvedIp
+ * @param {*} result
+ * @return {*}
+ */
 function getResolvedIp(result: CallResult): string | undefined {
   const parsed = result.json as LookupSuccessResponse
   return parsed?.data?.lookup?.ip
 }
 
+/**
+ * assertStatus
+ * @param {*} result
+ * @param {*} expected
+ * @param {*} message
+ */
 function assertStatus(result: CallResult, expected: number, message: string): void {
   assert.equal(
     result.status,

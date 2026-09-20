@@ -1,3 +1,10 @@
+# [0.9.0-beta.9](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.8...v0.9.0-beta.9) (2026-09-20)
+
+
+### Features
+
+* **auth:** score device risk from passive signals and mirror the device id ([1731ff9](https://github.com/deepscrape/deepscrape/commit/1731ff9e26b750dca0508eabbc5103dd6df02a64))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

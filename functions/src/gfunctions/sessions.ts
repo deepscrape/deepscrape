@@ -2647,75 +2647,6 @@ export const verifyAndTrustDevice = onCall(
   },
 )
 
-const LEGACY_DEVICE_ID = /^[A-Za-z0-9]+-[A-Za-z]+-\d{12,}$/
-
-/*
- * Adopt a trusted row written under a legacy (per-login) device id.
- *
- * Ids used to be minted per login (`Win32-brave-1789942884961`), so every session looked
- * like a new device and `trusted_devices/{deviceId}` could never match. Trusted rows carry
- * no user agent (the client never filled it in), so an alias is only granted when all of
- * this holds: the user's own last session names a legacy-shaped device id, that session's
- * stored user agent equals this request's, and that legacy id is trusted and unexpired.
- * Anything less returns null — a wrong "trusted" is a security hole; a missing one is a
- * verification code.
- *
- * @return The adopted legacy device id, or null when there is nothing safe to adopt.
- */
-const adoptLegacyTrust = async (userId: string, deviceId: string, userAgent: string): Promise<string | null> => {
-  if (!userAgent) {
-    return null
-  }
-  try {
-    const metricsSnap = await db.doc(`login_metrics/${userId}`).get()
-    const lastLoginId = String(metricsSnap.data()?.lastLoginId || "")
-    if (!lastLoginId) {
-      return null
-    }
-
-    const previous = (await db.collection("loginSessions").doc(lastLoginId).get()).data()
-    const previousDeviceId = String(previous?.deviceId || "")
-    if (previous?.userId !== userId || !LEGACY_DEVICE_ID.test(previousDeviceId)) {
-      return null
-    }
-    if (String(previous.userAgent || "") !== userAgent) {
-      return null
-    }
-
-    const legacyTrust = await db
-      .collection("users")
-      .doc(userId)
-      .collection("trusted_devices")
-      .doc(previousDeviceId)
-      .get()
-    const legacyData = legacyTrust.data()
-    if (!legacyTrust.exists || !legacyData) {
-      return null
-    }
-    if (legacyData.trustedUntil && new Date() > legacyData.trustedUntil.toDate()) {
-      return null
-    }
-
-    await db
-      .collection("users")
-      .doc(userId)
-      .collection("trusted_devices")
-      .doc(deviceId)
-      .set({
-        ...legacyData,
-        deviceId,
-        aliasedFrom: previousDeviceId,
-        aliasedAt: Timestamp.now(),
-        lastUsedAt: Timestamp.now(),
-      })
-    console.log(`✅ Trusted device ${previousDeviceId} aliased to ${deviceId} for ${userId}`)
-    return previousDeviceId
-  } catch (error) {
-    console.warn("Legacy trusted-device alias failed (non-fatal):", error)
-    return null
-  }
-}
-
 /**
            * PHASE 4.2: Cloud Function: Check if device is trusted
            */
@@ -2730,7 +2661,7 @@ export const isDeviceTrusted = onCall(
    * @param {*} request
    */
   async (request) => {
-    const { userId, deviceId, userAgent } = validateCallableData(z.object({ userId: z.string().min(1).max(128), deviceId: z.string().min(1).max(256), userAgent: z.string().max(512).optional().default("") }), request.data)
+    const { userId, deviceId } = validateCallableData(z.object({ userId: z.string().min(1).max(128), deviceId: z.string().min(1).max(256) }), request.data)
     const auth = request.auth
 
     if (!auth) {
@@ -2762,16 +2693,7 @@ export const isDeviceTrusted = onCall(
         .get()
 
       if (!trustedDeviceDoc.exists) {
-        const adoptedFrom = await adoptLegacyTrust(userId, deviceId, userAgent)
-        if (!adoptedFrom) {
-          return { trusted: false }
-        }
-        await redis.setex(trustedDeviceKey(userId, deviceId), TRUSTED_DEVICE_TTL_SECONDS, JSON.stringify({
-          deviceId,
-          trustedAt: new Date().toISOString(),
-          trustedUntil: new Date(Date.now() + TRUSTED_DEVICE_TTL_SECONDS * 1000).toISOString(),
-        }))
-        return { trusted: true, adoptedFrom }
+        return { trusted: false }
       }
 
       const deviceData = trustedDeviceDoc.data()

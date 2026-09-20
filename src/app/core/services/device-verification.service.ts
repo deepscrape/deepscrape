@@ -186,13 +186,11 @@ export class DeviceVerificationService {
     try {
       // Query user's trustedDevices collection
       const trustedDevices = await this.firestore.callFunction<
-        { userId: string; deviceId: string; userAgent: string },
+        { userId: string; deviceId: string },
         { trusted: boolean }
       >('isDeviceTrusted', {
         userId,
         deviceId: fingerprint.deviceId,
-        // Used only to alias a legacy trusted row (ids that carried a timestamp).
-        userAgent: fingerprint.userAgent,
       })
       return trustedDevices.trusted || false
     } catch (error) {

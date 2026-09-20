@@ -142,6 +142,16 @@ jobs:
         working-directory: ./functions
         run: bun install --frozen-lockfile
 
+      # functions/src also imports the shared config that lives under the REPO ROOT
+      # (src/config), and Node resolves those imports by walking up from /src/config
+      # — so it looks in the root node_modules, never in /functions/node_modules.
+      # Without this install, any spec that loads such a module dies with
+      # "Cannot find module" for root-only packages (seen with rate-limit-redis via
+      # src/infrastructure/syncaiapi -> src/config/redis-rate-limit-store). Local dev
+      # already has the root tree, which is why this only ever failed in CI.
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
       - name: Run Firebase Functions tests (with reporter)
         working-directory: ./functions
         run: bun run test -- --test-reporter=spec

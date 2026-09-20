@@ -1,0 +1,28 @@
+# gcloud `--source` uploads honour .gcloudignore INSTEAD of .gitignore.
+#
+# Written out explicitly rather than `#!include:.gitignore`, because the Dockerfile
+# COPYs dist/deepscrape/browser and the root .gitignore excludes /dist — inheriting
+# those rules would break the build with a missing-directory error.
+#
+# .claude is excluded because a broken link under it crashes the upload outright:
+#   FileNotFoundError: [WinError 3] The system cannot find the path specified:
+#   '.claude\skills\angular-developer'
+
+.claude
+.github
+.codebase-memory
+graphify-out
+screenshots
+docs
+
+node_modules
+functions/node_modules
+bff/node_modules
+functions/lib
+dist/test-out
+
+.env
+.env.*
+*.env
+*.env.keys
+firebase-debug.log

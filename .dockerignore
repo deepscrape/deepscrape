@@ -1,0 +1,17 @@
+.git
+.github
+.claude
+.codebase-memory
+graphify-out
+screenshots
+
+node_modules
+functions/node_modules
+bff/node_modules
+functions/lib
+dist/test-out
+
+.env
+.env.*
+*.env
+firebase-debug.log

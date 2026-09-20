@@ -1,0 +1,37 @@
+{
+  // The BFF had no tsconfig, so nothing type-checked the deployed server: Bun
+  // strips types without checking them, and `bun test` only exercises what the
+  // specs happen to import. This mirrors functions/tsconfig.json's shape.
+  "compilerOptions": {
+    // Bun + Elysia run ESM natively; bundler resolution matches how Bun resolves.
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "strict": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [
+      "bun"
+    ]
+  },
+  "include": [
+    "**/*.ts",
+    // bff/api.ts imports the functions handlers, so this program spans into
+    // ../functions. Its `declare global { interface Request { user ... } }`
+    // augmentation must be loaded explicitly: it is a .d.ts nothing imports, and
+    // without it every `req.user` behind the bridge reads as a type error.
+    "../functions/src/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

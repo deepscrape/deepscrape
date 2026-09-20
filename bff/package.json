@@ -7,6 +7,7 @@
     "start": "cd .. && bun run ./bff/server.ts",
     "dev": "cd .. && bun --watch run ./bff/server.ts",
     "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "docker:image": "docker build -f ../Dockerfile -t deepscrape-bff:local ..",
     "docker:local": "bun run docker:image && docker run --rm -p 8099:8080 deepscrape-bff:local",
     "docker:push": "bun run docker:image && docker tag deepscrape-bff:local us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest && docker push us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest",

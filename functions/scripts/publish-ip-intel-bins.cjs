@@ -34,6 +34,19 @@ if (!bucket) {
 }
 
 function run(command, commandArgs) {
+  // ponytail: `shell` stays because gsutil is a .cmd shim on Windows and
+  // CreateProcess will not resolve it without one — dropping it silently breaks
+  // the publish on Windows. That makes every argument shell-interpretable, so
+  // reject metacharacters HERE, at the one place all callers route through,
+  // instead of at each call site. Previously `node publish-ip-intel-bins.cjs
+  // "bucket=x&calc.exe"` executed a second command with the developer's creds.
+  const UNSAFE_SHELL = /[&|;<>^`$()\r\n"']/
+  for (const arg of [command, ...commandArgs]) {
+    if (UNSAFE_SHELL.test(String(arg))) {
+      return Promise.reject(new Error(`unsafe shell argument rejected: ${arg}`))
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(command, commandArgs, { stdio: "inherit", shell: process.platform === "win32" })
     child.on("close", (code) => {

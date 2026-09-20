@@ -1,0 +1,60 @@
+/* eslint-disable max-len */
+import assert from "node:assert/strict"
+import test from "node:test"
+import {enforceCallableRateLimit, guardedOnCall, resolveCallableLimitKey} from "./callable-limiter"
+
+// Covers the branches reachable without mocking Redis. The counter itself is the same
+// atomic FIXED_WINDOW_INCREMENT Lua script already exercised by
+// sendDeviceVerificationCode; what is new and worth pinning here is the wiring — the
+// key derivation, the overload dispatch inside the cast, and that the request still
+// reaches the handler.
+
+test("resolveCallableLimitKey keys by uid when there is one, by IP otherwise", () => {
+  // The verified uid is the better bucket and must win even when an IP is present.
+  assert.equal(
+    resolveCallableLimitKey({auth: {uid: "u1"}, rawRequest: {ip: "203.0.113.7"}}),
+    "callableRateLimit:u1",
+  )
+
+  // Anonymous callers get an IP bucket, namespaced so it cannot collide with a uid.
+  assert.equal(
+    resolveCallableLimitKey({auth: null, rawRequest: {headers: {"x-forwarded-for": "203.0.113.7, 10.0.0.1"}}}),
+    "callableRateLimit:ip:203.0.113.7",
+  )
+
+  // A loopback or absent address identifies nobody: pooling those callers into one
+  // bucket would throttle them collectively, so they are left unmetered.
+  assert.equal(resolveCallableLimitKey({}), null)
+  assert.equal(resolveCallableLimitKey({auth: null, rawRequest: {ip: "127.0.0.1"}}), null)
+  assert.equal(resolveCallableLimitKey({auth: null, rawRequest: {ip: "::1"}}), null)
+})
+
+test("enforceCallableRateLimit is a no-op when the caller cannot be identified", async () => {
+  // Must resolve, not throw: a callable that cannot be invoked at all is worse than
+  // one that is unmetered. Note an anonymous caller *with* an IP is metered now — the
+  // guest heartbeat (`recordGuestPresence`) never rejects an anonymous caller, so the
+  // old "no uid => nothing to meter" assumption left it unbounded.
+  await enforceCallableRateLimit({})
+  await enforceCallableRateLimit({auth: null})
+})
+
+test("guardedOnCall returns a callable for both overload shapes", () => {
+  // Both forms are used in this repo: onCall(handler) and onCall(opts, handler).
+  assert.ok(guardedOnCall(async () => "ok"), "handler-only overload returned nothing")
+  assert.ok(guardedOnCall({region: "us-central1"}, async () => "ok"), "options overload returned nothing")
+})
+
+test("guardedOnCall still passes the request through to the handler", async () => {
+  let seen: unknown = null
+  const wrapped = guardedOnCall(async (request: unknown) => {
+    seen = request
+    return "ok"
+  }) as unknown as {run: (r: unknown) => Promise<unknown>}
+
+  const request = {auth: null, data: {hello: "world"}}
+  const result = await wrapped.run(request)
+
+  // If the wrapper ever swallows the handler call, this fails.
+  assert.equal(result, "ok")
+  assert.equal(seen, request)
+})

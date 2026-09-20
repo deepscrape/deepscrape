@@ -140,6 +140,18 @@ const uploadIpIntelDatabasesAndSyncEnv = (envContent, parsedEnv) => {
 
     if (shouldUpload) {
       console.log(`Uploading ${db.fileName} to ${gsPath}`)
+
+      // ponytail: `shell: true` stays — gsutil is a .cmd shim on Windows and
+      // spawnSync without a shell cannot resolve it, so removing it would break
+      // `make ip2location-refresh`. The cost is that gsPath is shell-interpretable,
+      // and it is built from IP_INTEL_BUCKET / IP_INTEL_PREFIX (or .env.dev), so a
+      // value containing `;`, `&`, `|` or `$()` was command injection.
+      const UNSAFE_SHELL = /[&|;<>^`$()\r\n"']/
+      if (UNSAFE_SHELL.test(gsPath) || UNSAFE_SHELL.test(localPath)) {
+        console.error(`Refusing to upload, unsafe characters in path: ${gsPath}`)
+        process.exit(1)
+      }
+
       const upload = spawnSync("gsutil", ["cp", localPath, gsPath], {
         cwd: rootDir,
         stdio: "inherit",

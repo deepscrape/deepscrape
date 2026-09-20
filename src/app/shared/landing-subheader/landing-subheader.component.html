@@ -1,22 +1,31 @@
 <header
-  class="relative z-20 w-full border-b border-gray-200/60 dark:border-white/[0.07] bg-white/85 dark:bg-[#060606]/85 backdrop-blur-xl">
-  <div class="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2.5 sm:px-6 lg:px-8">
-    <!-- Brand -->
+  class="sticky top-0 z-50 w-full border-b transition-all duration-300 ease-out"
+  [ngClass]="{
+    'border-gray-200/60 dark:border-gray-800/60 bg-white/85 dark:bg-gray-900/90 backdrop-blur-xl shadow-lg shadow-cyan-500/5': isScrolled,
+    'border-transparent bg-white/60 dark:bg-[#060606]/60 backdrop-blur-sm': !isScrolled
+  }">
+  <div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
+    <!-- Brand — same as the landpage header -->
     <a
-      routerLink="/"
+      [routerLink]="['/']"
       aria-label="deepscrape home"
-      class="flex shrink-0 items-center gap-2.5">
+      class="group flex shrink-0 items-center gap-3">
+      <img
+        src=""
+        alt="deepscrape logo"
+        [srcset]="
+          (isDarkMode$ | async)
+            ? 'assets/logo-512x512_sky.png 2x'
+            : 'assets/logo-512x512.png 2x'
+        "
+        class="h-9 w-9 group-hover:scale-105 transition-transform duration-300" />
       <span
-        class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-rose-500 font-mono text-sm font-black text-white shadow-lg shadow-cyan-500/20">
-        DS
-      </span>
-      <span
-        class="font-['Allerta_Stencil',monospace] text-xl sm:text-2xl font-bold leading-none bg-gradient-to-r from-[#282b2c] to-[#4e50bd] dark:from-[#c4c8dc] dark:to-[#8b98f5] bg-clip-text text-transparent drop-shadow-[1px_2px_0_rgba(0,0,0,0.25)] dark:drop-shadow-[4px_4px_0_rgba(0,0,0,0.25)]">
+        class="font-['Allerta_Stencil',monospace] text-lg sm:text-xl font-normal dark:font-bold leading-none select-none bg-gradient-to-r from-[#282b2c] to-[#4e50bd] dark:from-[#7e7e7e] dark:to-[#4A5C8F] bg-clip-text text-transparent drop-shadow-[1px_2px_0_rgba(0,0,0,0.25)] dark:drop-shadow-[4px_4px_0_rgba(0,0,0,0.25)]">
         DeepScrape
       </span>
     </a>
 
-    <!-- Desktop nav (glass pill like the landpage header) -->
+    <!-- Glass-pill nav (landpage style) -->
     <nav
       class="hidden items-center gap-1 rounded-full glass-pill px-2 py-1.5 md:flex"
       aria-label="Primary">
@@ -25,16 +34,16 @@
           [routerLink]="[item.link]"
           routerLinkActive="subheader-link-active"
           [routerLinkActiveOptions]="{ exact: item.link === '/' }"
-          class="rounded-full px-3.5 py-1.5 text-sm font-medium text-gray-600 hover:text-cyan-600 dark:text-gray-300 dark:hover:text-cyan-300 transition-colors duration-200">
+          class="rounded-full px-3.5 py-1.5 text-sm font-medium text-gray-600 hover:text-cyan-600 hover:bg-white/70 dark:text-gray-300 dark:hover:text-cyan-300 dark:hover:bg-white/5 transition-colors duration-200">
           {{ item.label }}
         </a>
       }
     </nav>
 
-    <!-- Theme + language controls (same as the platform header) -->
-    <div class="flex items-center justify-end gap-1.5">
-      <app-theme-toggle [color]="{ dark: '#0b0b0b', light: '#fff' }"></app-theme-toggle>
+    <!-- Theme + language controls (landpage order) -->
+    <div class="flex items-center justify-end gap-2">
       <app-lang-picker></app-lang-picker>
+      <app-theme-toggle [color]="{ dark: '#373737f0', light: '#fff' }"></app-theme-toggle>
     </div>
   </div>
 

@@ -1,41 +1,67 @@
-<div class="container mx-auto mt-5">
-  <h1 class="text-2xl font-semibold mb-5">{{ 'SETTINGS_GENERAL.TITLE' | translate }}</h1>
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-    <div>
-      <label for="email" class="block text-sm font-medium text-gray-700">{{ 'SETTINGS_GENERAL.EMAIL' | translate }}</label>
-      <input type="email" name="email" id="email" class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+<div class="mx-auto mt-5 max-w-3xl space-y-4">
+  <h1 class="text-lg font-semibold text-gray6 dark:text-white">{{ 'SETTINGS_GENERAL.TITLE' | translate }}</h1>
+
+  <!-- Appearance — reuses the landpage theme toggle -->
+  <section class="rounded-2xl border border-gray2/60 bg-white/70 p-5 shadow-sm dark:border-gray5/40 dark:bg-gray6/40">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex items-start gap-3">
+        <lucide-angular [img]="icons['monitor']" class="mt-0.5 h-5 w-5 flex-shrink-0 text-cyan-600 dark:text-cyan-400 fill-none"></lucide-angular>
+        <div>
+          <h2 class="text-sm font-semibold text-gray6 dark:text-gray1">{{ 'SETTINGS_GENERAL.APPEARANCE' | translate }}</h2>
+          <p class="mt-0.5 text-xs leading-relaxed text-gray4 dark:text-gray3">
+            {{ 'SETTINGS_GENERAL.APPEARANCE_HINT' | translate }}
+          </p>
+        </div>
+      </div>
+      <app-theme-toggle></app-theme-toggle>
     </div>
-    <div>
-      <label for="language" class="block text-sm font-medium text-gray-700">{{ 'SETTINGS_GENERAL.LANGUAGE' | translate }}</label>
-      <select name="language" id="language" class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
-        <option>English</option>
-        <option>Spanish</option>
-        <option>French</option>
-      </select>
+  </section>
+
+  <!-- Language — reuses the header language picker -->
+  <section class="rounded-2xl border border-gray2/60 bg-white/70 p-5 shadow-sm dark:border-gray5/40 dark:bg-gray6/40">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex items-start gap-3">
+        <lucide-angular [img]="icons['globe']" class="mt-0.5 h-5 w-5 flex-shrink-0 text-cyan-600 dark:text-cyan-400 fill-none"></lucide-angular>
+        <div>
+          <h2 class="text-sm font-semibold text-gray6 dark:text-gray1">{{ 'SETTINGS_GENERAL.LANGUAGE' | translate }}</h2>
+          <p class="mt-0.5 text-xs leading-relaxed text-gray4 dark:text-gray3">
+            {{ 'SETTINGS_GENERAL.LANGUAGE_HINT' | translate }}
+          </p>
+        </div>
+      </div>
+      <app-lang-picker></app-lang-picker>
     </div>
-    <div>
-      <label class="block text-sm font-medium text-gray-700">
-        {{ 'SETTINGS_GENERAL.RECEIVE_NOTIFICATIONS' | translate }}
-      </label>
-      <div class="mt-2">
-        <label class="inline-flex items-center">
-          <input type="checkbox" class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
-          <span class="ml-2 text-sm text-gray-900">
-            {{ 'SETTINGS_GENERAL.EMAIL' | translate }}
-          </span>
-        </label>
-        <label class="inline-flex items-center ml-6">
-          <input type="checkbox" class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
-          <span class="ml-2 text-sm text-gray-900">
-            {{ 'SETTINGS_GENERAL.PUSH' | translate }}
-          </span>
-        </label>
+  </section>
+
+  <!-- Notifications — push control uses the project radio toggle -->
+  <section class="rounded-2xl border border-gray2/60 bg-white/70 p-5 shadow-sm dark:border-gray5/40 dark:bg-gray6/40">
+    <div class="flex items-start gap-3">
+      <lucide-angular [img]="icons['mail']" class="mt-0.5 h-5 w-5 flex-shrink-0 text-cyan-600 dark:text-cyan-400 fill-none"></lucide-angular>
+      <div class="min-w-0">
+        <h2 class="text-sm font-semibold text-gray6 dark:text-gray1">{{ 'SETTINGS_GENERAL.RECEIVE_NOTIFICATIONS' | translate }}</h2>
+        <p class="mt-0.5 text-xs leading-relaxed text-gray4 dark:text-gray3">{{ statusLabel() }}</p>
+        @if (notification.devices() > 0) {
+          <p class="mt-1 text-xs text-gray4 dark:text-gray3">{{ notification.devices() }} {{ 'SETTINGS_GENERAL.DEVICES' | translate }}</p>
+        }
+        @if (notification.error(); as pushError) {
+          <p class="mt-1 text-xs text-rose-600 dark:text-rose-400">{{ pushError }}</p>
+        }
       </div>
     </div>
-  </div>
-  <div class="mt-5">
-    <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-      {{ 'COMMON.SAVE' | translate }}
-    </button>
-  </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4 rounded-xl border border-gray2/60 bg-slate-50/40 px-4 py-3 dark:border-gray5/40 dark:bg-gray7/60">
+      <span class="text-sm font-medium text-gray6 dark:text-gray2">{{ 'SETTINGS_GENERAL.PUSH' | translate }}</span>
+      <app-radiotoggle [control]="pushControl" [showLabel]="false" identity="settings-push"></app-radiotoggle>
+    </div>
+
+    @if (notification.isSubscribed()) {
+      <button
+        type="button"
+        class="mt-3 text-xs font-medium text-cyan-700 underline-offset-2 hover:underline disabled:opacity-50 dark:text-cyan-400"
+        [disabled]="notification.busy()"
+        (click)="sendTestPush()">
+        {{ 'SETTINGS_GENERAL.SEND_TEST' | translate }}
+      </button>
+    }
+  </section>
 </div>

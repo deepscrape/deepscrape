@@ -2,7 +2,7 @@ import { DatePipe, AsyncPipe } from '@angular/common';
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, CUSTOM_ELEMENTS_SCHEMA, DestroyRef, HostBinding, HostListener, inject, Inject, OnInit, signal, ViewChild, ViewEncapsulation  } from '@angular/core';
 import { Observable, Subscription, tap, timer } from 'rxjs';
 import { NAVIGATOR } from 'src/app/core/providers';
-import { CheckboxComponent, ClipboardbuttonComponent, DialogComponent, PopupMenuComponent, SlideInModalComponent } from 'src/app/core/components';
+import { CheckboxComponent, ClipboardbuttonComponent, DialogComponent, PopupMenuComponent, SlideInModalComponent, StinputComponent } from 'src/app/core/components';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { MatIcon } from '@angular/material/icon';
 import { ApiKey, ApiKeyLoader, ApiKeyType } from 'src/app/core/types';
@@ -17,7 +17,7 @@ import { Router } from '@angular/router'
 
 @Component({
   selector: 'app-api-keys',
-  imports: [DatePipe, AsyncPipe, TooltipDirective, PopupMenuComponent, ClipboardbuttonComponent, MatIcon, RippleDirective, Outsideclick, SlideInModalComponent, ReactiveFormsModule, MatProgressBarModule, CheckboxComponent, FormControlPipe, DialogComponent, TranslateModule],
+  imports: [DatePipe, AsyncPipe, TooltipDirective, PopupMenuComponent, ClipboardbuttonComponent, MatIcon, RippleDirective, Outsideclick, SlideInModalComponent, ReactiveFormsModule, MatProgressBarModule, CheckboxComponent, FormControlPipe, DialogComponent, TranslateModule, StinputComponent],
   templateUrl: './api-keys.component.html',
   styleUrl: './api-keys.component.scss',
   encapsulation: ViewEncapsulation.None,

@@ -4,6 +4,10 @@ import { FirestoreService } from './firestore.service';
 import { catchError } from 'rxjs/operators';
 import { of, throwError, Observable } from 'rxjs';
 import { isPlatformBrowser } from '@angular/common';
+// Shared with the server's batch handler: it rejects anything larger with a 413.
+import { CLIENT_EVENT_LIST_MAX } from '../../../config/redis-keys';
+// Shared with the Functions drain, which counts anything off this list as `unknown`.
+import { ClientAnalyticsEvent } from '../../../config/analytics-events';
 
 
 @Injectable({
@@ -11,6 +15,50 @@ import { isPlatformBrowser } from '@angular/common';
 })
 export class AnalyticsService {
   private analyticsBackendAvailable = true;
+
+  /**
+   * `trackEvent` used to POST once per event even though `/event/analytics/batch`
+   * already existed next door, so a click burst became a request burst. Queue here
+   * and let the existing batch endpoint do the talking.
+   * ponytail: single 3s timer, no size cap. Add a cap if a burst can exceed the
+   * backend's body limit; the unload flush below covers the loss window.
+   */
+  private eventQueue: any[] = []
+  private flushTimer: ReturnType<typeof setTimeout> | null = null
+  private lastToken?: string
+  private unloadFlushAttached = false
+  private static readonly FLUSH_MS = 3000
+
+  private enqueueEvent(event: any, token?: string): void {
+    this.eventQueue.push(event)
+    if (token) this.lastToken = token
+    this.attachUnloadFlush()
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flushEvents(), AnalyticsService.FLUSH_MS)
+    }
+  }
+
+  private flushEvents(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
+    if (!this.eventQueue.length) return
+
+    // Chunk at the server's cap: it answers 413 and drops the WHOLE batch, so an
+    // over-large flush would lose every queued event at once.
+    while (this.eventQueue.length) {
+      const events = this.eventQueue.splice(0, CLIENT_EVENT_LIST_MAX)
+      this.batchTrackEvents(events, this.lastToken).subscribe({ error: () => undefined })
+    }
+  }
+
+  /** Telemetry must survive a tab close, or the last flush window is silently lost. */
+  private attachUnloadFlush(): void {
+    if (this.unloadFlushAttached || !isPlatformBrowser(this.platformId)) return
+    this.unloadFlushAttached = true
+    document.addEventListener('pagehide', () => this.flushEvents())
+  }
 
   constructor(
     @Inject(PLATFORM_ID) private platformId: Object,
@@ -34,8 +82,12 @@ export class AnalyticsService {
   
   /**
    * Send analytics event to Google Analytics and backend for aggregation
+   *
+   * The name is typed against the shared allow-list, so a typo is a compile error
+   * instead of a permanent `clientEvents.<typo>` counter key nothing reads. Add the
+   * name to `src/config/analytics-events.ts` first, then emit it.
    */
-  trackEvent(eventType: string, metadata: any = {}, token?: string, userId?: string, guestId?: string) {
+  trackEvent(eventType: ClientAnalyticsEvent, metadata: any = {}, token?: string, userId?: string, guestId?: string) {
     if (!isPlatformBrowser(this.platformId)) {
       return of(null)
     }
@@ -47,20 +99,9 @@ export class AnalyticsService {
 
     // Google Analytics logEvent
     this.fireService.logEvent(eventType, metadata)
-    // Send event to backend
-    const event = {
-      eventType,
-      metadata,
-      userId,
-      guestId
-    }
-    const headers = new HttpHeaders({
-      'Accept': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` })
-    });
-    return this.http.post('/event/analytics/event', event, { headers }).pipe(
-      catchError((error) => this.handleError(error))
-    );
+    // Queue for the next flush instead of one POST per event.
+    this.enqueueEvent({ eventType, metadata, userId, guestId }, token)
+    return of(null);
   }
 
   /**

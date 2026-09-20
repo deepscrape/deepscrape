@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { interval, Subscription, merge, fromEvent, timer, Subject, throwError, Observable, of } from 'rxjs';
+import { CookieService } from 'ngx-cookie-service';
+import { Subscription, merge, fromEvent, timer, Subject, throwError, Observable, of } from 'rxjs';
 import { takeUntil, switchMap, filter, startWith, tap, catchError } from 'rxjs/operators';
 import { WindowToken } from './window.service';
 import { GuestTrackingService } from './guest-tracking.service';
@@ -10,6 +11,7 @@ export class HeartbeatService {
 
     private window = inject(WindowToken);
     private guestTrackingService = inject(GuestTrackingService, { optional: true });
+    private cookieService = inject(CookieService);
     private intervalSub: Subscription | null = null;
     private inactivitySub: Subscription | null = null;
     private isPaused = false;
@@ -22,6 +24,13 @@ export class HeartbeatService {
         // Listen for network changes
         this.window.addEventListener('offline', () => this.pause('offline'));
         this.window.addEventListener('online', () => this.resume('online'));
+        // A hidden tab keeps its 60s heartbeat POST alive forever — browsers throttle
+        // background timers, they do not stop them. Reuse the existing pause/resume
+        // path rather than adding a second mechanism.
+        this.window.document?.addEventListener('visibilitychange', () => {
+            if (this.window.document?.hidden) this.pause('hidden');
+            else this.resume('visible');
+        });
     }
 
     start(token?: string, intervalMs: number = 60000) {
@@ -45,13 +54,18 @@ export class HeartbeatService {
         const headers = this.buildHeaders(token);
 
         // Heartbeat interval
-        this.intervalSub = interval(intervalMs).pipe(
+        // `timer(0, …)` rather than `interval(…)`: the first beat fires immediately so a
+        // consented visitor with no id yet is minted now, not up to a minute later.
+        this.intervalSub = timer(0, intervalMs).pipe(
             filter(() => !this.isPaused && navigator.onLine),
             takeUntil(this.stop$),
             switchMap(() => {
                 // Heartbeat requires either a user or guest identifier from cookies/session context.
                 // During device-verification gated sign-in, auth can be true before IDs are established.
-                if (!this.hasTrackingIdentity()) {
+                // A consented anonymous visitor is the exception: they have no id *yet*, and this
+                // first POST is what makes the server mint one (`gid`), after which the id branch
+                // above takes over. Without it the tracker is never asked, so the count stays zero.
+                if (!this.hasTrackingIdentity() && !this.hasAnalyticsConsent()) {
                     return of({ success: false, skipped: true, reason: 'missing-id' });
                 }
 
@@ -60,11 +74,6 @@ export class HeartbeatService {
                 );
             }),
         ).subscribe({
-            next(result: any) {
-                if (!result?.skipped) {
-                    console.log('Heartbeat successful')
-                }
-            },
             error(err) {
                 console.error('Heartbeat error:', err);
             },
@@ -90,6 +99,25 @@ export class HeartbeatService {
     private hasTrackingIdentity(): boolean {
         const state = this.guestTrackingService?.getSessionContext();
         return Boolean(state?.userId || state?.guestId);
+    }
+
+    /**
+     * Whether the visitor granted analytics consent (`consent=granted`, set by
+     * `CookieConsentComponent`).
+     *
+     * The heartbeat is the ONLY same-origin call an anonymous visitor makes that
+     * reaches `guestTracker`, and page views cannot reach it at all — Hosting serves
+     * the prerendered HTML as a static file before any rewrite applies. Without this
+     * branch an anonymous visitor has neither a user nor a guest id, so no request is
+     * ever sent, so the tracker is never given the chance to mint the `gid` that would
+     * give them an identity: the count stays at zero for every visitor.
+     */
+    private hasAnalyticsConsent(): boolean {
+        try {
+            return this.cookieService.get('consent') === 'granted';
+        } catch {
+            return false;
+        }
     }
 
     private handleHeartbeatError(error: any) {
@@ -120,13 +148,13 @@ export class HeartbeatService {
         this.isPaused = true;
     }
 
-    private pause(reason: 'offline' | 'inactivity') {
+    private pause(reason: 'offline' | 'inactivity' | 'hidden') {
         this.isPaused = true;
         // Optionally: notify app of pause reason
         // console.log(`Heartbeat paused due to ${reason}`);
     }
 
-    private resume(reason: 'online' | 'activity') {
+    private resume(reason: 'online' | 'activity' | 'visible') {
         if (!this.isPaused) return;
         this.isPaused = false;
         // Optionally: notify app of resume reason

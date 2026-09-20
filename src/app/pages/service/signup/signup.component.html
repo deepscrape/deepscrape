@@ -291,6 +291,34 @@
           </small>
         }
       </div>
+      <!-- Explicit consent, required before the account can be created — a real
+           `requiredTrue` control, so the submit button stays disabled until it is
+           checked. `app-checkbox` takes `title` as a string, so the two links sit
+           on the line beneath it rather than inside the label. -->
+      <div
+        class="rounded-lg border border-gray2/70 bg-slate-50/60 p-3 dark:border-gray5/50 dark:bg-gray7/50">
+        <app-checkbox
+          [control]="termsControl"
+          [title]="'SIGNUP.TERMS_ACCEPT_PREFIX' | translate"></app-checkbox>
+        <p class="mt-1 text-xs leading-relaxed text-gray6 dark:text-gray1">
+          <a
+            [routerLink]="['/terms']"
+            class="font-semibold text-cyan-700 underline-offset-2 hover:underline dark:text-cyan-400">{{ 'FOOTER.TERMS' | translate }}</a>
+          {{ 'SIGNUP.TERMS_ACCEPT_AND' | translate }}
+          <a
+            [routerLink]="['/privacy']"
+            class="font-semibold text-cyan-700 underline-offset-2 hover:underline dark:text-cyan-400">{{ 'FOOTER.PRIVACY' | translate }}</a>
+        </p>
+        @if (
+          signupForm.get('terms')?.invalid &&
+          (signupForm.get('terms')?.dirty || signupForm.get('terms')?.touched)
+        ) {
+          <small
+            class="mt-1 block text-xs font-medium text-red-600 dark:text-red-300">
+            {{ 'SIGNUP.TERMS_REQUIRED' | translate }}
+          </small>
+        }
+      </div>
       <div class="mt-4">
         <button
           id="signup-button"

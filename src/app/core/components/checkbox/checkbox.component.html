@@ -1,7 +1,9 @@
 <label
   class="relative z-10 inline-flex cursor-pointer select-none items-center pr-3">
+  <!-- No `id`: the wrapping <label> already associates this input, and binding
+       the visible `title` produced ids with spaces in them (`id="I agree to
+       the"`) for callers whose title is a sentence rather than a slug. -->
   <input
-    id="{{ title }}"
     [formControl]="control"
     type="checkbox"
     class="ml-1 h-0 w-0 rounded border-0 text-gray-800 opacity-0 transition-all duration-150 ease-linear dark:text-gray6" />

@@ -1,10 +1,10 @@
 import { ChangeDetectorRef, Component, OnDestroy, OnInit, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule, DecimalPipe, NgClass } from '@angular/common';
-import { FormControl, FormsModule } from '@angular/forms';
+import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { BaseChartDirective } from 'ng2-charts';
 import { ChartConfiguration, ChartData } from 'chart.js';
 import { FirestoreService, FirestoreAnalyticsService } from '../../core/services';
-import { AnalyticsRangeService, RetentionCohort } from '../../core/services/analytics-range.service';
+import { AnalyticsPeriod, AnalyticsRangeService, RetentionCohort } from '../../core/services/analytics-range.service';
 import {
     mapSessionRecordToDisplaySession,
     resolveSessionIdFromRecord,
@@ -19,6 +19,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { myIcons } from '../../shared/lucideicons';
 import { RouterLink } from '@angular/router';
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component';
+import { CheckboxComponent, StinputComponent } from 'src/app/core/components';
 import { SessionDisplayInfo } from 'src/app/core/types';
 import { firstValueFrom, Subscription } from 'rxjs';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
@@ -79,6 +80,10 @@ interface Dashboard {
     byChannel?: Record<string, number>;
     byReferrer?: Record<string, number>;
     byProxyType?: Record<string, number>;
+    byAS?: Record<string, number>;
+    byUsageType?: Record<string, number>;
+    byDomain?: Record<string, number>;
+    byThreat?: Record<string, number>;
 }
 
 interface RangeMetrics {
@@ -115,6 +120,10 @@ interface RangeMetrics {
     byChannel?: Record<string, number>;
     byReferrer?: Record<string, number>;
     byProxyType?: Record<string, number>;
+    byAS?: Record<string, number>;
+    byUsageType?: Record<string, number>;
+    byDomain?: Record<string, number>;
+    byThreat?: Record<string, number>;
     byBotKind?: Record<string, number>;
     bots?: number;
     funnel?: Record<string, number>;
@@ -161,14 +170,25 @@ interface DimensionPanel {
     rows: RankRow[];
 }
 
-type AnalyticsPeriod = 'last-30m' | 'last-1h' | 'last-24h' | 'last-7d' | 'last-30d' | 'last-90d' | 'custom';
-
-/** Content = traffic/engagement, payments = money, platform = accounts and sessions. */
+/**
+ * `AnalyticsPeriod` is imported from the range service rather than redeclared: the
+ * local copy drifted, so the service supported `last-5m`/`last-3d` while the picker
+ * could not offer them.
+ */
 type AnalyticsSection = 'content' | 'payments' | 'platform';
+
+/** Nightly snapshot from `metrics_billing/current` — state, not a period aggregate. */
+interface BillingMetricsView {
+    payingAccounts: number;
+    activeTrials: number;
+    pastDueAccounts: number;
+    mrrEur: number;
+    trialPipelineEur: number;
+}
 
 @Component({
     selector: 'app-admin-analytics',
-    imports: [BaseChartDirective, DecimalPipe, NgClass, LucideAngularModule, RouterLink, FormsModule, DropdownComponent, TranslateModule],
+    imports: [BaseChartDirective, DecimalPipe, NgClass, LucideAngularModule, RouterLink, ReactiveFormsModule, DropdownComponent, TranslateModule, StinputComponent, CheckboxComponent],
     templateUrl: './admin-analytics.component.html',
     styleUrls: ['./admin-analytics.component.scss'],
     changeDetection: ChangeDetectionStrategy.OnPush
@@ -198,6 +218,9 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
     readonly icons = myIcons;
     trafficPanels: DimensionPanel[] = [];
     paymentPanels: DimensionPanel[] = [];
+    /** Billing state for the payments tab; null until the snapshot read resolves. */
+    billingMetrics: BillingMetricsView | null = null;
+    planMixEntries: Array<[string, number]> = [];
     readonly sectionTabs: Array<{ id: AnalyticsSection; label: string }> = [
         { id: 'content', label: 'ADMIN_ANALYTICS.SECTION_CONTENT' },
         { id: 'payments', label: 'ADMIN_ANALYTICS.SECTION_PAYMENTS' },
@@ -217,11 +240,13 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
     botTrafficCount = 0;
     botSharePct = 0;
     displayPeriodDays = 7;
-    adminSessionTargetUserId = '';
+    // ponytail: string controls — StinputComponent is FormControl<string>; the limit is
+    // parsed with Number() at call time.
+    readonly adminSessionTargetUserId = new FormControl('', { nonNullable: true });
     adminSessionsLoading = false;
     adminSessionsError: string | null = null;
-    adminSessionLimit = 25;
-    adminActiveOnly = true;
+    readonly adminSessionLimit = new FormControl('25', { nonNullable: true, validators: [Validators.min(1), Validators.max(200)] });
+    readonly adminActiveOnly = new FormControl(true, { nonNullable: true });
     adminSessions: SessionDisplayInfo[] = [];
     revokingAdminSessionId = '';
 
@@ -243,12 +268,15 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
         name: 'ADMIN_ANALYTICS1.P_7D',
         code: 'last-7d'
     }, { nonNullable: true });
-    customStartDate = this.getDateOffset(-7);
-    customEndDate = this.getDateOffset(0);
+    readonly customStartDate = new FormControl(this.getDateOffset(-7), { nonNullable: true });
+    readonly customEndDate = new FormControl(this.getDateOffset(0), { nonNullable: true });
     readonly periodOptions: Array<{ value: AnalyticsPeriod; label: string }> = [
+        { value: 'last-5m', label: 'ADMIN_ANALYTICS.RANGE_LAST_5M' },
         { value: 'last-30m', label: 'ADMIN_ANALYTICS.RANGE_LAST_30M' },
         { value: 'last-1h', label: 'ADMIN_ANALYTICS.RANGE_LAST_1H' },
+        { value: 'last-3h', label: 'ADMIN_ANALYTICS.RANGE_LAST_3H' },
         { value: 'last-24h', label: 'ADMIN_ANALYTICS.RANGE_LAST_24H' },
+        { value: 'last-3d', label: 'ADMIN_ANALYTICS.RANGE_LAST_3D' },
         { value: 'last-7d', label: 'ADMIN_ANALYTICS1.P_7D' },
         { value: 'last-30d', label: 'ADMIN_ANALYTICS1.P_30D' },
         { value: 'last-90d', label: 'ADMIN_ANALYTICS1.P_90D' },
@@ -600,12 +628,12 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
             !!value && Object.keys(value).length > 0;
 
         this.trafficPanels = [
-            this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_IP', '#F43F5E',
-                has(rangeMetrics?.byIP) ? rangeMetrics.byIP : dashboard.byIP, 'Unknown IP'),
             this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_REGION', '#06B6D4',
                 has(rangeMetrics?.byRegion) ? rangeMetrics.byRegion : dashboard.byRegion, 'Unknown Region'),
-            this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_ASN', '#8B5CF6',
-                has(rangeMetrics?.byASN) ? rangeMetrics.byASN : dashboard.byASN, 'Unknown ASN'),
+            this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_AS', '#A78BFA',
+                has(rangeMetrics?.byAS) ? rangeMetrics.byAS : dashboard.byAS, 'Unknown AS'),
+            this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_USAGE_TYPE', '#64748B',
+                has(rangeMetrics?.byUsageType) ? rangeMetrics.byUsageType : dashboard.byUsageType, 'Unknown usage type'),
             this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_COUNTRY', '#14B8A6',
                 has(rangeMetrics?.byCountry) ? rangeMetrics.byCountry : (has(dashboard.topCountries) ? dashboard.topCountries : dashboard.byCountry), 'Unknown Country'),
             this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_DEVICE', '#0F766E',
@@ -618,6 +646,8 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
                 has(rangeMetrics?.byReferrer) ? rangeMetrics.byReferrer : dashboard.byReferrer, 'direct'),
             this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_PROXY', '#EF4444',
                 has(rangeMetrics?.byProxyType) ? rangeMetrics.byProxyType : dashboard.byProxyType, 'direct'),
+            this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_THREAT', '#991B1B',
+                has(rangeMetrics?.byThreat) ? rangeMetrics.byThreat : dashboard.byThreat, 'Unknown'),
             this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_BOT', '#A855F7',
                 has(rangeMetrics?.byBotKind) ? rangeMetrics.byBotKind : null, 'bot'),
             this.buildDimensionPanel('ADMIN_ANALYTICS.PANEL_PAGE', '#0EA5E9',
@@ -689,6 +719,33 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
             .sort((a, b) => b.amount - a.amount);
     }
 
+    /**
+     * Read the nightly billing snapshot (`metrics_billing/current`). Fired separately
+     * from the range load so a missing snapshot can never blank the traffic dashboard.
+     */
+    private async loadBillingMetrics(): Promise<void> {
+        try {
+            const snapshot = await this.analyticsRangeService.getBillingMetrics();
+            if (!snapshot) {
+                return;
+            }
+
+            this.billingMetrics = {
+                payingAccounts: Number(snapshot['payingAccounts'] || 0),
+                activeTrials: Number(snapshot['activeTrials'] || 0),
+                pastDueAccounts: Number(snapshot['pastDueAccounts'] || 0),
+                mrrEur: Number(snapshot['mrrEur'] || 0),
+                trialPipelineEur: Number(snapshot['trialPipelineEur'] || 0),
+            };
+            this.planMixEntries = Object.entries((snapshot['planMix'] || {}) as Record<string, number>)
+                .map(([plan, count]) => [plan, Number(count || 0)] as [string, number])
+                .sort((a, b) => b[1] - a[1]);
+            this.renderNow();
+        } catch (error) {
+            console.warn('Billing metrics unavailable:', error);
+        }
+    }
+
     private refreshRetention(rangeMetrics: RangeMetrics): void {
         this.retentionRows = (rangeMetrics?.retention || []).map((row: RetentionCohort) => {
             const size = Number(row.size || 0);
@@ -749,6 +806,10 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
             return;
         }
 
+        // Independent reads: start the period metrics alongside the summary instead of
+        // paying two round trips in series on the dashboard's critical path.
+        const rangeMetricsPromise = this.resolveMetricsForSelectedPeriod();
+
         // ✅ OPTIMIZED: Fetch pre-aggregated dashboard summary (1 read instead of 3+)
         const dashboardSummary = await this.analyticsRangeService.getDashboardSummary();
 
@@ -773,12 +834,17 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
             ? Math.round((this.registeredGuestsCount / this.guestCount) * 10000) / 100
             : 0;
 
-        // Get time-series data for charts based on selected period
-        const rangeMetrics = await this.resolveMetricsForSelectedPeriod();
+        // Time-series data for charts based on selected period (already in flight)
+        const rangeMetrics = await rangeMetricsPromise;
 
         // Track whether pre-computed range data was available (for info banner)
-        this.showRangeMissingBanner = !rangeMetrics && this.selectedPeriod !== 'last-7d'
-            && this.selectedPeriod !== 'last-30m' && this.selectedPeriod !== 'last-1h' && this.selectedPeriod !== 'last-24h';
+        // Periods answered by a computed series (`metrics_minutely`/`metrics_hourly`/3 days of
+        // `metrics_daily`) instead of a precomputed `metrics_range` document — a null result
+        // there is not a missing range doc, so it must not raise the banner.
+        const computedPeriods: AnalyticsPeriod[] = [
+            'last-5m', 'last-30m', 'last-1h', 'last-3h', 'last-24h', 'last-3d',
+        ];
+        this.showRangeMissingBanner = !rangeMetrics && !computedPeriods.includes(this.selectedPeriod);
 
         if (rangeMetrics) {
             this.totalLogins = rangeMetrics.totalLogins ?? this.totalLogins;
@@ -877,7 +943,7 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
     }
 
     async loadAdminSessions(): Promise<void> {
-        const targetUserId = this.adminSessionTargetUserId.trim();
+        const targetUserId = this.adminSessionTargetUserId.value.trim();
         if (!targetUserId) {
             this.adminSessionsError = this.translate.instant('ADMIN_ANALYTICS.ERR_SESSION_TARGET_REQUIRED');
             this.adminSessions = [];
@@ -893,8 +959,8 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
             const response = await firstValueFrom(
                 this.analyticsRangeService.getUserLoginSessionsByAdmin(
                     targetUserId,
-                    this.adminSessionLimit,
-                    this.adminActiveOnly,
+                    Number(this.adminSessionLimit.value),
+                    this.adminActiveOnly.value,
                 ),
             );
 
@@ -1260,6 +1326,7 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
         this.refreshFunnel(rangeMetrics);
         this.refreshRevenue(rangeMetrics);
         this.refreshRetention(rangeMetrics);
+        void this.loadBillingMetrics();
         this.renderNow();
     }
 
@@ -1360,10 +1427,14 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
         if (this.selectedPeriod === 'last-90d') {
             return 90;
         }
-        if (this.selectedPeriod === 'last-24h') {
-            return 1;
+        if (this.selectedPeriod === 'last-3d') {
+            return 3;
         }
-        if (this.selectedPeriod === 'last-1h' || this.selectedPeriod === 'last-30m') {
+        if (this.selectedPeriod === 'last-24h'
+            || this.selectedPeriod === 'last-3h'
+            || this.selectedPeriod === 'last-1h'
+            || this.selectedPeriod === 'last-30m'
+            || this.selectedPeriod === 'last-5m') {
             return 1;
         }
 
@@ -1373,8 +1444,8 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
     private async resolveMetricsForSelectedPeriod(): Promise<any> {
         return this.analyticsRangeService.resolveRangeMetrics({
             period: this.selectedPeriod,
-            customStartDate: this.customStartDate,
-            customEndDate: this.customEndDate,
+            customStartDate: this.customStartDate.value,
+            customEndDate: this.customEndDate.value,
         });
     }
 
@@ -1382,7 +1453,7 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
         if (this.selectedPeriod !== 'custom') {
             return this.selectedPeriod;
         }
-        return `custom:${this.customStartDate}:${this.customEndDate}`;
+        return `custom:${this.customStartDate.value}:${this.customEndDate.value}`;
     }
 
     private getDateOffset(offsetDays: number): string {

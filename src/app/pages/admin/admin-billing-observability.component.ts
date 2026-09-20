@@ -1,8 +1,9 @@
 
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, inject } from '@angular/core'
-import { FormsModule } from '@angular/forms'
+import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms'
 import { RouterLink } from '@angular/router'
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
+import { CheckboxComponent, StinputComponent } from 'src/app/core/components'
 import { RippleDirective } from 'src/app/core/directives'
 import { BillingService } from 'src/app/core/services'
 
@@ -17,7 +18,7 @@ type ObservabilityResponse = {
 @Component({
   selector: 'app-admin-billing-observability',
   standalone: true,
-  imports: [FormsModule, RouterLink, RippleDirective, TranslateModule],
+  imports: [ReactiveFormsModule, RouterLink, RippleDirective, TranslateModule, StinputComponent, CheckboxComponent],
   templateUrl: './admin-billing-observability.component.html',
   styleUrl: './admin-billing-observability.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -31,11 +32,13 @@ export class AdminBillingObservabilityComponent {
   error: string | null = null
   data: ObservabilityResponse | null = null
 
-  includeAcknowledged = false
-  incidentLimit = 20
-  failedEventLimit = 20
-  pendingEventLimit = 20
-  pastDueLimit = 30
+  // ponytail: string controls — StinputComponent is FormControl<string>; the values
+  // are parsed by sanitizeLimit() at submit time, so no numeric control is needed.
+  readonly includeAcknowledged = new FormControl(false, { nonNullable: true })
+  readonly incidentLimit = new FormControl('20', { nonNullable: true, validators: [Validators.min(1), Validators.max(100)] })
+  readonly failedEventLimit = new FormControl('20', { nonNullable: true, validators: [Validators.min(1), Validators.max(100)] })
+  readonly pendingEventLimit = new FormControl('20', { nonNullable: true, validators: [Validators.min(1), Validators.max(100)] })
+  readonly pastDueLimit = new FormControl('30', { nonNullable: true, validators: [Validators.min(1), Validators.max(200)] })
 
   readonly retryingEventIds = new Set<string>()
   readonly acknowledgingIncidentIds = new Set<string>()
@@ -51,11 +54,11 @@ export class AdminBillingObservabilityComponent {
 
     try {
       this.data = await this.billingService.getAdminBillingObservability({
-        includeAcknowledged: this.includeAcknowledged,
-        incidentLimit: this.sanitizeLimit(this.incidentLimit, 1, 100, 20),
-        failedEventLimit: this.sanitizeLimit(this.failedEventLimit, 1, 100, 20),
-        pendingEventLimit: this.sanitizeLimit(this.pendingEventLimit, 1, 100, 20),
-        pastDueLimit: this.sanitizeLimit(this.pastDueLimit, 1, 200, 30),
+        includeAcknowledged: this.includeAcknowledged.value,
+        incidentLimit: this.sanitizeLimit(Number(this.incidentLimit.value), 1, 100, 20),
+        failedEventLimit: this.sanitizeLimit(Number(this.failedEventLimit.value), 1, 100, 20),
+        pendingEventLimit: this.sanitizeLimit(Number(this.pendingEventLimit.value), 1, 100, 20),
+        pastDueLimit: this.sanitizeLimit(Number(this.pastDueLimit.value), 1, 200, 30),
       })
     } catch (error) {
       this.error = error instanceof Error ? error.message : this.translate.instant('ADMIN_BILLING_OBS.ERR_FETCH')

@@ -246,8 +246,8 @@ export class AuthzService {
     action: AuthResources[Resource]['action'],
     data?: Partial<AuthResources[Resource]['dataType']>,
   ): Observable<boolean> {
-    return combineLatest([this.authService.user$, this.memberships$, this.activeOrgId$, this.strictOrgMode$]).pipe(
-      map(([user, memberships, activeOrgId, strictOrgMode]) => {
+    return combineLatest([this.authService.user$, this.memberships$, this.activeOrgId$]).pipe(
+      map(([user, memberships, activeOrgId]) => {
         if (!user?.uid) {
           return false;
         }
@@ -260,7 +260,12 @@ export class AuthzService {
 
         const mergedData = {
           orgId: data?.orgId || activeOrgId || undefined,
-          ownerId: data?.ownerId || ((data?.orgId || activeOrgId || strictOrgMode) ? undefined : user.uid),
+          // ponytail: must mirror requirePermission exactly, or the UI shows controls
+          // the API then 403s. The server stopped reading ownerId from the request
+          // (it was the cross-tenant IDOR in authz.middleware.ts), so a
+          // template-supplied data.ownerId must not make the client predict `self`.
+          // Org scope ⇒ no ownerId; otherwise the caller owns their own resources.
+          ownerId: (data?.orgId || activeOrgId) ? undefined : user.uid,
         } as AuthResources[Resource]['dataType'];
 
         return canPerform(subject, resource, action, mergedData);

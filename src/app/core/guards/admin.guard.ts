@@ -12,8 +12,3 @@ export const adminGuard: CanActivateFn = () => {
         map((isAdmin): boolean | UrlTree => (isAdmin ? true : router.createUrlTree(['/']))),
     );
 };
-
-/** @deprecated Use the functional `adminGuard` instead. */
-export class AdminGuard {
-    canActivate = adminGuard;
-}

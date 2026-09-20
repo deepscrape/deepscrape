@@ -46,3 +46,7 @@ class="relative bg-gradient-to-br dark:from-gray-900 dark:via-gray-900 dark:to-g
   [duration]="snackbarDuration"
   [type]="snackbarType"
   (actionClick)="onSnackbarAction()"></app-snackbar>
+
+<!-- Analytics consent. The cookie it writes is read server-side by guestTracker
+     in the Cloud Function, which mints no guest identity without it. -->
+<app-cookie-consent></app-cookie-consent>

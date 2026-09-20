@@ -1,6 +1,7 @@
 import { OperationStatusService } from './operation-status.service';
 import { CrawlAPIService } from './crawlapi.service';
 import { AnalyticsService } from './analytics.service';
+import { NotificationCenterService } from './notification-center.service';
 import { of } from 'rxjs';
 import { SnackBarType } from '../components/snackbar/snackbar.component';
 import { CrawlOperationStatus } from '../enum';
@@ -9,12 +10,16 @@ describe('OperationStatusService', () => {
   let service: OperationStatusService;
   let crawlServiceMock: jasmine.SpyObj<CrawlAPIService>;
   let analyticsMock: jasmine.SpyObj<AnalyticsService>;
+  let notificationsMock: jasmine.SpyObj<NotificationCenterService>;
 
   beforeEach(() => {
     crawlServiceMock = jasmine.createSpyObj('CrawlAPIService', ['getTaskStatus']);
     analyticsMock = jasmine.createSpyObj('AnalyticsService', ['trackEvent']);
     analyticsMock.trackEvent.and.returnValue(of(null));
-    service = new OperationStatusService(crawlServiceMock, analyticsMock);
+    // Pre-existing staleness: the service grew a third constructor arg and this spec
+    // was never updated, so the whole suite failed to compile before any test ran.
+    notificationsMock = jasmine.createSpyObj('NotificationCenterService', ['push']);
+    service = new OperationStatusService(crawlServiceMock, analyticsMock, notificationsMock);
   });
 
   it('should emit task status values from the crawl service', (done) => {

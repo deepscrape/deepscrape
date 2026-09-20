@@ -7,12 +7,9 @@ import { provideServiceWorker } from '@angular/service-worker';
 import { FirebaseApp, initializeApp, provideFirebaseApp } from '@angular/fire/app';
 import { connectFirestoreEmulator, getFirestore, provideFirestore } from '@angular/fire/firestore';
 import { connectFunctionsEmulator, getFunctions, provideFunctions } from '@angular/fire/functions';
-import { getMessaging, provideMessaging } from '@angular/fire/messaging';
-import { getPerformance, providePerformance } from '@angular/fire/performance';
 import { getStorage, provideStorage } from '@angular/fire/storage';
-import { provideAnalytics, getAnalytics, ScreenTrackingService, UserTrackingService } from '@angular/fire/analytics';
+import { provideAnalytics, getAnalytics, UserTrackingService } from '@angular/fire/analytics';
 
-import { initializeAppCheck, ReCaptchaEnterpriseProvider, provideAppCheck, ReCaptchaV3Provider } from '@angular/fire/app-check';
 import { getAuth, inMemoryPersistence, initializeAuth, provideAuth } from '@angular/fire/auth';
 import { LoadingBarHttpClientModule } from '@ngx-loading-bar/http-client';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
@@ -78,9 +75,25 @@ export const appConfig: ApplicationConfig = {
     provideZonelessChangeDetection(),
     provideRouter(routes),
     { provide: TitleStrategy, useClass: SeoTitleStrategy },
-    provideAnalytics(() => getAnalytics()),
-    ScreenTrackingService, // track page views automatically
-    UserTrackingService, // track unique users automatically
+    // GA is a third-party processor: loading it sets Google's own `_ga` cookies
+    // and starts sending page views, which is the lawful-basis problem the
+    // consent banner exists to fix. `guestTracker` in the Cloud Function reads
+    // the same cookie, so one choice gates both the first-party guest record and
+    // this. Read straight from `document.cookie`: this array is evaluated before
+    // any injection context exists, so `inject()` is not available here.
+    // ponytail: decided once at bootstrap, so accepting mid-session starts GA on
+    // the next page load rather than instantly.
+    ...((typeof document !== 'undefined' &&
+      document.cookie.split('; ').includes('consent=granted'))
+      ? [
+          provideAnalytics(() => getAnalytics()),
+          // No ScreenTrackingService: it sent its own `page_view` for every navigation on
+          // top of the one `AppComponent` already tracks through `AnalyticsService` (which
+          // also feeds the first-party fact table), so every page view was counted twice
+          // in GA4. One emitter, both pipelines.
+          UserTrackingService, // track unique users automatically
+        ]
+      : []),
     ...hydrationProviders,
     provideServiceWorker('ngsw-worker.js', {
       enabled: !isDevMode(),
@@ -107,33 +120,18 @@ export const appConfig: ApplicationConfig = {
       }
       return functions;
     }),
-    provideMessaging(() => getMessaging()),
-    providePerformance(() => getPerformance()),
     provideStorage(() => getStorage()),
-    {
-      provide: 'APP_CHECK',
-      useFactory: () => {
-        if (isPlatformBrowser(inject(PLATFORM_ID))) {
-          try {
-            return initializeAppCheck(undefined, {
-              provider: new ReCaptchaV3Provider(environment.RECAPTCHA_KEY), // ReCaptchaEnterpriseProvider
-              isTokenAutoRefreshEnabled: true
-            })
-          }
-          catch (error) {
-            console.error('AppCheck initialization failed:', error);
-            return null;
-          }
-        }
-        return null;
-      }
-    },
-    /* provideAppCheck(() => {
-      // TODO get a reCAPTCHA Enterprise here https://console.cloud.google.com/security/recaptcha?project=_
-      const provider = new ReCaptchaEnterpriseProvider("");
-      return initializeAppCheck(undefined, { provider, isTokenAutoRefreshEnabled: true });
-    }),
- */ provideAnimationsAsync(),
+    // Messaging and Performance are intentionally NOT provided here. Both are reached
+    // through dynamic `import()` inside NotificationService / PerformanceService, so
+    // their SDKs stay out of the initial bundle and load on first use (push opt-in,
+    // first trace). Providing them at root would pull both into the eager chunk.
+    // ponytail: the App Check client here was dead code — the 'APP_CHECK' string token
+    // is never injected by anything (contact.component takes AppCheck with
+    // { optional: true }, and provideAppCheck was already commented out), yet this block
+    // statically imported the whole App Check SDK into the initial bundle. Server-side
+    // enforcement is untouched: the callables still declare enforceAppCheck: true.
+    // Re-add with provideAppCheck() only when a client actually needs App Check tokens.
+    provideAnimationsAsync(),
     importProvidersFrom(ReactiveFormsModule),
     {
       provide: PLUTO_ID,

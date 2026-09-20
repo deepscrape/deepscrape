@@ -9,13 +9,14 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, NavigationStart, Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
+import { RouterLink } from '@angular/router';
 import { LocalStorage, WindowToken } from 'src/app/core/services';
 import { myIcons, themeStorageKey } from 'src/app/shared';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
     selector: 'app-footer',
-    imports: [LucideAngularModule, TranslateModule],
+    imports: [LucideAngularModule, TranslateModule, RouterLink],
     templateUrl: './app-footer.component.html',
     styleUrl: './app-footer.component.scss'
 })

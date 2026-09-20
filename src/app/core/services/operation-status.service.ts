@@ -3,6 +3,7 @@ import { tap, takeWhile } from 'rxjs/operators';
 import { CrawlStatus } from '../types';
 import { CrawlAPIService } from './crawlapi.service';
 import { AnalyticsService } from './analytics.service';
+import { NotificationCenterService } from './notification-center.service';
 import { SnackBarType } from '../components/snackbar/snackbar.component';
 import { CrawlOperationStatus } from '../enum';
 import { Observable } from 'rxjs/internal/Observable';
@@ -15,6 +16,7 @@ export class OperationStatusService {
   constructor(
     private crawlService: CrawlAPIService,
     private analytics: AnalyticsService,
+    private notifications: NotificationCenterService,
   ) {}
 
   /**
@@ -26,13 +28,23 @@ export class OperationStatusService {
       return;
     }
 
+    const completed = status === CrawlOperationStatus.COMPLETED;
     this.reportedTerminalIds.add(taskId);
     this.analytics
       .trackEvent(
-        status === CrawlOperationStatus.COMPLETED ? 'crawl_completed' : 'crawl_failed',
+        completed ? 'crawl_completed' : 'crawl_failed',
         { taskId },
       )
       .subscribe({ error: () => undefined });
+
+    // The snackbar is transient; the bell keeps the outcome readable afterwards.
+    // Dedupe is already handled above, so each crawl notifies exactly once.
+    this.notifications.push({
+      kind: 'crawl',
+      title: completed ? 'Crawl completed' : 'Crawl failed',
+      body: `Task ${taskId}`,
+      link: '/operations',
+    });
   }
 
   getTaskStatusWithSnackbar(

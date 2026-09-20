@@ -36,7 +36,6 @@ import { throwError } from 'rxjs/internal/observable/throwError';
 import { switchMap } from 'rxjs/internal/operators/switchMap';
 import { firstValueFrom, of, pipe, timestamp } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Analytics } from '@angular/fire/analytics';
 import { HeartbeatService } from './heartbeat.service';
 import { AnalyticsService } from './analytics.service';
 import { GuestTrackingService } from './guest-tracking.service';
@@ -82,7 +81,6 @@ export class AuthService {
   private readonly unsupportedMfaFirstFactors = new Set(['phone', 'anonymous', 'gc.apple.com'])
 
   private destroyRef = inject(DestroyRef)
-  private analytics = inject(Analytics)
    private platformId = inject<Object>(PLATFORM_ID);
   private heartbeatService = inject(HeartbeatService)
   private guestTrackingService = inject(GuestTrackingService)

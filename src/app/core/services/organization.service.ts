@@ -1,7 +1,8 @@
-import { Injectable } from '@angular/core'
+import { inject, Injectable } from '@angular/core'
 import { HttpClient, HttpHeaders } from '@angular/common/http'
 import { Observable, throwError } from 'rxjs'
 import { catchError, tap } from 'rxjs/operators'
+import { AnalyticsService } from './analytics.service'
 import { AuthService } from './auth.service'
 import { AuthzService } from './authz.service'
 import { API_ORGANIZATIONS } from '../variables'
@@ -51,6 +52,8 @@ export class OrganizationService {
     private authzService: AuthzService,
   ) {}
 
+  private readonly analytics = inject(AnalyticsService)
+
   private getAuthHeaders(): HttpHeaders {
     return new HttpHeaders({
       Authorization: `Bearer ${this.authService.token}`,
@@ -84,6 +87,8 @@ export class OrganizationService {
     ).pipe(
       tap((response) => {
         this.authzService.setActiveOrgId(response.id)
+        this.analytics.trackEvent('org_created', { orgId: response.id })
+          .subscribe({ error: () => undefined })
       }),
       catchError((error) => {
         console.error('Failed to create organization:', error)
@@ -175,6 +180,8 @@ export class OrganizationService {
       tap((response) => {
         if (response?.orgId) {
           this.authzService.setActiveOrgId(response.orgId)
+          this.analytics.trackEvent('invitation_accepted', { orgId: response.orgId, role: response.role })
+            .subscribe({ error: () => undefined })
         }
       }),
       catchError((error) => {

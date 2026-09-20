@@ -17,7 +17,7 @@ import { ImageSrcsetDirective, Outsideclick, RippleDirective } from 'src/app/cor
 import { ProviderPipe } from 'src/app/core/pipes'
 import { AuthService, CartService, FirestoreService, LocalStorage, OrganizationInvitation, OrganizationService, OrganizationSummary, ScreenResizeService, ScrollService, ThemeService, WindowToken } from 'src/app/core/services'
 import { Users } from 'src/app/core/types'
-import { LangPickerComponent, themeStorageKey, ThemeToggleComponent } from 'src/app/shared'
+import { LangPickerComponent, NotificationBellComponent, themeStorageKey, ThemeToggleComponent } from 'src/app/shared';
 import { AppSidebarComponent } from '../../components'
 import { AppFooterComponent } from '../../footer'
 import { SCREEN_SIZE } from 'src/app/core/enum'
@@ -29,7 +29,7 @@ import { DropdownComponent } from 'src/app/core/components'
  */
 @Component({
   selector: 'app-user-layout', 
-  imports: [NgClass, RouterOutlet, DropdownComponent, RouterLink, ThemeToggleComponent, AsyncPipe, MatIcon, MatProgressSpinner, ImageSrcsetDirective, ProviderPipe, Outsideclick, AppSidebarComponent, AppFooterComponent, RippleDirective, CartPackNotifyComponent, DropdownCartComponent, AsyncPipe, LangPickerComponent, FormsModule, TranslateModule],
+  imports: [NgClass, RouterOutlet, DropdownComponent, RouterLink, ThemeToggleComponent, AsyncPipe, MatIcon, MatProgressSpinner, ImageSrcsetDirective, ProviderPipe, Outsideclick, AppSidebarComponent, AppFooterComponent, RippleDirective, CartPackNotifyComponent, DropdownCartComponent, AsyncPipe, LangPickerComponent, NotificationBellComponent, FormsModule, TranslateModule],
   animations: [fadeInOutAnimation, PopupAnimation, asideBarAnimation],
   templateUrl: './app-user-layout.component.html',
   styleUrl: './app-user-layout.component.scss'

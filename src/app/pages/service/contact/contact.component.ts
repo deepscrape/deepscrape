@@ -19,7 +19,7 @@ import { TranslateModule } from '@ngx-translate/core';
 import { finalize, firstValueFrom } from 'rxjs';
 import { myIcons, LangPickerComponent, ThemeToggleComponent } from 'src/app/shared';
 import { Observable } from 'rxjs/internal/Observable';
-import { ThemeService } from 'src/app/core/services';
+import { AnalyticsService, ThemeService } from 'src/app/core/services';
 import { AppCheck, getLimitedUseToken } from '@angular/fire/app-check';
 
 export interface ContactFormData {
@@ -53,6 +53,7 @@ export class ContactComponent {
   private themeService = inject(ThemeService);
   private readonly platformId = inject(PLATFORM_ID);
   private readonly appCheck = inject(AppCheck, { optional: true });
+  private readonly analytics = inject(AnalyticsService);
 
   readonly icons = myIcons;
   readonly isDarkMode$: Observable<boolean> = this.themeService.isDarkMode$;
@@ -105,6 +106,9 @@ export class ContactComponent {
       ).pipe(finalize(() => this.submitting.set(false)))
     ).then((res) => {
       if (res.success) {
+        // A lead, not an attempt: the form posted and the backend accepted it.
+        this.analytics.trackEvent('contact_submitted', { source: 'website' })
+          .subscribe({ error: () => undefined })
         this.success.set(true);
         this.contactForm.reset();
       }

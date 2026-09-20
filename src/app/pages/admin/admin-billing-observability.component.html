@@ -27,31 +27,43 @@
     </div>
   </header>
 
-  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-    <label class="text-sm">
-      <span class="block mb-1 text-gray5/80 dark:text-gray3">{{ 'ADMIN_BILLING_OBS.LBL_INCIDENTS' | translate }}</span>
-      <input type="number" min="1" max="100" [(ngModel)]="incidentLimit" class="w-full rounded-lg border border-gray3/70 dark:border-gray5/65 bg-white/90 dark:bg-gray7/70 px-3 py-2 text-sm text-gray6 dark:text-gray1 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/25" />
-    </label>
+  <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+    <app-stinput
+      class="block w-full"
+      type="number"
+      [min]="1"
+      [max]="100"
+      [control]="incidentLimit"
+      [label]="'ADMIN_BILLING_OBS.LBL_INCIDENTS' | translate"></app-stinput>
 
-    <label class="text-sm">
-      <span class="block mb-1 text-gray5/80 dark:text-gray3">{{ 'ADMIN_BILLING_OBS.LBL_FAILED_EVENTS' | translate }}</span>
-      <input type="number" min="1" max="100" [(ngModel)]="failedEventLimit" class="w-full rounded-lg border border-gray3/70 dark:border-gray5/65 bg-white/90 dark:bg-gray7/70 px-3 py-2 text-sm text-gray6 dark:text-gray1 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/25" />
-    </label>
+    <app-stinput
+      class="block w-full"
+      type="number"
+      [min]="1"
+      [max]="100"
+      [control]="failedEventLimit"
+      [label]="'ADMIN_BILLING_OBS.LBL_FAILED_EVENTS' | translate"></app-stinput>
 
-    <label class="text-sm">
-      <span class="block mb-1 text-gray5/80 dark:text-gray3">{{ 'ADMIN_BILLING_OBS.LBL_PENDING_EVENTS' | translate }}</span>
-      <input type="number" min="1" max="100" [(ngModel)]="pendingEventLimit" class="w-full rounded-lg border border-gray3/70 dark:border-gray5/65 bg-white/90 dark:bg-gray7/70 px-3 py-2 text-sm text-gray6 dark:text-gray1 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/25" />
-    </label>
+    <app-stinput
+      class="block w-full"
+      type="number"
+      [min]="1"
+      [max]="100"
+      [control]="pendingEventLimit"
+      [label]="'ADMIN_BILLING_OBS.LBL_PENDING_EVENTS' | translate"></app-stinput>
 
-    <label class="text-sm">
-      <span class="block mb-1 text-gray5/80 dark:text-gray3">{{ 'ADMIN_BILLING_OBS.LBL_PAST_DUE' | translate }}</span>
-      <input type="number" min="1" max="200" [(ngModel)]="pastDueLimit" class="w-full rounded-lg border border-gray3/70 dark:border-gray5/65 bg-white/90 dark:bg-gray7/70 px-3 py-2 text-sm text-gray6 dark:text-gray1 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/25" />
-    </label>
+    <app-stinput
+      class="block w-full"
+      type="number"
+      [min]="1"
+      [max]="200"
+      [control]="pastDueLimit"
+      [label]="'ADMIN_BILLING_OBS.LBL_PAST_DUE' | translate"></app-stinput>
 
-    <label class="text-sm flex items-center gap-2 mt-7 cursor-pointer">
-      <input type="checkbox" [(ngModel)]="includeAcknowledged" class="h-4 w-4 rounded border-gray3 accent-cyan-600 dark:border-gray5" />
-      <span class="text-gray5/90 dark:text-gray2">{{ 'ADMIN_BILLING_OBS.INCLUDE_ACK' | translate }}</span>
-    </label>
+    <app-checkbox
+      class="self-start pt-2"
+      [control]="includeAcknowledged"
+      [title]="'ADMIN_BILLING_OBS.INCLUDE_ACK' | translate"></app-checkbox>
   </div>
 
   @if (error) {

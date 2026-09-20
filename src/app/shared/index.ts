@@ -1,4 +1,5 @@
 export * from './theme-picker/theme-picker.component'
+export * from './notification-bell/notification-bell.component'
 export * from './lucideicons'
 export * from './animated-bg/animated-bg.component'
 export * from './lang-picker/lang-picker.component'

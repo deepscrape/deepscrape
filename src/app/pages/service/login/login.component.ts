@@ -424,7 +424,7 @@ export class LoginComponent  {
     )
 
     this.mfaVerificationId = verificationId
-    this.showSnackbar('Verification code sent to your phone', SnackBarType.info, '', 3000)
+    this.showSnackbar(this.translate.instant('LOGIN.VERIFICATION_CODE_SENT_PHONE'), SnackBarType.info, '', 3000)
   }
 
   public async submitMfaCode(): Promise<void> {
@@ -494,7 +494,7 @@ export class LoginComponent  {
     const fingerprint = this.deviceVerificationService.getDeviceFingerprint();
     const deviceVerified = await this.deviceVerificationService.isDeviceTrusted(user.uid, fingerprint);
     if (!deviceVerified) {
-      this.showSnackbar('Device verification is required to complete sign in.', SnackBarType.info, '', 5000);
+      this.showSnackbar(this.translate.instant('LOGIN.DEVICE_VERIFICATION_REQUIRED'), SnackBarType.info, '', 5000);
       const returnUrl = this.getReturnUrl();
       await this.router.navigate(['/service/device-verification'], { queryParams: { returnUrl } });
       return;

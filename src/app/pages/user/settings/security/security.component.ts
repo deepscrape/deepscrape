@@ -10,7 +10,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { from } from 'rxjs/internal/observable/from';
 import { firstValueFrom } from 'rxjs';
 import qrcodeGenerator from 'qrcode-generator';
-import { DialogComponent, RadioToggleComponent, SessionActivityComponent, SnackBarType, StinputComponent } from 'src/app/core/components';
+import { CheckboxComponent, DialogComponent, RadioToggleComponent, SessionActivityComponent, SnackBarType, StinputComponent } from 'src/app/core/components';
 import { createPasswordStrengthValidator, RippleDirective } from 'src/app/core/directives';
 import { checkPasswordStrength, getErrorLabel, getErrorMessage } from 'src/app/core/functions';
 import {
@@ -24,7 +24,7 @@ import {
   getSessionRiskTone,
 } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
-import { AuthService, DeviceVerificationService, FirestoreService, HighRiskActionService, LocalStorage, MfaSecurityMethod, SnackbarService, WebAuthnService } from 'src/app/core/services';
+import { AuthService, AnalyticsService, DeviceVerificationService, FirestoreService, HighRiskActionService, LocalStorage, MfaSecurityMethod, SnackbarService, WebAuthnService } from 'src/app/core/services';
 import { Loading, loginHistoryEvent, loginHistoryInfo, Users, SessionDisplayInfo } from 'src/app/core/types';
 import { TrustedDevice } from 'src/app/core/services/device-verification.service';
 import { WebAuthnCredential } from 'src/app/core/services/webauthn.service';
@@ -42,7 +42,7 @@ type SecurityTimelineEvent = loginHistoryEvent & {
 
 @Component({
   selector: 'app-security-tab',
-  imports: [ReactiveFormsModule, StinputComponent, FormControlPipe, MatIcon, RippleDirective, UpperCasePipe, MatProgressSpinnerModule, LucideAngularModule, NgClass, OtpInputComponent, RadioToggleComponent, DialogComponent, SessionActivityComponent, TranslateModule],
+  imports: [ReactiveFormsModule, StinputComponent, FormControlPipe, MatIcon, RippleDirective, UpperCasePipe, MatProgressSpinnerModule, LucideAngularModule, NgClass, OtpInputComponent, RadioToggleComponent, DialogComponent, SessionActivityComponent, TranslateModule, CheckboxComponent],
   templateUrl: './security.component.html',
   styleUrl: './security.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -68,6 +68,7 @@ export class SecurityTabComponent {
   }
   securityForm: FormGroup
   private localStorage = inject(LocalStorage)
+  private analytics = inject(AnalyticsService)
   private route = inject(ActivatedRoute)
   private destroyRef = inject(DestroyRef)
 
@@ -418,6 +419,9 @@ export class SecurityTabComponent {
       this.mfaSecondaryControl.setValue(result.preferences.secondaryMethod || 'none', { emitEvent: false })
       this.riskEmailNotificationsControl.setValue(result.preferences.riskEmailNotifications, { emitEvent: false })
       this.showSnackbar(this.translate.instant('SETTINGS_SECURITY.MFA_PREFS_SAVED'), SnackBarType.success, '', 2500)
+      // No mfa_enabled emit here: `MfaSecurityMethod` has no 'none' member, so a
+      // none -> method transition cannot occur in this method. Enrolment is the
+      // enable path (see the factor verification handlers).
     } catch (error: any) {
       this.mfaPreferencesError.set(this.getMfaErrorMessage(error))
       this.showSnackbar(this.mfaPreferencesError(), SnackBarType.error, '', 4500)
@@ -1028,6 +1032,10 @@ export class SecurityTabComponent {
       .subscribe({
         next: () => {
           this.showSnackbar(this.translate.instant('SETTINGS_SECURITY.SESSION_REVOKED'), SnackBarType.success, '', 3000)
+          // The one account-takeover remedy a user can reach on their own. Counted per
+          // session so "how often does someone revoke a session" has an answer.
+          this.analytics.trackEvent('session_revoked', { sessionId: loginId, current: loginId === this.currentSessionId() })
+            .subscribe({ error: () => undefined })
           if (loginId === this.currentSessionId()) {
             this.authService.logout().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
               complete: () => {

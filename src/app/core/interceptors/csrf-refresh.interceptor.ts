@@ -11,7 +11,7 @@ import {
 import { inject } from '@angular/core';
 import { WindowToken } from '../services';
 import { Observable, throwError } from 'rxjs';
-import { catchError, switchMap } from 'rxjs/operators';
+import { catchError, finalize, map, shareReplay, switchMap } from 'rxjs/operators';
 
 const CSRF_RETRIED = new HttpContextToken<boolean>(() => false);
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -56,15 +56,31 @@ function hasCsrfHeader(req: HttpRequest<unknown>): boolean {
   return req.headers.has('csrf-token') || req.headers.has('x-csrf-token');
 }
 
+/**
+ * One refresh in flight at a time. Without this, a burst of N mutating requests whose
+ * token just expired each fired its own `GET /csrf-token` — the duplicate-fetch
+ * multiplier lands exactly when the user is clicking fastest.
+ */
+let inFlightCsrfRefresh$: Observable<string | null> | null = null
+
 function fetchAndAttachCsrfToken(
   rawHttp: HttpClient,
   req: HttpRequest<unknown>,
   win: Window,
   contextOverride?: HttpContextToken<boolean>,
 ): Observable<HttpRequest<unknown>> {
-  return rawHttp.get<{ csrfToken?: string }>('/csrf-token', { withCredentials: true }).pipe(
-    switchMap((response) => {
-      const freshToken = typeof response?.csrfToken === 'string' ? response.csrfToken : null;
+  inFlightCsrfRefresh$ ??= rawHttp.get<{ csrfToken?: string }>('/csrf-token', { withCredentials: true }).pipe(
+    map((response) => (typeof response?.csrfToken === 'string' ? response.csrfToken : null)),
+    // Reset before the shared result can be replayed to anyone else, so the next
+    // expiry triggers a genuine refresh rather than a stale token.
+    finalize(() => {
+      inFlightCsrfRefresh$ = null
+    }),
+    shareReplay({ bufferSize: 1, refCount: false }),
+  )
+
+  return inFlightCsrfRefresh$.pipe(
+    switchMap((freshToken) => {
       const tokenizedRequest = withCsrfHeader(req, win, freshToken);
       const requestWithContext = contextOverride
         ? tokenizedRequest.clone({ context: req.context.set(contextOverride, true) })
@@ -106,8 +122,6 @@ export const csrfRefreshInterceptor: HttpInterceptorFn = (
   req: HttpRequest<unknown>,
   next: HttpHandlerFn,
 ): Observable<HttpEvent<unknown>> => {
-  const backend = inject(HttpBackend);
-  const rawHttp = new HttpClient(backend);
   const win = inject(WindowToken);
 
   const isMutatingApiRequest = isApiRequest(req, win) && MUTATING_METHODS.has(req.method.toUpperCase());
@@ -116,6 +130,9 @@ export const csrfRefreshInterceptor: HttpInterceptorFn = (
   if (!isMutatingApiRequest) {
     return next(req);
   }
+
+  // After the early return: allocating an HttpClient for every GET was pure waste.
+  const rawHttp = new HttpClient(inject(HttpBackend));
 
   const requestWithToken = withCsrfHeader(req, win);
 

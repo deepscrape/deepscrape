@@ -1,5 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core'
 import { FirestoreService } from './firestore.service'
+import { AnalyticsService } from './analytics.service'
 
 export interface WebAuthnCredential {
   id: string
@@ -30,6 +31,7 @@ export interface WebAuthnRegistrationOptions {
 })
 export class WebAuthnService {
   private firestore = inject(FirestoreService)
+  private analytics = inject(AnalyticsService)
 
   readonly passkeys = signal<WebAuthnCredential[]>([])
   readonly isRegistering = signal(false)
@@ -90,41 +92,6 @@ export class WebAuthnService {
   }
 
   /**
-   * Recursively convert base64url strings in an object to Uint8Array
-   * for the WebAuthn API (navigator.credentials.create / get).
-   */
-  private convertBase64ToBuffers(obj: any): any {
-    if (typeof obj === 'string') {
-      // Heuristic: only convert known base64url-encoded fields
-      if (obj.length > 16 && /^[A-Za-z0-9_-]+$/.test(obj)) {
-        try {
-          return this.base64UrlToBuffer(obj)
-        } catch {
-          return obj
-        }
-      }
-      return obj
-    }
-    if (Array.isArray(obj)) {
-      return obj.map((item) => this.convertBase64ToBuffers(item))
-    }
-    if (obj && typeof obj === 'object') {
-      const result: any = {}
-      for (const key of Object.keys(obj)) {
-        // Skip known non-buffer fields
-        if (['type', 'alg', 'name', 'displayName', 'id', 'rpID', 'rpName', 'userName', 'userDisplayName',
-          'attestation', 'userVerification', 'authenticatorAttachment', 'residentKey', 'timeout'].includes(key)) {
-          result[key] = obj[key]
-        } else {
-          result[key] = this.convertBase64ToBuffers(obj[key])
-        }
-      }
-      return result
-    }
-    return obj
-  }
-
-  /**
    * Register a new passkey (WebAuthn credential).
    * Returns true if successful.
    */
@@ -140,18 +107,23 @@ export class WebAuthnService {
       >('generateWebAuthnRegistrationOptions')
 
       // Step 2: Convert base64url options to buffers for the WebAuthn API
-      const publicKey: PublicKeyCredentialCreationOptions = this.convertBase64ToBuffers({
+      // Buffer fields are converted by name, not by a heuristic walker: the old
+      // `convertBase64ToBuffers` skipped every `id` (because `rp.id` is a plain domain
+      // string), so `user.id` reached the browser as base64url text and the API threw
+      // "not of type (ArrayBuffer or ArrayBufferView)". The spec names exactly these
+      // four buffer fields, so listing them is correct and boring.
+      const publicKey: PublicKeyCredentialCreationOptions = {
         ...options,
-        challenge: options.challenge,
+        challenge: this.base64UrlToBuffer(options.challenge),
         user: {
           ...options.user,
-          id: options.user.id,
+          id: this.base64UrlToBuffer(options.user.id),
         },
         excludeCredentials: (options.excludeCredentials || []).map((cred: any) => ({
           ...cred,
-          id: cred.id,
+          id: this.base64UrlToBuffer(cred.id),
         })),
-      })
+      }
 
       // Step 3: Create the credential via the browser's WebAuthn API
       const credential = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential
@@ -180,6 +152,10 @@ export class WebAuthnService {
       >('verifyWebAuthnRegistration', { credential: serializedCredential })
 
       if (result.success) {
+        // Security-adoption signal. The disable side of MFA was instrumented and this
+        // was not, so "how many accounts added a passkey" had no answer at all.
+        this.analytics.trackEvent('passkey_added', { credentialId: result.credentialId })
+          .subscribe({ error: () => undefined })
         // Refresh the passkey list
         await this.loadPasskeys()
         return true
@@ -216,14 +192,14 @@ export class WebAuthnService {
       >('generateWebAuthnAuthenticationOptions')
 
       // Step 2: Convert base64url options to buffers
-      const publicKey: PublicKeyCredentialRequestOptions = this.convertBase64ToBuffers({
+      const publicKey: PublicKeyCredentialRequestOptions = {
         ...options,
-        challenge: options.challenge,
+        challenge: this.base64UrlToBuffer(options.challenge),
         allowCredentials: (options.allowCredentials || []).map((cred: any) => ({
           ...cred,
-          id: cred.id,
+          id: this.base64UrlToBuffer(cred.id),
         })),
-      })
+      }
 
       // Step 3: Get the assertion from the browser's WebAuthn API
       const credential = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential

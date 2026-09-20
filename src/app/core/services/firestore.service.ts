@@ -162,11 +162,42 @@ export class FirestoreService {
     }
   }
 
+  /** Bounds for the guests fallback scan — see scanGuestsCollection. */
+  private static readonly GUESTS_SCAN_LIMIT = 10000
+  private static readonly GUESTS_SCAN_TTL_MS = 30_000
+  /** In-memory cache for the guests fallback scan. */
+  private _guestsScanCache: { at: number; value: QuerySnapshot<DocumentData> | null } | null = null
+
+  /**
+   * Fallback path behind every `getGuestsBy*` breakdown: the pre-aggregated summary
+   * doc was unavailable, so each caller scans the `guests` collection itself. Nine
+   * callers route through here and a dashboard renders several of them at once, so
+   * without this cache ONE page load re-read the whole collection once per panel.
+   */
   private async scanGuestsCollection(): Promise<QuerySnapshot<DocumentData> | null> {
+    const cached = this._guestsScanCache
+    if (cached && Date.now() - cached.at < FirestoreService.GUESTS_SCAN_TTL_MS) {
+      return cached.value
+    }
+
     try {
       const guestsCollection = this.collection(this.firestore, 'guests')
-      const guestsQuery = this.query(guestsCollection)
-      return await this.getDocs(guestsQuery)
+      // Bounded: an unbounded scan on a degraded path turns one missing summary doc
+      // into a full-collection download.
+      const guestsQuery = this.query(
+        guestsCollection,
+        this.limit(FirestoreService.GUESTS_SCAN_LIMIT),
+      )
+      const value = await this.getDocs(guestsQuery)
+
+      if (value.size >= FirestoreService.GUESTS_SCAN_LIMIT) {
+        console.warn(
+          `Guests fallback scan hit its ${FirestoreService.GUESTS_SCAN_LIMIT} doc limit — totals are capped.`,
+        )
+      }
+
+      this._guestsScanCache = { at: Date.now(), value }
+      return value
     } catch (error) {
       console.error('Failed to read guests collection:', error)
       return null
@@ -1130,8 +1161,11 @@ export class FirestoreService {
    * This reduces the number of round trips to Firestore
    */
   async getComprehensiveGuestAnalytics() {
-    const summary = await this.getGuestAnalyticsSummary()
-    const byDay = await this.getGuestActivityByDay()
+    // Neither read depends on the other: running them in series was pure latency.
+    const [summary, byDay] = await Promise.all([
+      this.getGuestAnalyticsSummary(),
+      this.getGuestActivityByDay(),
+    ])
 
     if (summary) {
       const total = Number(summary.totalGuests || 0)
@@ -1142,7 +1176,7 @@ export class FirestoreService {
         byBrowser: this.toCountMapFromSummary(summary, 'byBrowser', 'topBrowsers', 'browser') || {},
         byDevice: this.toCountMapFromSummary(summary, 'byDevice', 'topDevices', 'device') || {},
         byOS: this.toCountMapFromSummary(summary, 'byOS', 'topOperatingSystems', 'os') || {},
-        byLanguage: {},
+        byLanguage: this.toCountMapFromSummary(summary, 'byLanguage', 'topLanguages', 'language') || {},
         byTimezone: this.toCountMapFromSummary(summary, 'byTimezone', 'topTimezones', 'timezone') || {},
         registered,
         unregistered: Math.max(0, total - registered),
@@ -1775,12 +1809,32 @@ export class FirestoreService {
   }
 
   /**
-   * Get hourly metrics by datetime key range.
-   * Datetime key format: YYYY-MM-DD-HH
+   * Billing snapshot (MRR, plan mix, trials, past due) from metrics_billing/current,
+   * written nightly by computeBillingMetricsDaily. One read, no collection scan.
    */
-  async getHourlyMetricsByDateTimeRange(startKey: string, endKey: string): Promise<any[]> {
+  async getBillingMetrics(): Promise<any | null> {
     try {
-      const hourlyCollection = this.collection(this.firestore, 'metrics_hourly');
+      const docRef = this.doc('metrics_billing/current');
+      const docSnap = await this.getDoc(docRef);
+      return docSnap['exists']() ? docSnap['data']() : null;
+    } catch (error) {
+      console.error('Error getting billing metrics:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get bucketed metrics by datetime key range.
+   * Datetime key format: YYYY-MM-DD-HH, or YYYY-MM-DD-HH-mm for the minutely series.
+   * @param collectionName - Bucketed series to read; every series shares the shape.
+   */
+  async getHourlyMetricsByDateTimeRange(
+    startKey: string,
+    endKey: string,
+    collectionName: string = 'metrics_hourly'
+  ): Promise<any[]> {
+    try {
+      const hourlyCollection = this.collection(this.firestore, collectionName);
       const q = this.query(
         hourlyCollection,
         this.where('datetime', '>=', startKey),

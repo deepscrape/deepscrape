@@ -138,6 +138,8 @@
     "CREATE_NEW_ACCOUNT": "Create new account",
     "SIGN_IN_BUTTON": "Sign In",
     "SIGN_IN_SUCCESS": "Signed in successfully.",
+    "DEVICE_VERIFICATION_REQUIRED": "Device verification is required to complete sign in.",
+    "VERIFICATION_CODE_SENT_PHONE": "Verification code sent to your phone.",
     "RECAPTCHA_EXPIRED": "reCAPTCHA expired, please try again.",
     "ACCOUNT_LINKED_SUCCESS": "Account successfully linked!",
     "EMAIL_DETECTED": "Email format detected",
@@ -163,7 +165,9 @@
     "MFA_USE_SMS": "Use SMS / text message",
     "MFA_RESEND": "Resend",
     "LAST_USED": "Last used",
-    "MFA_VERIFY": "Verify code"
+    "MFA_VERIFY": "Verify code",
+    "LEGAL_PREFIX": "Your use of the Service is governed by our",
+    "LEGAL_AND": "and"
   },
   "SIGNUP": {
     "CREATE_ACCOUNT_TITLE": "Create your account",
@@ -195,7 +199,10 @@
     "WEAK_PASSWORD_LOWERCASE": "Password must contain at least one lowercase letter.",
     "WEAK_PASSWORD_UPPERCASE": "Password must contain at least one uppercase letter.",
     "WEAK_PASSWORD_NUMBER": "Password must contain at least one number.",
-    "WEAK_PASSWORD_SPECIAL": "Password must contain at least one special character."
+    "WEAK_PASSWORD_SPECIAL": "Password must contain at least one special character.",
+    "TERMS_ACCEPT_PREFIX": "I agree to the",
+    "TERMS_ACCEPT_AND": "and",
+    "TERMS_REQUIRED": "Please accept the Terms of Service and Privacy Policy to continue."
   },
   "RESET_PASSWORD": {
     "TITLE": "Reset your password",
@@ -294,7 +301,9 @@
     "RETURN_HOME": "Return to the home page"
   },
   "FOOTER": {
-    "ALL_RIGHTS": "All rights reserved."
+    "ALL_RIGHTS": "All rights reserved.",
+    "PRIVACY": "Privacy Policy",
+    "TERMS": "Terms of Service"
   },
   "PHONE_SECURITY": {
     "TITLE": "Phone Number Security",
@@ -662,6 +671,23 @@
     "S2_D": "Multi-tenant browser pools spin up isolated sessions with anti-detection profiles, proxy rotation & JS rendering.",
     "S3_T": "Get Structured Data",
     "S3_D": "Clean JSON, CSV, or DataFrames. No HTML parsing, no token overhead — structured data, ready for your pipeline."
+  },
+  "COOKIE_CONSENT": {
+    "MANAGE": "Manage choices",
+    "HIDE": "Hide choices",
+    "NECESSARY_TITLE": "Strictly necessary",
+    "NECESSARY_DESC": "Session, sign-in and security cookies. The Service cannot work without them.",
+    "ANALYTICS_TITLE": "Analytics",
+    "ANALYTICS_DESC": "Anonymous visitor counts, page views and Google Analytics. Nothing is stored until you allow it.",
+    "FUNCTIONAL_TITLE": "Device recognition",
+    "FUNCTIONAL_DESC": "Remembers this device so the verification email can be skipped on your next sign-in.",
+    "ALWAYS_ON": "Always on",
+    "ACCEPT_ALL": "Accept all",
+    "NECESSARY_ONLY": "Necessary only",
+    "SAVE": "Save choices",
+    "TITLE": "Cookies",
+    "BODY": "We use cookies that are necessary for the Service to work. With your consent we also set an analytics cookie to measure how it is used. Declining leaves you untracked.",
+    "POLICY": "Privacy Policy"
   },
   "CONSENT": {
     "TITLE": "Privacy Consent",
@@ -1467,7 +1493,12 @@
     "EMAIL": "Email",
     "LANGUAGE": "Language",
     "RECEIVE_NOTIFICATIONS": "Receive Notifications",
-    "PUSH": "Push"
+    "PUSH": "Push",
+    "APPEARANCE": "Appearance",
+    "APPEARANCE_HINT": "Light, dark, or follow your operating system.",
+    "LANGUAGE_HINT": "Interface language for your account.",
+    "DEVICES": "device(s) registered",
+    "SEND_TEST": "Send a test notification"
   },
   "SETTINGS_API_KEYS": {
     "NAME_YOUR_KEY": "Name your key:",
@@ -1787,7 +1818,12 @@
     "FUNNEL_STEP_ACTIVATED": "Activations",
     "FUNNEL_STEP_PAID": "Paid",
     "FUNNEL_HELPER": "Activations and paid count events; visitors, signups and logins count unique people.",
-    "REVENUE_TITLE": "Revenue",
+    "REVENUE_TITLE": "Cash collected",
+    "BILLING_MRR": "Monthly recurring revenue",
+    "BILLING_PAYING": "paying",
+    "BILLING_PAST_DUE": "past due",
+    "BILLING_TRIALS": "Active trials",
+    "BILLING_TRIAL_PIPELINE": "pipeline",
     "REVENUE_PAYMENTS": "payments",
     "REVENUE_ARPU": "ARPU",
     "FUNNEL_BOT_SHARE": "Bot / AI traffic (excluded from the funnel)",
@@ -1833,6 +1869,10 @@
     "PANEL_IP": "IP Addresses",
     "PANEL_REGION": "Regions",
     "PANEL_ASN": "ASNs",
+    "PANEL_AS": "AS",
+    "PANEL_USAGE_TYPE": "Connection type",
+    "PANEL_DOMAIN": "Domain",
+    "PANEL_THREAT": "Threat flag",
     "PANEL_COUNTRY": "Countries",
     "PANEL_DEVICE": "Devices",
     "PANEL_BROWSER": "Browsers",
@@ -1859,9 +1899,12 @@
     "TH_LOGINS": "Logins",
     "TH_NEW_USERS": "New Users",
     "TH_TREND": "Trend",
+    "RANGE_LAST_5M": "Last 5 minutes",
     "RANGE_LAST_30M": "Last 30 minutes",
     "RANGE_LAST_1H": "Last 1 hour",
+    "RANGE_LAST_3H": "Last 3 hours",
     "RANGE_LAST_24H": "Last 24 hours",
+    "RANGE_LAST_3D": "Last 3 days",
     "RANGE_CUSTOM": "Custom range",
     "SELECTED_PERIOD": "Selected period",
     "ERR_LOAD_DATA": "Failed to load analytics data",

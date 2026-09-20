@@ -1,6 +1,7 @@
 import { Injectable, inject, PLATFORM_ID, signal } from '@angular/core'
 import { DOCUMENT, isPlatformBrowser } from '@angular/common'
 import { HttpClient } from '@angular/common/http'
+import { CookieService } from 'ngx-cookie-service'
 import { from, Observable } from 'rxjs'
 import { map } from 'rxjs'
 import { environment } from 'src/environments/environment'
@@ -48,6 +49,11 @@ export class DeviceVerificationService {
   private http = inject(HttpClient)
   private platformId = inject(PLATFORM_ID)
   private documentRef = inject(DOCUMENT)
+  private cookieService = inject(CookieService)
+
+  /** First-party cookie holding the device id, matching the consent cookie's flags. */
+  private static readonly DEVICE_ID_COOKIE = 'device_id'
+  private static readonly DEVICE_ID_DAYS = 365
 
   readonly requiresVerification = signal(false)
   readonly pendingDeviceId = signal('')
@@ -84,30 +90,35 @@ export class DeviceVerificationService {
       }
     }
 
-    let canvasHash = ''
+    // Stable stored id instead of a computed fingerprint: the canvas+UA hash drifted
+    // (canvas randomization in Brave/Firefox, browser major updates, display changes) and
+    // asked already-trusted users to verify again, while trust was never carried by that
+    // entropy — the out-of-band code carries it — and a copied cookie is no weaker than a
+    // copied canvas hash. Reintroduce passive signals only if device trust becomes a
+    // server-side control rather than a client-side prompt.
+    let deviceId = ''
     try {
-      const canvas = this.documentRef.createElement('canvas')
-      const ctx = canvas.getContext('2d')
-      if (ctx) {
-        ctx.textBaseline = 'top'
-        ctx.font = '14px Arial'
-        ctx.textBaseline = 'alphabetic'
-        ctx.fillStyle = '#f60'
-        ctx.fillRect(125, 1, 62, 20)
-        ctx.fillStyle = '#069'
-        ctx.fillText('Device Fingerprint', 2, 15)
-        ctx.fillStyle = 'rgba(102, 204, 0, 0.7)'
-        ctx.fillText('Device Fingerprint', 4, 17)
-      }
-      canvasHash = canvas.toDataURL()
-    } catch (error) {
-      console.warn('Canvas fingerprinting unavailable, continuing without canvas entropy', error)
-      canvasHash = ''
+      deviceId = this.cookieService.get(DeviceVerificationService.DEVICE_ID_COOKIE)
+    } catch {
+      deviceId = ''
     }
-
-    // Generate device ID based on fingerprint
-    const navigatorInfo = `${browserNavigator.userAgent}|${browserNavigator.language}|${browserScreen.width}x${browserScreen.height}`
-    const deviceId = this.hashString(navigatorInfo + canvasHash)
+    if (!deviceId) {
+      deviceId = globalThis.crypto?.randomUUID?.()
+        ?? this.hashString(`device-${Date.now()}-${Math.random()}`)
+      try {
+        this.cookieService.set(
+          DeviceVerificationService.DEVICE_ID_COOKIE,
+          deviceId,
+          DeviceVerificationService.DEVICE_ID_DAYS,
+          '/',
+          '',
+          true,
+          'Lax',
+        )
+      } catch {
+        // A blocked cookie store (private mode) only means verifying again next visit.
+      }
+    }
 
     return {
       userAgent: browserNavigator.userAgent,

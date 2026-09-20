@@ -213,6 +213,19 @@
               </div>
             }
             </form>
+            <!-- Outside the auth-flow branches on purpose, so the legal links are
+                 reachable from every step — password, MFA and verification. -->
+            <p
+              class="mt-4 text-center text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+              {{ 'LOGIN.LEGAL_PREFIX' | translate }}
+              <a
+                [routerLink]="['/terms']"
+                class="font-medium text-cyan-700 underline-offset-2 hover:underline dark:text-cyan-400">{{ 'FOOTER.TERMS' | translate }}</a>
+              {{ 'LOGIN.LEGAL_AND' | translate }}
+              <a
+                [routerLink]="['/privacy']"
+                class="font-medium text-cyan-700 underline-offset-2 hover:underline dark:text-cyan-400">{{ 'FOOTER.PRIVACY' | translate }}</a>
+            </p>
           </section>
           <div hidden #recaptchaContainer id="recaptcha-container"></div>
         </main>

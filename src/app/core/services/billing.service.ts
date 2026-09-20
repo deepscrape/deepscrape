@@ -12,6 +12,7 @@ import {
   CreditPackCatalog,
   UserBilling,
 } from '../types'
+import { AnalyticsService } from './analytics.service'
 import { AuthService } from './auth.service'
 import { CacheService } from './cache.service'
 import { FirestoreService } from './firestore.service'
@@ -23,6 +24,7 @@ export class BillingService {
   private readonly authService = inject(AuthService)
   private readonly cacheService = inject(CacheService)
   private readonly firestoreService = inject(FirestoreService)
+  private readonly analyticsService = inject(AnalyticsService)
   private readonly billingCacheNamespace = 'billing-entitlements'
   private readonly billingCacheTtlMs = 5 * 60 * 1000
   private readonly loadingStateSubject = new BehaviorSubject<BillingLoadingState>({
@@ -176,7 +178,7 @@ export class BillingService {
   }): Promise<{ url: string; sessionId: string }> {
     this.setLoading('checkout', true)
     try {
-      return this.firestoreService.callFunction<{
+      const session = await this.firestoreService.callFunction<{
         planId: BillingPlanTier
         interval: BillingInterval
         successUrl: string
@@ -186,6 +188,11 @@ export class BillingService {
         ...args,
         checkoutRequestId: this.createCheckoutRequestId('plan'),
       })
+      // Emitted only once Stripe handed a session back. A failed callable is not a
+      // checkout, and counting it would put phantom drop-off at the top of the funnel.
+      this.analyticsService.trackEvent('checkout_started', { kind: 'plan', planId: args.planId, interval: args.interval })
+        .subscribe({ error: () => undefined })
+      return session
     } finally {
       this.setLoading('checkout', false)
     }
@@ -199,7 +206,7 @@ export class BillingService {
   }): Promise<{ url: string; sessionId: string }> {
     this.setLoading('checkout', true)
     try {
-      return this.firestoreService.callFunction<{
+      const session = await this.firestoreService.callFunction<{
         planId: string
         successUrl: string
         cancelUrl: string
@@ -209,6 +216,9 @@ export class BillingService {
         ...args,
         checkoutRequestId: this.createCheckoutRequestId('credit-pack'),
       })
+      this.analyticsService.trackEvent('checkout_started', { kind: 'credit-pack', planId: args.planId, quantity: args.quantity })
+        .subscribe({ error: () => undefined })
+      return session
     } finally {
       this.setLoading('checkout', false)
     }
@@ -221,7 +231,7 @@ export class BillingService {
   }): Promise<{ url: string; sessionId: string }> {
     this.setLoading('checkout', true)
     try {
-      return this.firestoreService.callFunction<{
+      const session = await this.firestoreService.callFunction<{
         planId: string
         customCredits: number
         successUrl: string
@@ -234,6 +244,9 @@ export class BillingService {
         cancelUrl: args.cancelUrl,
         checkoutRequestId: this.createCheckoutRequestId('custom-credits'),
       })
+      this.analyticsService.trackEvent('checkout_started', { kind: 'custom-credits', credits: args.credits })
+        .subscribe({ error: () => undefined })
+      return session
     } finally {
       this.setLoading('checkout', false)
     }

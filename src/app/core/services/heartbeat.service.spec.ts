@@ -49,4 +49,10 @@ describe('HeartbeatService', () => {
     expect(service.sessionRevoked$).toBeDefined();
     expect(typeof service.sessionRevoked$.subscribe).toBe('function');
   });
+
+  // ponytail: the consent branch (`hasAnalyticsConsent` in the interval filter) has no
+  // test here on purpose — under Karma the cookie written through `CookieService` is not
+  // readable back, so the branch cannot be driven from a spec without mocking the cookie
+  // layer. Cover it by extracting the two-condition guard into a pure predicate when that
+  // mock is worth writing; the browser behaviour (consent → one POST) is what matters.
 });

@@ -4,10 +4,20 @@ import { Observable } from 'rxjs'
 import { FirestoreService } from './firestore.service'
 import { loginHistoryInfo } from '../types'
 
+/**
+ * The date the minutely bucket series went live. An empty minutely window before it is a
+ * missing backfill; after it, an empty window is genuinely nobody visiting.
+ * ponytail: delete alongside the guard in `buildBucketedRangeMetrics`.
+ */
+const MINUTELY_SERIES_START_MS = Date.UTC(2026, 8, 17)
+
 export type AnalyticsPeriod =
+  | 'last-5m'
   | 'last-30m'
   | 'last-1h'
+  | 'last-3h'
   | 'last-24h'
+  | 'last-3d'
   | 'last-7d'
   | 'last-30d'
   | 'last-90d'
@@ -23,6 +33,8 @@ export interface AnalyticsRangeRequest {
 export interface AnalyticsDailyBreakdown {
   date: string
   hour?: number
+  /** Set only on minutely rows (the 30m/1h windows). */
+  minute?: number
   totalLogins?: number
   newGuests?: number
   newUsers?: number
@@ -42,6 +54,10 @@ export interface AnalyticsDailyBreakdown {
   byChannel?: Record<string, number>
   byReferrer?: Record<string, number>
   byProxyType?: Record<string, number>
+  byAS?: Record<string, number>
+  byUsageType?: Record<string, number>
+  byDomain?: Record<string, number>
+  byThreat?: Record<string, number>
   /** Bot traffic for the day (excluded from `funnel`). */
   bots?: number
   /** Bot-free funnel counters: `funnel.<event name>`. */
@@ -94,6 +110,10 @@ export interface AnalyticsRangeResult {
   byChannel?: Record<string, number>
   byReferrer?: Record<string, number>
   byProxyType?: Record<string, number>
+  byAS?: Record<string, number>
+  byUsageType?: Record<string, number>
+  byDomain?: Record<string, number>
+  byThreat?: Record<string, number>
   /** Bot traffic in the window (excluded from `funnel`). */
   bots?: number
   /** Bot-free funnel counters: `funnel.<event name>`. */
@@ -128,6 +148,15 @@ export class AnalyticsRangeService {
 
   async getRangeMetrics(rangeId: string): Promise<any | null> {
     return this.firestoreService.getRangeMetrics(rangeId)
+  }
+
+  /**
+   * Nightly billing snapshot: MRR, paying accounts, plan mix, trials, past due.
+   * One document read; the range documents deliberately do not carry these numbers
+   * because they are state, not a period aggregate.
+   */
+  async getBillingMetrics(): Promise<any | null> {
+    return this.firestoreService.getBillingMetrics()
   }
 
   async getMetricsByDateRange(startDate: string, endDate: string): Promise<any[]> {
@@ -178,11 +207,29 @@ export class AnalyticsRangeService {
         return this.buildCustomDateRangeMetrics(startDate, endDate)
       }
       case 'last-24h':
-        return this.buildHourlyRangeMetrics(24, 'last-24h', request.now)
+        return this.buildBucketedRangeMetrics(24, 'hour', 'last-24h', request.now)
+      // Sub-day windows read the minutely series, which is the only grain that can answer
+      // a rolling window — an hour bucket can at best mean "this hour so far".
       case 'last-1h':
-        return this.buildHourlyRangeMetrics(1, 'last-1h', request.now)
+        return this.buildBucketedRangeMetrics(60, 'minute', 'last-1h', request.now)
       case 'last-30m':
-        return this.buildHourlyRangeMetrics(1, 'last-30m', request.now)
+        return this.buildBucketedRangeMetrics(30, 'minute', 'last-30m', request.now)
+      // Hour buckets: "last 3h" is 3 aligned hours, same grain the hourly series stores.
+      case 'last-3h':
+        return this.buildBucketedRangeMetrics(3, 'hour', 'last-3h', request.now)
+      case 'last-5m':
+        return this.buildBucketedRangeMetrics(5, 'minute', 'last-5m', request.now)
+      case 'last-3d': {
+        // Three `metrics_daily` documents — cheaper to read than to own a precomputed
+        // range doc, and `computeRangeMetrics` only builds 7/30/90.
+        const end = request.now ? new Date(request.now) : new Date()
+        const start = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000)
+        return this.buildCustomDateRangeMetrics(
+          start.toISOString().slice(0, 10),
+          end.toISOString().slice(0, 10),
+          'last-3d',
+        )
+      }
       case 'custom':
         return this.buildCustomDateRangeMetrics(request.customStartDate, request.customEndDate)
       default: {
@@ -195,6 +242,7 @@ export class AnalyticsRangeService {
   private async buildCustomDateRangeMetrics(
     customStartDate?: string | null,
     customEndDate?: string | null,
+    rangeId: string = 'custom',
   ): Promise<AnalyticsRangeResult | null> {
     if (!customStartDate || !customEndDate) {
       const fallback = await this.firestoreService.getRangeMetrics('last-7d')
@@ -220,6 +268,10 @@ export class AnalyticsRangeService {
     const byChannel: Record<string, number> = {}
     const byReferrer: Record<string, number> = {}
     const byProxyType: Record<string, number> = {}
+    const byAS: Record<string, number> = {}
+    const byUsageType: Record<string, number> = {}
+    const byDomain: Record<string, number> = {}
+    const byThreat: Record<string, number> = {}
 
     let totalGuests = 0
     let totalUsers = 0
@@ -255,6 +307,10 @@ export class AnalyticsRangeService {
       this.mergeDimensionCounts(byChannel, row.byChannel, 'direct')
       this.mergeDimensionCounts(byReferrer, row.byReferrer, 'direct')
       this.mergeDimensionCounts(byProxyType, row.byProxyType, 'direct')
+      this.mergeDimensionCounts(byAS, row.byAS, 'Unknown AS')
+      this.mergeDimensionCounts(byUsageType, row.byUsageType, 'Unknown usage type')
+      this.mergeDimensionCounts(byDomain, row.byDomain, 'Unknown domain')
+      this.mergeDimensionCounts(byThreat, row.byThreat, 'Unknown')
       this.mergeBotCounts(botTotals, row)
       this.mergeDimensionCounts(clientEvents, row.clientEvents, 'unknown')
       this.mergeDimensionCounts(byPage, row.byPage, '/')
@@ -266,7 +322,7 @@ export class AnalyticsRangeService {
     }
 
     return {
-      rangeId: 'custom',
+      rangeId,
       startDate: customStartDate,
       endDate: customEndDate,
       totalGuests,
@@ -288,6 +344,10 @@ export class AnalyticsRangeService {
       byChannel,
       byReferrer,
       byProxyType,
+      byAS,
+      byUsageType,
+      byDomain,
+      byThreat,
       bots: botTotals.bots,
       funnel: botTotals.funnel,
       byBotKind: botTotals.byBotKind,
@@ -309,14 +369,40 @@ export class AnalyticsRangeService {
     }
   }
 
-  private async buildHourlyRangeMetrics(hours: number, rangeId: string, now?: Date): Promise<AnalyticsRangeResult> {
+  private async buildBucketedRangeMetrics(
+    buckets: number,
+    unit: 'hour' | 'minute',
+    rangeId: string,
+    now?: Date,
+  ): Promise<AnalyticsRangeResult> {
     const end = now ? new Date(now) : new Date()
-    const start = new Date(end.getTime() - hours * 60 * 60 * 1000)
+    // Buckets are aligned to their own boundary, so an unaligned window cannot drag in a
+    // whole extra one: at 13:10 "last 1h" used to sum the 12:00 AND 13:00 documents (up
+    // to two hours of traffic) and "last 24h" covered 25 buckets.
+    const stepMs = unit === 'hour' ? 60 * 60 * 1000 : 60 * 1000
+    const lastBucket = unit === 'hour' ?
+      new Date(Date.UTC(
+        end.getUTCFullYear(),
+        end.getUTCMonth(),
+        end.getUTCDate(),
+        end.getUTCHours(),
+      )) :
+      new Date(Math.floor(end.getTime() / stepMs) * stepMs)
+    const start = new Date(lastBucket.getTime() - (buckets - 1) * stepMs)
 
     const rows = await this.firestoreService.getHourlyMetricsByDateTimeRange(
-      this.toDateTimeKey(start),
-      this.toDateTimeKey(end),
+      this.toDateTimeKey(start, unit),
+      this.toDateTimeKey(lastBucket, unit),
+      unit === 'hour' ? 'metrics_hourly' : 'metrics_minutely',
     )
+
+    // The minutely series has no history before the deploy that introduced it, so an
+    // empty window BEFORE that means "not written yet", not "nobody visited". Bounded by
+    // date so a genuinely quiet 5m window still renders 0 rather than an hour of traffic.
+    // ponytail: delete this guard (and the constant above) once a day of minutely documents exists.
+    if (unit === 'minute' && rows.length === 0 && Date.now() < MINUTELY_SERIES_START_MS) {
+      return this.buildBucketedRangeMetrics(1, 'hour', rangeId, now)
+    }
 
     const totalGuests = rows.reduce((sum: number, row: AnalyticsDailyBreakdown) => sum + Number(row.newGuests || 0), 0)
     const totalUsers = rows.reduce((sum: number, row: AnalyticsDailyBreakdown) => sum + Number(row.newUsers || 0), 0)
@@ -337,6 +423,10 @@ export class AnalyticsRangeService {
     const byChannel: Record<string, number> = {}
     const byReferrer: Record<string, number> = {}
     const byProxyType: Record<string, number> = {}
+    const byAS: Record<string, number> = {}
+    const byUsageType: Record<string, number> = {}
+    const byDomain: Record<string, number> = {}
+    const byThreat: Record<string, number> = {}
     const botTotals = { bots: 0, funnel: {} as Record<string, number>, byBotKind: {} as Record<string, number> }
     const clientEvents: Record<string, number> = {}
     const byPage: Record<string, number> = {}
@@ -362,6 +452,10 @@ export class AnalyticsRangeService {
       this.mergeDimensionCounts(byChannel, row.byChannel, 'direct')
       this.mergeDimensionCounts(byReferrer, row.byReferrer, 'direct')
       this.mergeDimensionCounts(byProxyType, row.byProxyType, 'direct')
+      this.mergeDimensionCounts(byAS, row.byAS, 'Unknown AS')
+      this.mergeDimensionCounts(byUsageType, row.byUsageType, 'Unknown usage type')
+      this.mergeDimensionCounts(byDomain, row.byDomain, 'Unknown domain')
+      this.mergeDimensionCounts(byThreat, row.byThreat, 'Unknown')
       this.mergeBotCounts(botTotals, row)
       this.mergeDimensionCounts(clientEvents, row.clientEvents, 'unknown')
       this.mergeDimensionCounts(byPage, row.byPage, '/')
@@ -395,6 +489,10 @@ export class AnalyticsRangeService {
       byChannel,
       byReferrer,
       byProxyType,
+      byAS,
+      byUsageType,
+      byDomain,
+      byThreat,
       bots: botTotals.bots,
       funnel: botTotals.funnel,
       byBotKind: botTotals.byBotKind,
@@ -407,11 +505,14 @@ export class AnalyticsRangeService {
       paidByChannel,
       dailyBreakdown: rows.map((row: AnalyticsDailyBreakdown) => {
         const hour = Number(row.hour ?? 0)
+        const minute = Number(row.minute ?? 0)
         const newGuests = Number(row.newGuests || 0)
         const rowGuestConversions = this.toGuestConversions(row.guestConversions)
-
-        return {
-          date: `${String(row.date || '')}T${String(hour).padStart(2, '0')}:00:00.000Z`,
+        const stamp = String(row.date || '') + 'T' + String(hour).padStart(2, '0')
+        const point: AnalyticsDailyBreakdown = {
+          date: unit === 'minute' ?
+            `${stamp}:${String(minute).padStart(2, '0')}:00.000Z` :
+            `${stamp}:00:00.000Z`,
           hour,
           newGuests,
           newUsers: Number(row.newUsers || 0),
@@ -419,6 +520,10 @@ export class AnalyticsRangeService {
           guestConversions: rowGuestConversions,
           conversionRate: newGuests > 0 ? Math.round((rowGuestConversions / newGuests) * 100) : 0,
         }
+        if (unit === 'minute') {
+          point.minute = minute
+        }
+        return point
       }),
     }
   }
@@ -612,6 +717,15 @@ export class AnalyticsRangeService {
       byRegion: this.extractDimension(obj, 'byRegion'),
       byLanguage: this.extractDimension(obj, 'byLanguage'),
       byIP: this.extractDimension(obj, 'byIP'),
+      // These five are written by the realtime triggers ONLY as flat dotted fields
+      // (`byASN.12345`), so without an extraction here `row.byASN` was undefined and
+      // every sub-day range rendered those panels empty — 7d/30d/90d were fine because
+      // `computeRangeMetric` stores them as nested maps.
+      byASN: this.extractDimension(obj, 'byASN'),
+      byISP: this.extractDimension(obj, 'byISP'),
+      byChannel: this.extractDimension(obj, 'byChannel'),
+      byReferrer: this.extractDimension(obj, 'byReferrer'),
+      byProxyType: this.extractDimension(obj, 'byProxyType'),
       byBotKind: this.extractDimension(obj, 'byBotKind'),
       funnel: this.extractDimension(obj, 'funnel'),
       clientEvents: this.extractDimension(obj, 'clientEvents'),
@@ -624,11 +738,14 @@ export class AnalyticsRangeService {
     }
   }
 
-  private toDateTimeKey(date: Date): string {
+  private toDateTimeKey(date: Date, unit: 'hour' | 'minute' = 'hour'): string {
     const y = date.getUTCFullYear()
     const m = String(date.getUTCMonth() + 1).padStart(2, '0')
     const d = String(date.getUTCDate()).padStart(2, '0')
     const h = String(date.getUTCHours()).padStart(2, '0')
+    if (unit === 'minute') {
+      return `${y}-${m}-${d}-${h}-${String(date.getUTCMinutes()).padStart(2, '0')}`
+    }
     return `${y}-${m}-${d}-${h}`
   }
 }

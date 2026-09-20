@@ -1,11 +1,12 @@
 import { AsyncPipe, CurrencyPipe, NgClass } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, inject } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ActivatedRoute, Router } from '@angular/router';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { RippleDirective } from 'src/app/core/directives';
+import { StinputComponent } from 'src/app/core/components';
 import { animate, style, transition, trigger } from '@angular/animations';
 import {
   BillingLoadingState,
@@ -24,7 +25,7 @@ import { WindowToken } from 'src/app/core/services';
 
 @Component({
     selector: 'app-plans',
-  imports: [RippleDirective, CurrencyPipe, AsyncPipe, NgClass, MatIconModule, MatProgressSpinnerModule, FormsModule, TranslateModule],
+  imports: [RippleDirective, CurrencyPipe, AsyncPipe, NgClass, MatIconModule, MatProgressSpinnerModule, ReactiveFormsModule, TranslateModule, StinputComponent],
     templateUrl: './plans.component.html',
     styleUrl: './plans.component.scss',
     animations: [
@@ -63,7 +64,9 @@ export class PlansComponent {
   offerBadgeMessage: string | null = null
   isBillingRestricted = false
   platformAdminBypassActive = false
-  customCreditsAmount = 250
+  // ponytail: string control — StinputComponent is FormControl<string>; the value is
+  // parsed with Number() wherever it is used and clamped on blur.
+  readonly customCreditsAmount = new FormControl('250', { nonNullable: true })
   readonly loadingState$ = this.billingService.loadingState$
   readonly pageReady$: Observable<boolean>
 
@@ -230,17 +233,20 @@ export class PlansComponent {
   }
 
   clampCustomCredits(config: CustomCreditsCatalog): void {
-    const value = Math.floor(Number(this.customCreditsAmount || 0))
+    const value = Math.floor(Number(this.customCreditsAmount.value || 0))
     if (!Number.isFinite(value)) {
-      this.customCreditsAmount = config.minimumCredits
+      this.customCreditsAmount.setValue(String(config.minimumCredits), { emitEvent: false })
       return
     }
 
-    this.customCreditsAmount = Math.min(config.maximumCredits, Math.max(config.minimumCredits, value))
+    this.customCreditsAmount.setValue(
+      String(Math.min(config.maximumCredits, Math.max(config.minimumCredits, value))),
+      { emitEvent: false },
+    )
   }
 
   getCustomCreditsTotal(config: CustomCreditsCatalog): number {
-    const credits = Math.floor(Number(this.customCreditsAmount || 0))
+    const credits = Math.floor(Number(this.customCreditsAmount.value || 0))
     if (!Number.isFinite(credits) || credits <= 0) {
       return 0
     }
@@ -249,7 +255,7 @@ export class PlansComponent {
   }
 
   setSuggestedCustomCredits(credits: number, config: CustomCreditsCatalog): void {
-    this.customCreditsAmount = credits
+    this.customCreditsAmount.setValue(String(credits), { emitEvent: false })
     this.clampCustomCredits(config)
   }
 
@@ -635,7 +641,7 @@ export class PlansComponent {
       const cancelUrl = `${this.window.location.origin}/billing/plans?offer=1&offerMessage=${encodeURIComponent(this.translate.instant('BILLING_PLANS.CUSTOM_CREDITS_CANCEL_MESSAGE'))}`
 
       const result = await this.billingService.openCheckoutForCustomCredits({
-        credits: this.customCreditsAmount,
+        credits: Number(this.customCreditsAmount.value),
         successUrl,
         cancelUrl,
       })

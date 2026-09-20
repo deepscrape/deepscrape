@@ -4,7 +4,8 @@ import { MatProgressSpinner } from '@angular/material/progress-spinner'
 import { HttpClient } from '@angular/common/http'
 import { LoadingBarRouterModule } from '@ngx-loading-bar/router'
 import { Subscription } from 'rxjs/internal/Subscription'
-import { LoggerService, SnackbarService, SvgIconService, HeartbeatService, FirestoreService, AnalyticsService, AuthService } from './core/services'
+import { LoggerService, SnackbarService, SvgIconService, HeartbeatService, AnalyticsService, AuthService } from './core/services'
+import { CookieConsentComponent } from './core/components/cookie-consent/cookie-consent.component';
 import { SessionTimeoutService, DeviceVerificationService } from './core/services'
 import { AnimatedBgComponent, LangPickerComponent, ThemeToggleComponent } from './shared'
 import { SizeDetectorComponent } from './core/components/size-detector/size-detector.component'
@@ -16,7 +17,6 @@ import { fadeInOutAnimation } from './animations'
 import { Inject, OnInit, OnDestroy, AfterViewInit } from '@angular/core'
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
 import { NgswUpdateService } from './core/services/ngsw-update.service'
-import { Analytics } from '@angular/fire/analytics'
 import { environment } from 'src/environments/environment'
 
 /* 
@@ -54,7 +54,7 @@ import { environment } from 'src/environments/environment'
 @Component({
   selector: 'app-root',
   imports: [RouterOutlet, LoadingBarRouterModule, LoadingBarHttpClientModule, MatProgressSpinner, 
-    SnackbarComponent, SizeDetectorComponent, AnimatedBgComponent
+    SnackbarComponent, SizeDetectorComponent, AnimatedBgComponent, CookieConsentComponent
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [ThemeToggleComponent, NgswUpdateService, LangPickerComponent, LoggerService],
@@ -68,7 +68,6 @@ import { environment } from 'src/environments/environment'
 })
 export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   private destroyRef = inject(DestroyRef)
-    private analytics = inject(Analytics)
   private heartbeatService = inject(HeartbeatService)
   @ViewChild(SnackbarComponent) snackbar!: SnackbarComponent
   @ViewChild(RouterOutlet) outlet?: RouterOutlet
@@ -100,7 +99,6 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     private authService: AuthService,
     private ngswUpdate: NgswUpdateService,
     private analyticsService: AnalyticsService,
-    private fireService: FirestoreService, // Inject FirestoreService
     sessionTimeoutService: SessionTimeoutService, // Auto-initialized via constructor
     deviceVerificationService: DeviceVerificationService // Auto-initialized via constructor
     // Inject ActivatedRoute to access route data
@@ -131,7 +129,12 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         }),
         switchMap((event) =>
           this.analyticsService.trackEvent('page_view', {
+            // GA4's own parameter names, so this single emit is as informative as
+            // `ScreenTrackingService`'s was. `page` stays because the first-party drain
+            // keys `byPage.*` off it (`props.page ?? props.path`).
             page: event.urlAfterRedirects,
+            page_location: typeof location !== 'undefined' ? location.href : event.urlAfterRedirects,
+            page_title: typeof document !== 'undefined' ? document.title : '',
             timestamp: new Date().toISOString()
           }).pipe(
             catchError((error) => {
@@ -179,7 +182,12 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     // This needs to run in emulator mode too, otherwise first-login metrics miss guest enrichment.
     if (isBrowser && (environment.production || environment.emulators)) {
 
-      // HeartbeatService will be started only for authenticated users
+      // Started for anonymous visitors as well. The heartbeat skips itself unless the
+      // visitor is signed in or granted analytics consent, and its first beat is the
+      // only same-origin call that lets `guestTracker` mint a `gid` for a consented
+      // visitor who has no identity yet -- without it nobody is ever counted.
+      this.heartbeatService.start(this.token)
+
       // Send custom analytics event to backend
       forkJoin([
         this.analyticsService.sendStatus(),

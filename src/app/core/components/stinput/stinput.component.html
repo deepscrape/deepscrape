@@ -38,7 +38,9 @@
       class="flex max-w-full flex-1 flex-col items-start bg-inherit dark:bg-inherit">
       <input
         #stInput
-        [type]="isLabelPassword() ? 'password' : 'text'"
+        [type]="type || (isLabelPassword() ? 'password' : 'text')"
+        [attr.min]="min ?? null"
+        [attr.max]="max ?? null"
         [formControl]="control"
         (focus)="doFocus()"
         (blur)="doBlur()"

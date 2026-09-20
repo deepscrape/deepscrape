@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, inject, Input, ViewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, EventEmitter, inject, Input, Output, ViewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
@@ -37,7 +37,14 @@ export class StinputComponent {
 
   @Input() svgIcon?: string = ''
 
+  // ponytail: passthroughs so numeric/date fields can reuse this control too.
+  // Omitting `type` keeps the original label-based password heuristic.
+  @Input() type?: 'text' | 'password' | 'number' | 'email' | 'tel' | 'date'
+  @Input() min?: number | string
+  @Input() max?: number | string
 
+  /** Native blur — lets callers commit/clamp without subscribing to valueChanges. */
+  @Output() blurred = new EventEmitter<void>()
 
   @ViewChild('stInput', { static: true }) stInput: ElementRef<HTMLInputElement> = {} as ElementRef;
   constructor() { }
@@ -84,6 +91,7 @@ export class StinputComponent {
     this.stInput.nativeElement.blur()
     this.inputFocused = false
     this.Placeholder = " "
+    this.blurred.emit()
   }
 
 

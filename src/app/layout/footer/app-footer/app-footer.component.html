@@ -42,6 +42,22 @@
       </div>
     </div>
     <div class="text-center">
+      <!-- Legal links. The footer is the only place a no-auth visitor can reach
+           these, so they live here rather than on the pages themselves. -->
+      <nav
+        class="mb-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm"
+        aria-label="Legal">
+        <a
+          routerLink="/privacy"
+          class="text-gray6 underline-offset-2 transition-colors hover:text-[#3a0d2f] hover:underline dark:text-white dark:hover:text-[#c549a6]"
+          >{{ 'FOOTER.PRIVACY' | translate }}</a
+        >
+        <a
+          routerLink="/terms"
+          class="text-gray6 underline-offset-2 transition-colors hover:text-[#3a0d2f] hover:underline dark:text-white dark:hover:text-[#c549a6]"
+          >{{ 'FOOTER.TERMS' | translate }}</a
+        >
+      </nav>
       <p class="dark:text-gray-400 text-gray6 text-sm mb-2">
         {{ 'FOOTER.ALL_RIGHTS' | translate }} Built with ❤️ using Angular.
       </p>

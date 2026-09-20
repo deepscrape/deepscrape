@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { BehaviorSubject, catchError, from, map, Observable, of, Subscription, tap, throwError } from 'rxjs';
 import { ApiKey, ApiKeyType } from '../types/apikey.interface';
+import { AnalyticsService } from './analytics.service';
 import { SessionStorage } from './storage.service';
 import { FirestoreService } from './firestore.service';
 import { toDate } from '../functions';
@@ -20,6 +21,7 @@ export class ApiKeyService {
     private apiKeysSubject = new BehaviorSubject<ApiKey[] | null>([]);
     private SessionStorage: Storage = inject(SessionStorage)
     private apiKeyPageCursors = new Map<number, string | null>([[1, null]])
+    private readonly analytics = inject(AnalyticsService)
 
     apiKeys$ = this.apiKeysSubject.asObservable()
 
@@ -166,7 +168,9 @@ export class ApiKeyService {
         // and the metadata in firestore db for current user
 
         // return the new Key
-        return this.createApiKey(newKey)
+        return this.createApiKey(newKey).pipe(
+            tap(() => this.analytics.trackEvent('api_key_created', { type }).subscribe({ error: () => undefined })),
+        )
     }
 
     deleteApiKey(keyToDelete: ApiKey) {

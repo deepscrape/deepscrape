@@ -4,15 +4,32 @@ import { ThemeService } from './theme.service';
 import { getTestProviders } from 'src/app/testing';
 import { LocalStorage } from './storage.service';
 import { themeStorageKey } from 'src/app/shared';
+import { WindowToken } from './window.service';
 
 describe('ThemeService', () => {
   let service: ThemeService;
   let localStorageMock: jasmine.SpyObj<Storage>;
 
+  /**
+   * Controllable stand-in for the host's `prefers-color-scheme`.
+   *
+   * `getTestProviders` provides the REAL window, and ThemeService falls back to
+   * the system preference when nothing is stored — so these tests used to assert
+   * against whatever theme the machine running them happened to use. They passed
+   * on a light CI box and failed on a dark desktop, which is the shape of a flake
+   * nobody can reproduce.
+   */
+  let systemPrefersDark = false;
+  const windowStub = {
+    matchMedia: (query: string) =>
+      ({ matches: query.includes('dark') && systemPrefersDark }) as MediaQueryList,
+  } as unknown as Window;
+
   const createService = (): ThemeService =>
     TestBed.runInInjectionContext(() => new ThemeService());
 
   beforeEach(() => {
+    systemPrefersDark = false;
     localStorageMock = jasmine.createSpyObj('Storage', ['getItem', 'setItem', 'removeItem', 'clear']);
     localStorageMock.getItem.and.returnValue(null);
 
@@ -20,6 +37,7 @@ describe('ThemeService', () => {
       providers: [
         ...getTestProviders(),
         { provide: LocalStorage, useValue: localStorageMock },
+        { provide: WindowToken, useValue: windowStub },
       ],
     });
 
@@ -78,5 +96,19 @@ describe('ThemeService', () => {
       expect(isDark).toBe(false);
       done();
     });
+  });
+
+  it('should follow the system preference when nothing is stored', () => {
+    systemPrefersDark = true;
+    localStorageMock.getItem.and.returnValue(null);
+
+    expect(createService().isDarkMode).toBe(true);
+  });
+
+  it('should let an explicit stored value win over the system preference', () => {
+    systemPrefersDark = true;
+    localStorageMock.getItem.and.returnValue('false');
+
+    expect(createService().isDarkMode).toBe(false);
   });
 });

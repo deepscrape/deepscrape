@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { inject, Injectable } from '@angular/core';
+import { AnalyticsService } from './analytics.service';
 import { AuthService } from './auth.service';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { API_ARACHNEFLY_UPLOAD_URL, API_ARACHNEFLY_URL } from '../variables';
@@ -13,6 +14,8 @@ import { map } from 'rxjs/internal/operators/map';
   providedIn: 'root'
 })
 export class DeploymentService {
+
+  private readonly analyticsService = inject(AnalyticsService)
 
   constructor(private http: HttpClient, private authService: AuthService) { }
 
@@ -105,6 +108,8 @@ export class DeploymentService {
     return this.http.post(url, deploymentData, { headers, params }).pipe(
       tap((response: any) => {
       console.log('Deployment successful:', response)
+      // The deploy call came back, so a machine was requested for this account.
+      this.analyticsService.trackEvent('machine_deployed', { region }).subscribe({ error: () => undefined })
       }),
       map((response: any) => response?.data),
       catchError(error => {
@@ -162,6 +167,7 @@ export class DeploymentService {
     return this.http.put(url, {}, { headers }).pipe(
       tap((response: any) => {
         console.log('Machine stopped:', response)
+        this.analyticsService.trackEvent('machine_stopped', { machineId }).subscribe({ error: () => undefined })
       }),
       map((response: any) => response.data),
       catchError(error => {

@@ -564,10 +564,10 @@
           </label>
         </div>
 
-        <label class="mt-3 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-          <input type="checkbox" [formControl]="riskEmailNotificationsControl" />
-          {{ 'SETTINGS_SECURITY.NOTIFY_RISK_EMAIL' | translate }}
-        </label>
+        <app-checkbox
+          class="mt-3"
+          [control]="riskEmailNotificationsControl"
+          [title]="'SETTINGS_SECURITY.NOTIFY_RISK_EMAIL' | translate"></app-checkbox>
 
         @if (mfaPreferencesError()) {
           <p class="mt-2 text-xs text-red-600 dark:text-red-400">{{ mfaPreferencesError() }}</p>

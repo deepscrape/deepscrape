@@ -8,7 +8,7 @@ export const settingsRoutes: Routes = [
     {
         path: '',
         pathMatch: 'full',
-        redirectTo: 'profile'
+        redirectTo: 'general'
     },
     {
         path: 'profile',

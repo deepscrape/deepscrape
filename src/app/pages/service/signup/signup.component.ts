@@ -8,7 +8,7 @@ import { Auth, GoogleAuthProvider, createUserWithEmailAndPassword, signInWithPop
 import { Firestore, doc, setDoc } from '@angular/fire/firestore';
 import { Users, Loading } from 'src/app/core/types';
 import { checkPasswordStrength, getErrorMessage } from 'src/app/core/functions';
-import { FirestoreService, SnackbarService, AuthService, ThemeService, WindowToken } from 'src/app/core/services';
+import { FirestoreService, SnackbarService, AuthService, ThemeService, WindowToken, AnalyticsService } from 'src/app/core/services';
 import { DEFAULT_PROFILE_URL } from 'src/app/core/variables';
 import { createPasswordStrengthValidator } from 'src/app/core/directives';
 import { SnackBarType } from 'src/app/core/components';
@@ -18,6 +18,7 @@ import { AnimatedBgComponent } from 'src/app/shared';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { I18nService } from 'src/app/core/i18n';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { CheckboxComponent } from 'src/app/core/components';
 
 // First, create an interface for your form structure
 interface SignupForm {
@@ -26,6 +27,7 @@ interface SignupForm {
     password: FormControl<string | null>;
     confirmPassword: FormControl<string | null>;
     phoneNumber: FormControl<string | null>;
+    terms: FormControl<boolean>;
 }
 
 @Component({
@@ -37,6 +39,7 @@ interface SignupForm {
         MatIconModule,
         MatProgressSpinnerModule,
         TranslateModule,
+        CheckboxComponent,
     ],
     templateUrl: './signup.component.html',
     styleUrl: './signup.component.scss',
@@ -48,6 +51,7 @@ export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
     public recaptchaVerifier!: RecaptchaVerifier;
     private window = inject(WindowToken)
     private platformId = inject<Object>(PLATFORM_ID)
+    private analytics = inject(AnalyticsService)
     signupForm: FormGroup
     emailCheckSubs: Subscription
     loading: Loading = {
@@ -107,6 +111,12 @@ export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
 
             await this.firestoreService.storeUserData(userCredential.user, 'password', false, null, phoneNumber ? false : null)
 
+            // The conversion is the persisted account, not the form submit. Email
+            // verification happens afterwards on another route, so this is the only
+            // funnel step the signup page owns.
+            this.analytics.trackEvent('signup_completed', { method: 'password' })
+                .subscribe({ error: () => undefined })
+
             const navigationState: any = { email: userCredential.user.email };
             if (phoneNumber) {
                 navigationState.phoneNumber = phoneNumber;
@@ -137,6 +147,16 @@ export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
     ) {
     }
 
+
+    /**
+     * Consent control. Held as a field as well as in the group because
+     * `<app-checkbox>` binds a `FormControl` directly instead of taking a
+     * `formControlName`; `nonNullable` keeps its type `FormControl<boolean>`.
+     */
+    readonly termsControl = new FormControl(false, {
+        nonNullable: true,
+        validators: [Validators.requiredTrue]
+    });
 
     ngOnInit(): void {
         this.translate.use(this.i18nService.currentLang());
@@ -171,6 +191,12 @@ export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
                 validators: [Validators.pattern(/^\+?[1-9]\d{1,14}$/)],
                 nonNullable: false
             }),
+            // Consent has to be a deliberate act, so this is a real control with
+            // `requiredTrue` rather than a decorative link — the submit button is
+            // bound to `signupForm.valid`, so it stays disabled until it is
+            // checked. `signup()` destructures only email/confirmPassword/name/
+            // phoneNumber, so this never reaches the create-user payload.
+            terms: this.termsControl,
         }, {
             validators: this.passwordMatchValidator
         });

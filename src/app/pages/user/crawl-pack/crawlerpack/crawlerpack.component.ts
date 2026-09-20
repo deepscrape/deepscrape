@@ -4,7 +4,7 @@ import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } 
 import { CartPack, CrawlPack, CrawlPackConfigs, Headers, Users } from 'src/app/core/types';
 import { CartService } from 'src/app/core/services/cart.service';
 import { AsyncPipe, JsonPipe, KeyValuePipe } from '@angular/common';
-import { AuthService, FirestoreService, LocalStorage, SnackbarService } from 'src/app/core/services';
+import { AnalyticsService, AuthService, FirestoreService, LocalStorage, SnackbarService } from 'src/app/core/services';
 import { Observable } from 'rxjs/internal/Observable';
 import { Subscription } from 'rxjs/internal/Subscription';
 import { of } from 'rxjs/internal/observable/of';
@@ -107,6 +107,8 @@ export class CrawlerPackComponent implements OnInit, OnDestroy {
             }),
         )
     }
+    private readonly analytics = inject(AnalyticsService)
+
     private loadCrawlPacks() {
         if (this.user?.uid)
             this.crawlPackages$ = from(this.fireService.loadPreviousPacks(this.user.uid))
@@ -159,6 +161,13 @@ export class CrawlerPackComponent implements OnInit, OnDestroy {
                     }
                 }
                 return from(this.fireService.saveCrawlPackToFirestore(this.user?.uid || '', packager, false)).pipe(
+                    tap(() => this.analytics.trackEvent('crawlpack_created', {
+                        // `packager` is the exact JSON handed to the Python service, so its
+                        // type/config.type are the canonical identifiers, not the form title.
+                        type: packager.type,
+                        title: packager.title,
+                        sections: packager.config.type,
+                    }).subscribe({ error: () => undefined })),
                     catchError((error) => {
                         this.loadingCartItems = false
                         return throwError(() => error)

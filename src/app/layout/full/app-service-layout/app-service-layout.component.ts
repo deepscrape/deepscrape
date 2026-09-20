@@ -9,12 +9,12 @@ import { ChildrenOutletContexts, RouterLink, RouterOutlet } from '@angular/route
 import { Observable } from 'rxjs/internal/Observable';
 import { fadeInOutAnimation } from 'src/app/animations';
 import { LocalStorage, ThemeService, WindowToken } from 'src/app/core/services';
-import { LangPickerComponent, themeStorageKey, ThemeToggleComponent } from 'src/app/shared';
+import { LangPickerComponent, NotificationBellComponent, themeStorageKey, ThemeToggleComponent } from 'src/app/shared';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
   selector: 'app-service-layout',
-  imports: [RouterOutlet, RouterLink, ThemeToggleComponent, AsyncPipe,
+  imports: [RouterOutlet, RouterLink, ThemeToggleComponent, NotificationBellComponent, AsyncPipe,
     LangPickerComponent
   ],
   templateUrl: './app-service-layout.component.html',

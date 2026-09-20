@@ -48,18 +48,28 @@ describe('AnalyticsService', () => {
     req.flush({ ok: true });
   });
 
-  it('should log event and send analytics payload to backend', () => {
+  it('should log event and queue the payload for the next batch flush', () => {
     service.trackEvent('crawl_started', { source: 'ui' }, 'token-1', 'user-1', 'guest-1').subscribe();
 
     expect(fireServiceMock.logEvent).toHaveBeenCalledWith('crawl_started', { source: 'ui' });
-    const req = httpMock.expectOne('/event/analytics/event');
+    // The one-POST-per-event contract is gone: trackEvent queues, and the tab-close
+    // flush (the loss-window guard) drains the queue via the existing batch endpoint.
+    httpMock.expectNone('/event/analytics/event');
+
+    document.dispatchEvent(new Event('pagehide'));
+
+    const req = httpMock.expectOne('/event/analytics/batch');
     expect(req.request.method).toBe('POST');
     expect(req.request.headers.get('Authorization')).toBe('Bearer token-1');
     expect(req.request.body).toEqual({
-      eventType: 'crawl_started',
-      metadata: { source: 'ui' },
-      userId: 'user-1',
-      guestId: 'guest-1',
+      events: [
+        {
+          eventType: 'crawl_started',
+          metadata: { source: 'ui' },
+          userId: 'user-1',
+          guestId: 'guest-1',
+        },
+      ],
     });
     req.flush({ ok: true });
   });

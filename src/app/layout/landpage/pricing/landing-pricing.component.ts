@@ -6,6 +6,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
 import { RadioToggleComponent } from 'src/app/core/components/radiotoggle/radiotoggle.component';
+import { AnalyticsService } from 'src/app/core/services';
 import { myIcons, RevealDirective } from 'src/app/shared';
 
 interface PricingTier {
@@ -34,8 +35,15 @@ export class LandingPricingComponent implements OnInit {
   readonly billingControl = new FormControl<boolean>(false, { nonNullable: true });
   isYearly = false;
   private destroyRef = inject(DestroyRef);
+  private analytics = inject(AnalyticsService);
 
   ngOnInit(): void {
+    // Exposure signal no server fact can produce: without it the funnel cannot tell
+    // "never reached pricing" from "read pricing and left", which is the difference
+    // between a traffic problem and an offer problem.
+    this.analytics.trackEvent('pricing_viewed', { section: 'landing' })
+      .subscribe({ error: () => undefined })
+
     this.billingControl.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(val => {
       this.isYearly = val;
     });

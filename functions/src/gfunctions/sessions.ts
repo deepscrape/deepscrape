@@ -1682,17 +1682,19 @@ export const validateSessionCookie = onCall(
       // pipeline read followed by a separate `setex`, i.e. two round-trips on the
       // hottest authenticated path in the app. The `/heartbeat` route shares the
       // same script.
-      const [cachedRevoked, cachedSession] = await redisEval<[unknown, string | null]>(
+      const [cachedPayload, sessionStatus] = await redisEval<[unknown, string | null]>(
         READ_SESSION_WITH_TTL_REFRESH,
         [sessionKey(sessionId), revokedKey(sessionId)],
         [SESSION_CACHE_TTL_SECONDS],
       )
 
-      if (cachedRevoked) {
+      // { payload, status } — payload first. Reading the slots the other way round made a
+      // live session look revoked as soon as it was cached.
+      if (sessionStatus === "revoked") {
         return { valid: false, reason: "revoked" }
       }
       // Upstash auto-deserializes, so this is already an object, not a string.
-      const cachedSessionData = parseCachedJson<Record<string, unknown>>(cachedSession)
+      const cachedSessionData = parseCachedJson<Record<string, unknown>>(cachedPayload)
       if (cachedSessionData) {
         try {
           if (cachedSessionData.userId === userId && cachedSessionData.active) {

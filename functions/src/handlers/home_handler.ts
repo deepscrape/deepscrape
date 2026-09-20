@@ -212,13 +212,18 @@ export const heartbeat = async (req: Request, res: Response) => {
                 // then a separate awaited setex, then the presence pipeline), and its
                 // TTL refresh was a blind write that could resurrect a session a
                 // concurrent sign-out had just deleted.
-                const [cachedRevoked, cachedSession] = await redisEval<[string | null, string | null]>(
+                const [cachedPayload, sessionStatus] = await redisEval<[string | null, string | null]>(
                     READ_SESSION_WITH_TTL_REFRESH,
                     [sessionKey(loginId), revokedKey(loginId)],
                     [SESSION_CACHE_TTL_SECONDS],
                 )
 
-                if (cachedRevoked) {
+                // The script returns { payload, status } — payload FIRST, and `status` is the
+                // discriminator it exists to return. Destructuring the two slots the other way
+                // round put a live session's own JSON in the revocation slot, so every cached
+                // session was denied as revoked while Firestore (and the status callable, which
+                // reads the key directly) correctly said active/not-revoked.
+                if (sessionStatus === "revoked") {
                     return denySession(res, "session_revoked", "Session has been revoked")
                 }
                 // Upstash auto-deserializes, so this is already an object, not a string —
@@ -232,7 +237,7 @@ export const heartbeat = async (req: Request, res: Response) => {
                     browser?: string
                     os?: string
                     providerId?: string
-                }>(cachedSession)
+                }>(cachedPayload)
                 if (sessionData) {
                     try {
                         if (sessionData.userId === userId && sessionData.active) {

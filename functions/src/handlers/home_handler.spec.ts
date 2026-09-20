@@ -69,6 +69,35 @@ describe("redis round-trip budget", () => {
     assert.match(region, /READ_SESSION_WITH_TTL_REFRESH/)
   })
 
+  it("reads the session script as { payload, status }, not the reverse", () => {
+    // READ_SESSION_WITH_TTL_REFRESH returns { payload, status }: the payload slot holds the
+    // session JSON when status is "ok" and the revocation JSON when status is "revoked".
+    // Destructuring it as [revoked, session] put a live session's own JSON in the revocation
+    // slot, so `if (cachedRevoked)` denied every cached session as revoked — while Firestore
+    // and the status callable (which reads `revoked:{loginId}` directly) still said active.
+    // 155 tests passed with that live, so pin the order here.
+    const region = betweenMarkers(
+      handler,
+      "ONE round-trip for read + TTL refresh + revocation check",
+      "// Fallback: Check loginSessions collection (slower path).",
+    )
+
+    assert.match(
+      region,
+      /const \[cachedPayload, sessionStatus\] = await redisEval/,
+      "the script returns { payload, status } in that order",
+    )
+    assert.ok(
+      !region.includes("cachedRevoked"),
+      "the revocation decision must come from status === 'revoked', not from a truthy payload",
+    )
+    assert.match(
+      region,
+      /if \(sessionStatus === "revoked"\)/,
+      "the revocation check must test the status discriminator",
+    )
+  })
+
   it("keeps the presence region to a single script call", () => {
     const region = betweenMarkers(
       handler,

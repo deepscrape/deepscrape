@@ -1,4 +1,5 @@
-{  "indexes": [
+{
+  "indexes": [
     {
       "collectionGroup": "metrics_daily",
       "queryScope": "COLLECTION",
@@ -82,7 +83,8 @@
         { "fieldPath": "state", "order": "ASCENDING" },
         { "fieldPath": "created_at", "order": "DESCENDING" }
       ]
-    },    {
+    },
+    {
       "collectionGroup": "machines",
       "queryScope": "COLLECTION",
       "fields": [
@@ -105,7 +107,8 @@
         { "fieldPath": "linkedAt", "order": "ASCENDING" },
         { "fieldPath": "uid", "order": "ASCENDING" }
       ]
-    },    {
+    },
+    {
       "collectionGroup": "guests",
       "queryScope": "COLLECTION",
       "fields": [
@@ -267,6 +270,14 @@
         { "fieldPath": "processed", "order": "ASCENDING" },
         { "fieldPath": "processingStartedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "credits_ledger",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "operation", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -278,6 +289,21 @@
         { "order": "DESCENDING" },
         { "arrayConfig": "CONTAINS" },
         { "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "login_history_Info",
+      "fieldPath": "timestamp",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "billing",
+      "fieldPath": "plan",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
     }
   ]

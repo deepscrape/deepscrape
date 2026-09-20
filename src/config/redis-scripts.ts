@@ -59,8 +59,8 @@ return 0
 `
 
 /**
- * Heartbeat presence: mark the caller live, trim the stale tail, and count both
- * populations — one round-trip instead of the previous setex + 4 zset commands.
+ * Heartbeat presence: mark the caller live, upsert the sorted set, trim the
+ * stale tail — one round-trip instead of the previous setex + 4 zset commands.
  *
  * KEYS[1] = presence key for this caller (`user:`/`guest:` prefixed)
  * KEYS[2] = online users zset
@@ -71,10 +71,12 @@ return 0
  * ARGV[4] = member to upsert
  * ARGV[5] = cutoff epoch ms for trimming
  * ARGV[6] = "user" or "guest" — which zset is authoritative for this caller
- * ARGV[7] = lower bound (cutoff) for the two counts
- * ARGV[8] = upper bound (now) for the two counts
  *
- * Returns { activeUsers, activeGuests, ttlRefreshOk }.
+ * ponytail: the two `zcount`s that used to be returned here are gone — the caller
+ * discarded both (`void activeUsersNow`). Population counts are owned by
+ * computeActiveUsersNow via PRESENCE_WINDOW_COUNTS, once a minute, where they are
+ * actually read. Counting on the app's hottest endpoint for a thrown-away value
+ * was work on every single heartbeat.
  */
 export const HEARTBEAT_PRESENCE = `
 redis.call('setex', KEYS[1], ARGV[1], ARGV[2])
@@ -85,9 +87,7 @@ else
 end
 redis.call('zremrangebyscore', KEYS[2], 0, ARGV[5])
 redis.call('zremrangebyscore', KEYS[3], 0, ARGV[5])
-local users = redis.call('zcount', KEYS[2], ARGV[7], ARGV[8])
-local guests = redis.call('zcount', KEYS[3], ARGV[7], ARGV[8])
-return { users, guests, 1 }
+return 1
 `
 
 /**

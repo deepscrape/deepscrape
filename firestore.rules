@@ -57,6 +57,19 @@ service cloud.firestore {
       match /browser/{profileId} {
         allow read, write: if isAuthenticated() && request.auth.uid == userId;
       }
+
+      // Security alerts (new sign-in location, MFA disabled, new trusted device).
+      // Without this block the recursive catch-all applied, which grants read to
+      // ADMINS ONLY — so a user could not read their own alerts and the notification
+      // bell failed with permission-denied for every real user.
+      //
+      // Writes stay closed: alerts are written by Cloud Functions with the Admin SDK,
+      // and a client that could write here could forge or dismiss its own security
+      // notice. (Consequence: "mark as read" is client-local until it gets a callable.)
+      match /alerts/{alertId} {
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        allow create, update, delete: if false;
+      }
     }
     
     function isAuthenticated() {

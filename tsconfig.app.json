@@ -10,12 +10,9 @@
   },
   "files": [
     "src/main.ts",
-    "src/main.server.ts",
-    "server.ts",
-    "server-elysia.ts"
+    "src/main.server.ts"
   ],
   "include": [
-    "src/**/*.d.ts",
-    "api/**/*.d.ts"
+    "src/**/*.d.ts"
   ]
 }

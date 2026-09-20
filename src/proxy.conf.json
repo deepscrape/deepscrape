@@ -49,47 +49,45 @@
   },
   "/machines": {
     "target": "http://127.0.0.1:8080",
-    "secure": true,
+    "secure": false,
     "changeOrigin": true,
     "pathRewrite": {
-      "^/machines": "/api"
+      "^/machines": "/api/machines"
     }
   },
   "/api": {
-    "target": "http://localhost:8000",
+    "target": "http://127.0.0.1:8080",
     "secure": false,
-    "changeOrigin": true,
-    "pathRewrite": {
-      "^/api": "/api/v1"
-    }
-  },
-  "/ws": {
-    "target": "ws://localhost:8000",
-    "ws": true,
-    "secure": false,
-    "changeOrigin": true,
-    "pathRewrite": {
-      "^/ws": "/api/v1/ws"
-    }
+    "changeOrigin": true
   },
   "/oauth": {
-    "target": "http://localhost:8000",
+    "target": "http://127.0.0.1:8080",
     "secure": false,
-    "changeOrigin": true,
-    "pathRewrite": {
-      "^/oauth": ""
-    }
+    "changeOrigin": true
   },
-  "/apa/*": {
-    "target": "http://localhost:3400",
+  "/event": {
+    "target": "http://127.0.0.1:8080",
     "secure": false,
-    "changeOrigin": true,
-    "pathRewrite": {
-      "^/apa": ""
-    }
+    "changeOrigin": true
+  },
+  "/status": {
+    "target": "http://127.0.0.1:8080",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/csrf-token": {
+    "target": "http://127.0.0.1:8080",
+    "secure": false,
+    "changeOrigin": true
   },
   "/services/contact": {
-    "target": "http://localhost:8000",
+    "target": "http://127.0.0.1:8080",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/ws": {
+    "target": "ws://127.0.0.1:8080",
+    "ws": true,
     "secure": false,
     "changeOrigin": true
   }

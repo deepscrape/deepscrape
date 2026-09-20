@@ -4,7 +4,10 @@ https://medium.com/@sehban.alam/almost-perfect-tsconfig-json-options-for-your-an
 {
   "compileOnSave": false,
   "compilerOptions": {
-    "baseUrl": "./",
+    // ponytail: no `baseUrl` - TS 7 removed it; `paths` resolves relative to this file.
+    "paths": {
+      "src/*": ["./src/*"]
+    },
     "outDir": "./dist/out-tsc",
     "forceConsistentCasingInFileNames": true,
     "strict": true,
@@ -38,7 +41,7 @@ https://medium.com/@sehban.alam/almost-perfect-tsconfig-json-options-for-your-an
       "dom"
     ]
   },
-  "angularCompilerOptions": {
+    "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,
     "strictInjectionParameters": true,
     "strictInputAccessModifiers": true,

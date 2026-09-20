@@ -105,19 +105,37 @@ bun run prebuild   # runs: dotenvx run -- tsx src/environments/prod_gen.ts
 ### Build configurations (angular.json)
 | Config | SSR entry | Notes |
 |---|---|---|
-| `production` (default) | `server.ts` (Express) | Service worker enabled, file replacements to `prod.ts` |
+| `production` (default) | `src/main.server.ts` | Service worker enabled, file replacements to `prod.ts` |
 | `development` | — | Source maps on, no optimization |
-| `elysia` | `server-elysia.ts` | Elysia runtime, service worker enabled |
-| `staging` | `server.ts` | File replacements to `staging.ts` |
+| `staging` | `src/main.server.ts` | File replacements to `staging.ts` |
 
-Use `bun run build:elysia` for the Elysia target. Use `bun run start` for local dev.
+The Bun + Elysia service lives in `bff/` and is deployed to Cloud Run. It is **not** an
+Angular build configuration. Use `bun run start` for local dev.
+
+The SSR entry is the server **bootstrap** (`src/main.server.ts`), not the old Express
+`server.ts`. That file and the root `api/` folder were deleted when the runtime moved to
+the BFF. The entry remains only because `@angular/build` requires one whenever
+`outputMode` is `"server"` (it throws `The "ssr.entry" option is required...`); what it
+serves now is the prerender step. Hosting serves the prerendered routes, and the CSR
+shell for the `RenderMode.Server` prefixes comes from the BFF.
+
+Deploying the BFF (`--source .` tars thousands of files on Windows and is unreliable —
+push an image instead):
+```bash
+docker build -t deepscrape-bff:local .
+docker tag deepscrape-bff:local us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest
+docker push us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest
+gcloud run deploy deepscrape-bff --image us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest \
+  --region us-central1 --allow-unauthenticated --port 8080 --memory 512Mi --cpu 1 --min-instances 1 \
+  --set-env-vars "PRODUCTION=true" \
+  --set-secrets "FUNCTIONS_ENV_JSON=FUNCTIONS_ENV_JSON:latest,FIRE_SERVICE_ACCOUNT_KEY=FIRE_SERVICE_ACCOUNT_KEY:latest"
+```
 
 ### Key scripts
 ```bash
 bun run start           # ng serve (dev with proxy)
 bun run build           # ng build --configuration=production
-bun run build:elysia    # ng build --configuration=elysia
-bun run bun:ssr:deepscrape  # production Bun SSR server
+cd bff && bun run dev   # Bun + Elysia service (Cloud Run target)
 bun run prebuild        # env generation (runs automatically before build)
 git cz                  # conventional commit prompt (use instead of git commit)
 ```
@@ -360,3 +378,105 @@ Graphify also provides Python helper scripts in `graphify-out/`:
 - `scripts/graphify_query_gaps.py` — find gaps in the graph
 
 Type `/graphify` in Copilot Chat to rebuild or update the knowledge graph.
+
+# RTK PROXY
+A high-performance CLI proxy designed to filter and summarize system outputs before they reach your LLM context.
+
+Usage: rtk.exe [OPTIONS] <COMMAND>
+
+Commands:
+  ls             List directory contents with token-optimized output (proxy to native ls)
+  tree           Directory tree with token-optimized output (proxy to native tree)
+  read           Read file with intelligent filtering
+  smart          Generate 2-line technical summary (heuristic-based)
+  git            Git commands with compact output
+  gh             GitHub CLI (gh) commands with token-optimized output
+  glab           GitLab CLI (glab) commands with token-optimized output
+  aws            AWS CLI with compact output (force JSON, compress)
+  psql           PostgreSQL client with compact output (strip borders, compress tables)
+  pnpm           pnpm commands with ultra-compact output
+  err            Run command and show only errors/warnings
+  test           Run tests and show only failures
+  json           Show JSON (compact values by default, or keys-only with --keys-only)
+  deps           Summarize project dependencies
+  env            Show environment variables (filtered)
+  find           Find files with compact tree output (accepts native find flags like -name, -type)
+  diff           Ultra-condensed diff (only changed lines)
+  log            Filter and deduplicate log output
+  dotnet         .NET commands with compact output (build/test/restore/format)
+  docker         Docker commands with compact output
+  kubectl        Kubectl commands with compact output
+  oc             OpenShift CLI (oc) commands with compact output
+  summary        Run command and show heuristic summary
+  grep           Compact grep - strips whitespace, truncates, groups by file
+  rg             Compact ripgrep - runs rg natively, same output filter as grep
+  init           Initialize rtk instructions for assistant CLI usage
+  wget           Download with compact output (strips progress bars)
+  wc             Word/line/byte count with compact output (strips paths and padding)
+  gain           Show token savings summary and history
+  cc-economics   Claude Code economics: spending (ccusage) vs savings (rtk) analysis
+  config         Show or create configuration file
+  jest           Jest commands with compact output
+  vitest         Vitest commands with compact output
+  prisma         Prisma commands with compact output (no ASCII art)
+  tsc            TypeScript compiler with grouped error output
+  next           Next.js build with compact output
+  lint           ESLint with grouped rule violations
+  prettier       Prettier format checker with compact output
+  format         Universal format checker (prettier, black, ruff format)
+  playwright     Playwright E2E tests with compact output
+  cargo          Cargo commands with compact output
+  npm            npm run with filtered output (strip boilerplate)
+  npx            npx with intelligent routing (tsc, eslint, prisma -> specialized filters)
+  curl           Curl with auto-JSON detection and schema output
+  discover       Discover missed RTK savings from Claude Code history
+  session        Show RTK adoption across Claude Code sessions
+  telemetry      Manage telemetry consent and data (RGPD/GDPR)
+  learn          Learn CLI corrections from Claude Code error history
+  run            Execute a shell command via sh -c (raw, no filtering or tracking)
+  proxy          Execute command without filtering but track usage
+  pipe           Read stdin, apply filter, print filtered output (Unix pipe mode)
+  trust          Trust project-local TOML filters in current directory
+  untrust        Revoke trust for project-local TOML filters
+  verify         Verify hook integrity and run TOML filter inline tests
+  ruff           Ruff linter/formatter with compact output
+  pytest         Pytest test runner with compact output
+  mypy           Mypy type checker with grouped error output
+  php            PHP command runner with compact output for artisan and syntax checks
+  phpunit        PHPUnit test runner with compact output
+  phpstan        PHPStan analyzer with compact output
+  pest           Pest test runner with compact output
+  paratest       ParaTest parallel test runner with compact output
+  ecs            EasyCodingStandard (ECS) code style fixer with compact output
+  pint           Laravel Pint (PHP-CS-Fixer) code style fixer with compact output
+  rake           Rake/Rails test with compact Minitest output (Ruby)
+  rubocop        RuboCop linter with compact output (Ruby)
+  rspec          RSpec test runner with compact output (Rails/Ruby)
+  pip            Pip package manager with compact output (auto-detects uv)
+  uv             uv run with compact output while preserving uv-managed environment semantics
+  go             Go commands with compact output
+  sbt            SBT (Scala Build Tool) commands with compact output
+  gt             Graphite (gt) stacked PR commands with compact output
+  golangci-lint  golangci-lint wrapper with compact `run` support and passthrough for other invocations
+  gradlew        Android Gradle wrapper with compact output (build, test, lint)
+  mvn            Apache Maven wrapper with compact output (test, integration-test, compile, package,install, verify, deploy)
+  hook-audit     Show hook rewrite audit metrics (requires RTK_HOOK_AUDIT=1)
+  rewrite        Rewrite a raw command to its RTK equivalent (single source of truth for hooks)
+  hook           Hook processors for LLM CLI tools (Gemini CLI, Copilot, etc.)
+  help           Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...
+          Verbosity level (-v, -vv, -vvv) — only recognized before the subcommand
+
+      --ultra-compact
+          Ultra-compact mode: ASCII icons, inline format (Level 2 optimizations)
+
+      --skip-env
+          Set SKIP_ENV_VALIDATION=1 for child processes (Next.js, tsc, lint, prisma)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

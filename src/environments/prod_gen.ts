@@ -50,6 +50,9 @@ const environment = {
     },
     STRIPE_PUBLIC_KEY: env["STRIPE_PUBLIC_KEY"],
     RECAPTCHA_KEY: env["RECAPTCHA_KEY"],
+    // Public Web Push certificate key (Firebase Console > Cloud Messaging).
+    // Optional: NotificationService reports 'unconfigured' when absent.
+    FIREBASE_VAPID_KEY: env["FIREBASE_VAPID_KEY"] || "",
     OPENAI_API_KEY: "",// env["OPENAI_API_KEY"],
     ANTHROPIC_API_KEY: "", // env["ANTHROPIC_API_KEY"],
     JINAAI_API_KEY: "", // env["JINAAI_API_KEY"],

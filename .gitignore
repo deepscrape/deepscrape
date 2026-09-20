@@ -16,6 +16,7 @@
 
 # Node
 /node_modules
+bff/node_modules
 npm-debug.log
 yarn-error.log
 
@@ -74,3 +75,4 @@ tmp-test-output*.txt
 # Generated analysis artifacts (local only)
 graphify-out/
 .codebase-memory/
+functions/lib/

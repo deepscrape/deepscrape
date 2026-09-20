@@ -32,7 +32,12 @@
   "hosting": {
     "site": "deepscrape",
     "public": "dist/deepscrape/browser",
-    "rewrites": [{ "source": "**", "function": "deepscrape" }],
+    "rewrites": [
+      {
+        "source": "**",
+        "run": { "serviceId": "deepscrape-bff", "region": "us-central1" }
+      }
+    ],
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "headers": [
       {

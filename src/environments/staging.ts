@@ -27,5 +27,6 @@ export const environment = {
   "API_ANTHROPIC": "https://api.anthropic.com",
   "API_OPENAI": "https://api.openai.com",
   "API_GROQ": "https://api.groq.com",
-  "API_JINAAI": "https://r.jina.ai"
+  "API_JINAAI": "https://r.jina.ai",
+  "FIREBASE_VAPID_KEY": ""
 };

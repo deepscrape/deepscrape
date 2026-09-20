@@ -189,6 +189,13 @@ jobs:
         working-directory: ./bff
         run: bun install --frozen-lockfile
 
+      # bff/ had no tsconfig until now, so nothing type-checked the deployed
+      # server: Bun strips types without checking them and `bun test` only covers
+      # what the specs import. It found a dead binding on its first run.
+      - name: Type-check BFF
+        working-directory: ./bff
+        run: bun run typecheck
+
       - name: Run BFF tests
         working-directory: ./bff
         run: bun test

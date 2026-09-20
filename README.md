@@ -264,7 +264,6 @@ bun run deploy    # build + deploy hosting & functions
 | --- | --- |
 | `bun run dev` | Dev server (proxied) |
 | `bun run build` | Production build (prerender 48 static routes) |
-| `bun run build:elysia` | Build with the Elysia SSR entry |
 | `bun run build:staging` | Staging build |
 | `bun run serve` | Dev build + Firebase emulators |
 | `bun run deploy` | Build + deploy hosting & functions |
@@ -300,19 +299,25 @@ lints functions before every deploy.
 
 ## 🚢 Deployment
 
-**Stack:** Firebase Hosting (static + prerendered app) · Firebase Functions (Gen2, Node 22) · Secret Manager · CI via GitHub Actions.
+**Stack:** Firebase Hosting (static + prerendered app) · Cloud Run BFF (Bun + Elysia, `bff/`) · Firebase Functions Gen2 (callables + triggers, Node 22) · Secret Manager · CI via GitHub Actions.
 
 ```bash
-# 1. Build the app (prerenders static routes)
-bun run build
+# Full release: web build → hosting → BFF image → Cloud Run
+make bff-release
 
-# 2. Build functions — packages the Angular SSR runtime into functions/lib
-cd functions && npm run build && cd ..
-
-# 3. Deploy
-firebase deploy --only hosting           # static / prerendered app
-firebase deploy --only functions:deepscrape   # SSR BFF (engine render)
+# Or step by step
+bun run build                          # prerenders static routes + service worker
+firebase deploy --only hosting          # static/prerendered app; rewrites ** to the BFF
+cd bff && bun run deploy:cloud          # build, push and deploy the BFF image
+firebase deploy --only functions        # callables + Firestore/Auth/PubSub triggers
 ```
+
+Hosting rewrites every path with no static file behind it to the Cloud Run service
+`deepscrape-bff`, which serves the CSR shell and the `/api`, `/oauth`, `/event`,
+`/status`, `/services/contact` routes. The `deepscrape` HTTPS function is **not** in
+the production path any more (both `deepscrape.dev` and `deepscrape.web.app` are the
+same Hosting site); it is kept only so the Hosting emulator can reach the API locally
+via `firebase.dev.json`.
 
 **CI/CD** — GitHub Actions workflows:
 - `firebase-hosting-merge.yml` → builds & deploys hosting + functions on merge to `main`/`next`.

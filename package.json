@@ -4,7 +4,6 @@
   "scripts": {
     "ng": "ng",
     "start": "npm run prbuild:dev && ng serve",
-    "start:bff": "npm run prbuild:dev && ng serve --proxy-config src/proxy.bff.cjs",
     "dev": "npm run start",
     "release:prepare": "npx semantic-release --no-ci --dry-run",
     "release": "npx semantic-release",

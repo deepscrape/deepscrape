@@ -25,7 +25,7 @@
             ],
             "outputMode": "server",
             "ssr": {
-              "entry": "server.ts"
+              "entry": "src/main.server.ts"
             },
             "outputPath": "dist/deepscrape",
             "index": "src/index.html",
@@ -63,8 +63,8 @@
               "budgets": [
                 {
                   "type": "initial",
-                  "maximumWarning": "4MB",
-                  "maximumError": "6MB"
+                  "maximumWarning": "2400kB",
+                  "maximumError": "2700kB"
                 },
                 {
                   "type": "anyComponentStyle",
@@ -81,7 +81,7 @@
                 }
               ],
               "ssr": {
-                "entry": "server.ts"
+                "entry": "src/main.server.ts"
               }
             },
             "development": {
@@ -90,16 +90,6 @@
               "sourceMap": true,
               "fileReplacements": []
             },
-            "elysia": {
-              "optimization": true,
-              "sourceMap": false,
-              "namedChunks": false,
-              "ssr": {
-                "entry": "server-elysia.ts"
-              },
-              "outputHashing": "all",
-              "serviceWorker": "ngsw-config.json"
-            },
             "staging": {
               "optimization": true,
               "sourceMap": false,
@@ -107,8 +97,8 @@
               "budgets": [
                 {
                   "type": "initial",
-                  "maximumWarning": "4MB",
-                  "maximumError": "6MB"
+                  "maximumWarning": "2400kB",
+                  "maximumError": "2700kB"
                 },
                 {
                   "type": "anyComponentStyle",
@@ -139,9 +129,6 @@
             },
             "development": {
               "buildTarget": "deepscrape:build:development"
-            },
-            "elysia": {
-              "buildTarget": "deepscrape:build:elysia"
             }
           },
           "defaultConfiguration": "development"

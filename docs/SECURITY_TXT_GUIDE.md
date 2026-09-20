@@ -38,13 +38,11 @@ server.get('/.well-known/security.txt', serveSecurity)
 - Implements 7-day cache (allows updates while reducing requests)
 - No authentication required (public endpoint)
 
-### Elysia Server (`server-elysia.ts`)
+### Elysia BFF (`bff/server.ts`)
 
-For builds using `--configuration=elysia`, an inline Elysia route serves the same file:
-
-```typescript
-.get('/.well-known/security.txt', () => { ... })
-```
+The Bun + Elysia service imports the same handler. Do not inline a second copy of the
+body in the server file — that is exactly how the removed `server-elysia.ts` copy
+drifted out of sync with `security_handler.ts`.
 
 ## Customization
 
@@ -65,10 +63,8 @@ RFC 9116 recommends setting expiration to 1 year in the future. Update both:
    Expires: 2028-05-28T00:00:00Z
    ```
 
-2. **Elysia server** (`server-elysia.ts`):
-   ```typescript
-   Expires: 2028-05-28T00:00:00Z
-   ```
+2. There is no second copy to update. The BFF imports `security_handler.ts`, so
+   editing that handler is the only change required.
 
 ### Add GPG Public Key (Encryption)
 

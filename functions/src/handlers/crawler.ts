@@ -1,4 +1,3 @@
-/* eslint-disable require-jsdoc */
 /* eslint-disable indent */
 /* eslint-disable object-curly-spacing */
 /* eslint-disable max-len */
@@ -9,11 +8,22 @@ import fetch, { RequestInit } from "node-fetch"
 import { Request, Response } from "express"
 import { env } from "../config/env"
 
+/**
+ * CrawlerHandler
+ */
 class CrawlerHandler {
+    /**
+     * callback
+     */
     constructor() {
         // this.upload = multer({ storage: multer.memoryStorage() })
     }
 
+    /**
+     * getTempTaskId
+     * @param {*} req
+     * @param {*} res
+     */
     async getTempTaskId(req: Request, res: Response) {
         // const decodedUrl = decodeURIComponent(url) // decode the UR
         // res.type("application/json")
@@ -79,6 +89,11 @@ class CrawlerHandler {
         }
     }
 
+    /**
+     * getTaskId
+     * @param {*} req
+     * @param {*} res
+     */
     async getTaskId(req: Request, res: Response) {
         // const decodedUrl = decodeURIComponent(url) // decode the UR
         const { tempTaskId } = req.params
@@ -149,6 +164,11 @@ class CrawlerHandler {
         }
     }
 
+    /**
+     * getTaskStatus
+     * @param {*} req
+     * @param {*} res
+     */
     async getTaskStatus(req: Request, res: Response) {
         const { taskId } = req.params
         if (!taskId) {
@@ -206,6 +226,11 @@ class CrawlerHandler {
         }
     }
 
+    /**
+     * streamTaskResults
+     * @param {*} req
+     * @param {*} res
+     */
     async streamTaskResults(req: Request, res: Response) {
         const { taskId } = req.params
         if (!taskId) {
@@ -263,6 +288,11 @@ class CrawlerHandler {
         }
     }
 
+    /**
+     * cancelTask
+     * @param {*} req
+     * @param {*} res
+     */
     async cancelTask(req: Request, res: Response) {
         // const decodedUrl = decodeURIComponent(url) // decode the UR
         const { tempTaskId } = req.params
@@ -334,6 +364,11 @@ class CrawlerHandler {
     }
 
 
+    /**
+     * multiCrawlEnqueue
+     * @param {*} req
+     * @param {*} res
+     */
     async multiCrawlEnqueue(req: Request, res: Response) {
         // const decodedUrl = decodeURIComponent(url) // decode the UR
         res.type("application/json")

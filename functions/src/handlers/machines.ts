@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 /* eslint-disable max-len */
 /* eslint-disable indent */
-/* eslint-disable require-jsdoc */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Request, Response, NextFunction } from "express"
 import fetch, { RequestInit } from "node-fetch"
@@ -17,34 +16,45 @@ const validIdPattern = /^[a-zA-Z0-9_-]{1,64}$/
 const toSingleParam = (value: string | string[] | undefined): string =>
     Array.isArray(value) ? (value[0] || "") : (value || "")
 
-const normalizeRequestHeaders = (headers: Request["headers"]): Record<string, string> => {
-    const normalized: Record<string, string> = {}
+// ponytail: normalizeRequestHeaders() was deleted here. Its only caller was
+// getMachine, which used it to relay the caller's entire header set to the
+// Arachnefly upstream — including `host`, which controls upstream virtual-host
+// routing. Do not reintroduce a blanket header relay; build an explicit allowlist.
 
-    Object.entries(headers).forEach(([key, value]) => {
-        if (Array.isArray(value)) {
-            if (value.length > 0) {
-                normalized[key] = value.join(",")
-            }
-            return
-        }
-
-        if (typeof value === "string") {
-            normalized[key] = value
-        }
-    })
-
-    return normalized
-}
-
+/**
+ * MachinesHandler
+ */
 class MachinesHandler {
+    /**
+     * callback
+     */
     constructor() {
         // this.upload = multer({ storage: multer.memoryStorage() })
     }
 
+    /**
+     * checkImageDeployability
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     async checkImageDeployability(req: Request, res: Response, next: NextFunction) {
         const { name } = req.query
-        const imageName = typeof name === "string" ? decodeURIComponent(name) : ""
         res.type("application/json")
+
+        // ponytail: `decodeURIComponent` throws URIError on malformed input and this
+        // ran before the try below, so `?name=%E0` became an unhandled rejection —
+        // which Express 4 never routes (see the terminal error handler in server.ts),
+        // so no response was written and the request hung to the function timeout.
+        // Express has already decoded req.query, so this was a double decode anyway.
+        let imageName = ""
+        try {
+            imageName = typeof name === "string" ? decodeURIComponent(name) : ""
+        } catch {
+            res.status(400).json({ error: "Invalid image name" })
+            return
+        }
+
         if (!imageName) {
             res.status(400).json({ error: "Invalid image name" })
             return
@@ -105,12 +115,21 @@ class MachinesHandler {
                 )
             }
         } catch (error) {
+            // ponytail: `message: String(error)` used to be returned here, and that
+            // string embeds the upstream's entire JSON body ({code,
+            // internal_message}) — internal service names, validation rules,
+            // sometimes a requestId. Log server-side, never echo to the caller.
             console.warn("API Error:", error)
-            const details = String(error)
-            res.status(500).json({ error: "check Image API Deployability did not work. try again later", message: details })
+            res.status(500).json({ error: "check Image API Deployability did not work. try again later" })
         }
     }
 
+    /**
+     * getMachine
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     async getMachine(req: Request, res: Response, next: NextFunction) {
         const machineId = toSingleParam(req.params.id as string | string[] | undefined)
         res.type("application/json")
@@ -124,10 +143,19 @@ class MachinesHandler {
             return
         }
 
-        // const token = req.app.locals["user"]
+        const token = req.app.locals["user"]
         const apiUrl = env.PRODUCTION == "true" ? env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
         const url: URL = new URL(`${apiUrl}/api/machine/${machineId}`)
-        const headers = normalizeRequestHeaders(req.headers)
+        // ponytail: this used to relay EVERY inbound header to the upstream
+        // (normalizeRequestHeaders), which forwarded the caller's `cookie`
+        // (_csrf_secret / sid), their `authorization`, and — the exploitable one —
+        // their `host`, overriding the upstream's virtual-host routing and turning
+        // a fixed-host proxy into an arbitrary-target one. Every sibling method
+        // already used the server-held token; this one now does too.
+        const headers = {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+        }
 
         try {
             const fetchOptions: RequestInit = {
@@ -159,6 +187,12 @@ class MachinesHandler {
         }
     }
 
+    /**
+     * deployMachine
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     async deployMachine(req: Request, res: Response, next: NextFunction) {
         // get region and clone from query parameters
         const { region, clone } = req.query
@@ -214,8 +248,15 @@ class MachinesHandler {
                 compress: true,
                 // compress: true,
             }
-            console.log("Fetch body:", body)
-            console.log("API URL:", url.toString())
+
+            // ponytail: two console.log calls were deleted here.
+            //   console.log("Fetch body:", body)    — logged the entire deploy
+            //     payload, which routinely carries machine env vars and registry
+            //     credentials, into Cloud Logging (retained, readable by any
+            //     logging.viewer).
+            //   console.log("API URL:", url.toString()) — leaked the internal
+            //     upstream base URL and its parameters.
+            // If you need a trace, log an allowlisted projection.
 
             const apiResponse = await fetch(url, fetchOptions)
 
@@ -235,12 +276,19 @@ class MachinesHandler {
             // await streamPipeline(apiResponse.body, res)
             res.end(Buffer.from(buffer))
         } catch (error) {
-            const details = String(error)
-            console.warn("------------------- API Error:", details)
-            res.status(500).json({ error: "Failed to deploy machine. Please try again later.", message: details })
+            // ponytail: `message: String(error)` removed — it carried the upstream's
+            // whole JSON error body to the caller. Logged server-side only now.
+            console.warn("------------------- API Error:", error)
+            res.status(500).json({ error: "Failed to deploy machine. Please try again later." })
         }
     }
 
+    /**
+     * waitForState
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     async waitForState(req: Request, res: Response, next: NextFunction) {
         const machineId = toSingleParam(req.params.machineId as string | string[] | undefined)
         // Validate machineId: allow only alphanumeric, dash, and underscore (change regex as needed for your IDs)
@@ -301,6 +349,11 @@ class MachinesHandler {
         }
     }
 
+    /**
+     * startMachine
+     * @param {*} req
+     * @param {*} res
+     */
     async startMachine(req: Request, res: Response) {
         const machineId = toSingleParam(req.params.machineId as string | string[] | undefined)
         res.type("application/json")
@@ -356,6 +409,11 @@ class MachinesHandler {
         }
     }
 
+    /**
+     * suspendMachine
+     * @param {*} req
+     * @param {*} res
+     */
     async suspendMachine(req: Request, res: Response) {
         const machineId = toSingleParam(req.params.machineId as string | string[] | undefined)
         res.type("application/json")
@@ -409,6 +467,11 @@ class MachinesHandler {
         }
     }
 
+    /**
+     * stopMachine
+     * @param {*} req
+     * @param {*} res
+     */
     async stopMachine(req: Request, res: Response) {
         const machineId = toSingleParam(req.params.machineId as string | string[] | undefined)
         res.type("application/json")
@@ -459,9 +522,16 @@ class MachinesHandler {
         }
     }
 
+    /**
+     * destroyMachine
+     * @param {*} req
+     * @param {*} res
+     */
     async destroyMachine(req: Request, res: Response) {
         const machineId = toSingleParam(req.params.machineId as string | string[] | undefined)
-        const force: boolean = req.query.force === "true"
+        // Same undefined-`req.query` hazard as buildGuestAcquisition: the Express 4 app
+        // is handed a request built by the framework's Express 5 app.
+        const force: boolean = req.query?.force === "true"
         res.type("application/json")
         // Add same validation as stopMachine
         if (!machineId) {

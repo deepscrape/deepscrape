@@ -4,6 +4,7 @@ import assert from "node:assert/strict"
 import {
   buildAnalyticsEvent,
   toEventDate,
+  toEventHour,
   toFunnelCounterKeys,
   toPaidCounterKeys,
 } from "./analytics-event.domain"
@@ -26,6 +27,17 @@ describe("analytics events", () => {
   it("derives the day key in UTC, not local time", () => {
     assert.equal(toEventDate(new Date("2026-03-01T00:00:00.000Z")), "2026-03-01")
     assert.equal(toEventDate(new Date("2026-03-01T23:59:59.999Z")), "2026-03-01")
+  })
+
+  it("derives the hour key the 30m/1h/24h reader queries on", () => {
+    // `analytics-range.service.ts#toDateTimeKey` builds this exact shape and
+    // `getHourlyMetricsByDateTimeRange` range-queries the `datetime` field with it.
+    // If the two ever disagree, every hourly panel goes empty with no error.
+    assert.equal(toEventHour(new Date("2026-09-15T20:59:48.000Z")), "2026-09-15-20")
+    assert.equal(toEventHour(new Date("2026-01-02T03:04:05.000Z")), "2026-01-02-03")
+    // Midnight boundary: the hour must be 00 and the day must roll forward.
+    assert.equal(toEventHour(new Date("2026-09-16T00:00:00.000Z")), "2026-09-16-00")
+    assert.equal(toEventHour(new Date("2026-09-15T23:59:59.999Z")), "2026-09-15-23")
   })
 
   it("keeps bots out of the funnel but counts them by kind", () => {

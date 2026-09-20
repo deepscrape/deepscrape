@@ -1,7 +1,9 @@
 /* eslint-disable max-len */
 /* eslint-disable object-curly-spacing */
-/* eslint-disable require-jsdoc */
-import { onCall } from "firebase-functions/v2/https"
+// ponytail: passkey ceremonies now metered per UID. Aliased — no call site changes.
+// Each generate*Options call writes a Firestore challenge doc, so this was a cheap
+// write-amplification loop for one authenticated account.
+import { guardedOnCall as onCall } from "../infrastructure/callable-limiter"
 import { Timestamp } from "firebase-admin/firestore"
 import {
   generateRegistrationOptions,
@@ -22,6 +24,10 @@ const RP_ID = new URL(RP_ORIGIN).hostname
 // eslint-disable-next-line valid-jsdoc
 /**
  * Helper: retrieve stored passkey credentials for a user from Firestore.
+ */
+/**
+ * getPasskeyCredentials
+ * @param {*} userId
  */
 async function getPasskeyCredentials(userId: string) {
   const snapshot = await db
@@ -46,6 +52,10 @@ export const generateWebAuthnRegistrationOptions = onCall(
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const auth = request.auth
     if (!auth) {
@@ -110,6 +120,10 @@ export const verifyWebAuthnRegistration = onCall(
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const auth = request.auth
     if (!auth) {
@@ -214,6 +228,10 @@ export const generateWebAuthnAuthenticationOptions = onCall(
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const auth = request.auth
     if (!auth) {
@@ -265,6 +283,10 @@ export const verifyWebAuthnAuthentication = onCall(
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const auth = request.auth
     if (!auth) {
@@ -377,6 +399,10 @@ export const getWebAuthnCredentials = onCall(
     enforceAppCheck: false,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const auth = request.auth
     if (!auth) {
@@ -404,6 +430,10 @@ export const removeWebAuthnCredential = onCall(
     enforceAppCheck: false,
     region: "us-central1",
   },
+  /**
+   * callback
+   * @param {*} request
+   */
   async (request) => {
     const auth = request.auth
     if (!auth) {

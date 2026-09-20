@@ -21,6 +21,12 @@ import {HttpsError} from "firebase-functions/v2/https"
  * @param {unknown} data Raw callable payload (`request.data`).
  * @return {z.infer<S>} Parsed data, typed from the schema's output.
  */
+/**
+ * validateCallableData
+ * @param {*} schema
+ * @param {*} data
+ * @return {*}
+ */
 export function validateCallableData<S extends z.ZodTypeAny>(schema: S, data: unknown): z.infer<S> {
   const result = schema.safeParse(data)
   if (!result.success) {

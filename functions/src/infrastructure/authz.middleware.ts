@@ -1,7 +1,8 @@
 /* eslint-disable max-len */
-/* eslint-disable require-jsdoc */
 import {NextFunction, Request, Response} from "express"
 import {db} from "../app/config"
+import {redis} from "../app/cacheConfig"
+import {MEMBERSHIPS_CACHE_TTL_SECONDS, membershipsKey} from "../../../src/config/redis-keys"
 import {
   AuthAction,
   AuthData,
@@ -39,6 +40,11 @@ type AuthorizationDecisionEvent = {
     mode: "strict" | "compat"
 }
 
+/**
+ * getCorrelationId
+ * @param {*} req
+ * @return {*}
+ */
 function getCorrelationId(req: Request): string {
   const requestId = req.headers["x-request-id"]
   if (typeof requestId === "string" && requestId.trim().length > 0) {
@@ -48,6 +54,17 @@ function getCorrelationId(req: Request): string {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
 }
 
+/**
+ * buildDecisionEvent
+ * @param {*} req
+ * @param {*} subject
+ * @param {*} resource
+ * @param {*} action
+ * @param {*} data
+ * @param {*} result
+ * @param {*} reasonCode
+ * @return {*}
+ */
 function buildDecisionEvent<Resource extends AuthResource>(
   req: Request,
   subject: AuthorizationSubject,
@@ -74,17 +91,76 @@ function buildDecisionEvent<Resource extends AuthResource>(
   }
 }
 
+/**
+ * emitAuthorizationDecision
+ * @param {*} event
+ */
 function emitAuthorizationDecision(event: AuthorizationDecisionEvent): void {
   console.info("[authz-decision]", JSON.stringify(event))
 }
 
+/**
+ * Rebuild a memberships map from its cached JSON.
+ *
+ * The null prototype is not decorative: `canPerform` indexes this map with an
+ * attacker-supplied `orgId`, and on a plain object `"constructor"` resolves to a
+ * prototype member. `JSON.parse` hands back a normal object, so the map is rebuilt
+ * rather than returned directly.
+ *
+ * @param {unknown} raw Cached JSON, or whatever the cache returned on a miss.
+ * @return {Record<string, OrgRole> | null} The map, or null when nothing usable is cached.
+ */
+export function parseCachedMemberships(raw: unknown): Record<string, OrgRole> | null {
+  if (typeof raw !== "string" || !raw) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (!parsed || typeof parsed !== "object") {
+      return null
+    }
+
+    const memberships: Record<string, OrgRole> = Object.create(null)
+    for (const [orgId, role] of Object.entries(parsed)) {
+      if (typeof role === "string") {
+        memberships[orgId] = role as OrgRole
+      }
+    }
+
+    return memberships
+  } catch {
+    return null
+  }
+}
+
+/**
+ * loadMemberships
+ * @param {*} uid
+ */
 async function loadMemberships(uid: string): Promise<Record<string, OrgRole>> {
+  const cacheKey = membershipsKey(uid)
+
+  try {
+    const cached = parseCachedMemberships(await redis.get(cacheKey))
+    if (cached) {
+      return cached
+    }
+  } catch (error) {
+    console.warn("authz: membership cache read failed, using Firestore", error)
+  }
+
   const snapshot = await db.collection("memberships")
     .where("userId", "==", uid)
     .limit(100)
     .get()
 
-  const memberships: Record<string, OrgRole> = {}
+  // ponytail: null-prototype map. With `{}`, a request carrying orgId "constructor"
+  // (or "toString"/"valueOf") resolved memberships[orgId] to an Object.prototype
+  // member — truthy — so canPerform indexed POLICIES[<function>][resource], threw a
+  // TypeError, and the middleware turned it into a 500. An untrusted key must never
+  // reach a plain object.
+  const memberships: Record<string, OrgRole> = Object.create(null)
 
   for (const doc of snapshot.docs) {
     const data = doc.data() as { orgId?: string; role?: OrgRole }
@@ -95,9 +171,25 @@ async function loadMemberships(uid: string): Promise<Record<string, OrgRole>> {
     memberships[data.orgId] = data.role
   }
 
+  // The empty map is cached too on purpose: an account with no memberships is the
+  // common case, and that query still bills a read on every request.
+  // ponytail: 60s TTL, no write-through invalidation — a removed role keeps working
+  // for up to a minute. Add invalidation on the membership write paths if a
+  // revocation ever has to bite immediately.
+  try {
+    await redis.setex(cacheKey, MEMBERSHIPS_CACHE_TTL_SECONDS, JSON.stringify(memberships))
+  } catch (error) {
+    console.warn("authz: membership cache write failed", error)
+  }
+
   return memberships
 }
 
+/**
+ * getOrgIdFromRequest
+ * @param {*} req
+ * @return {*}
+ */
 function getOrgIdFromRequest(req: Request): string | undefined {
   if (typeof req.params?.orgId === "string" && req.params.orgId.trim().length > 0) {
     return req.params.orgId.trim()
@@ -119,22 +211,19 @@ function getOrgIdFromRequest(req: Request): string | undefined {
   return undefined
 }
 
-function getOwnerIdFromRequest(req: Request): string | undefined {
-  if (typeof req.params?.ownerId === "string" && req.params.ownerId.trim().length > 0) {
-    return req.params.ownerId.trim()
-  }
+// ponytail: a getOwnerIdFromRequest() used to live here and read ownerId from
+// params/body/query. It was applied even when an orgId was present, so an
+// attacker sending `?ownerId=<own-uid>` to an org route was granted the "self"
+// role on top of the (failing) org check, and canPerform's roles.some() let that
+// satisfy `organization:read` / `organization:manage` — cross-tenant roster read
+// and org rename. Ownership is derived server-side only now: see the ownerId
+// fallback in requirePermission. Do not reintroduce a request-sourced ownerId.
 
-  if (typeof req.body?.ownerId === "string" && req.body.ownerId.trim().length > 0) {
-    return req.body.ownerId.trim()
-  }
-
-  if (typeof req.query?.ownerId === "string" && req.query.ownerId.trim().length > 0) {
-    return req.query.ownerId.trim()
-  }
-
-  return undefined
-}
-
+/**
+ * buildSubject
+ * @param {*} req
+ * @param {*} res
+ */
 async function buildSubject(req: Request, res: Response): Promise<AuthorizationSubject | null> {
   const uid = req.user?.uid
   if (!uid) {
@@ -158,6 +247,13 @@ async function buildSubject(req: Request, res: Response): Promise<AuthorizationS
   return subject
 }
 
+/**
+ * requirePermission
+ * @param {*} resource
+ * @param {*} action
+ * @param {*} options
+ * @return {*}
+ */
 export function requirePermission<Resource extends AuthResource>(
   resource: Resource,
   action: AuthAction<Resource>,
@@ -173,11 +269,14 @@ export function requirePermission<Resource extends AuthResource>(
       }
 
       const inferredOrgId = getOrgIdFromRequest(req)
-      const explicitOwnerId = getOwnerIdFromRequest(req)
 
       const inferredData: Partial<AuthData<Resource>> = {
         orgId: inferredOrgId,
-        ownerId: explicitOwnerId ?? (inferredOrgId ? undefined : (AUTHZ_STRICT_ORG_MODE ? undefined : subject.uid)),
+        // ponytail: server-derived only. Owner-scoped resources (no orgId in the
+        // request) stay single-tenant, keyed by the caller's own uid; anything
+        // carrying an orgId is authorised by org membership alone. Never read
+        // ownerId from the request — see the note above requirePermission.
+        ownerId: inferredOrgId ? undefined : subject.uid,
       } as Partial<AuthData<Resource>>
 
       const extraData = options.getData?.(req) ?? {}

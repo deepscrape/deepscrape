@@ -187,6 +187,9 @@ const getEnv = () => {
     GROQ_API_KEY: getConfigValue("GROQ_API_KEY"),
     RESEND_API_KEY: getConfigValue("RESEND_API_KEY"),
     RESEND_FROM_EMAIL: getConfigValue("RESEND_FROM_EMAIL"),
+    // Origin used to build absolute links inside transactional email. Hard-coded
+    // default because an email with a relative URL is a dead link.
+    APP_ORIGIN: getConfigValue("APP_ORIGIN", "https://deepscrape.dev"),
     AUTHZ_STRICT_ORG_MODE: getConfigValue("AUTHZ_STRICT_ORG_MODE", "false"),
 
     // Google Cloud & Stripe

@@ -22,6 +22,7 @@ import {
     revokedKey,
     sessionKey,
 } from "../../../src/config/redis-keys"
+import { env } from "../config/env"
 import { db } from "../app/config"
 import { Timestamp } from "firebase-admin/firestore"
 
@@ -56,9 +57,19 @@ export const statusCheck = async (req: Request, res: Response) => {
         // The Redis backend used to degrade silently (missing credentials, or a
         // rate-limit store that fell back to per-instance memory) with nothing
         // observable in production. Report it here so a degraded deploy is visible.
+        // Served by bff/api.ts — the Express host (`functions/src/server.ts`) is gone.
+        // The same shared config module still runs inside the deployed functions
+        // (callables, triggers, webhooks) though, and those resolve PRODUCTION from the
+        // FUNCTIONS_ENV_JSON blob while Cloud Run gets a plain
+        // `--set-env-vars PRODUCTION=true`. Reporting the RESOLVED value -- not the env
+        // var -- is the only way to see the two disagree without reading the secret.
+        // `trustProxy` is the one that matters: it gates `req.ip`, which feeds rate
+        // limiting, guest fingerprints and session geo.
         res.status(200).json({
             status: "ok",
             message: "ok",
+            production: env.PRODUCTION,
+            trustProxy: env.TRUST_PROXY,
             redis: {
                 restClient: isRedisEnabled,
                 rateLimitStore: rateLimitStoreName(),
@@ -153,9 +164,20 @@ export const heartbeat = async (req: Request, res: Response) => {
     try {
         const parsedData = req.cookies["aid"] ? JSON.parse(req.cookies["aid"]) :
             req.app.locals["user"]
-        const userId = parsedData?.userId
+
+        // ponytail: identity comes from the VERIFIED token only. `aid` is a
+        // JS-readable, client-written cookie and the /event router had no auth
+        // middleware, so an unauthenticated caller could POST a forged `aid` naming
+        // any uid and act as them: refresh that session's TTL, mark it active, and
+        // forge the device-fingerprint match that suppresses requiresReauth.
+        // EventsAPIProxy.optionalJwtAuth now populates req.user — the client was
+        // already sending the token, nothing was verifying it. Guests are
+        // unaffected: they have no userId to claim. The cookie may still carry
+        // guestId (anonymous by design) and loginId, but loginId is only consulted
+        // for an authenticated caller.
+        const userId = req.user?.uid
         const guestId = parsedData?.guestId || req.cookies["gid"]
-        const loginId = parsedData?.loginId
+        const loginId = userId ? parsedData?.loginId : undefined
         const now = new Date()
         const nowMs = now.getTime()
         const windowMs = 5 * 60 * 1000
@@ -383,13 +405,13 @@ export const heartbeat = async (req: Request, res: Response) => {
                 message: "No guest or user ID found",
             })
         }
-        // One script for presence liveness, sorted-set upsert, stale trim, and both
-        // population counts. Previously this was a 5-command pipeline of its own,
-        // on top of the session read/refresh.
+        // One script for presence liveness, sorted-set upsert, and stale trim.
+        // Previously this was a 5-command pipeline of its own, on top of the
+        // session read/refresh.
         const isUser = !!userId
         const presenceKey = isUser ? presenceUserKey(userId) : presenceGuestKey(guestId as string)
         const presencePayload = JSON.stringify({ lastSeen: now })
-        const [activeUsersNow, activeGuestsNow] = await redisEval<[number, number, number]>(
+        await redisEval<unknown>(
             HEARTBEAT_PRESENCE,
             [presenceKey, ONLINE_USERS_KEY, ONLINE_GUESTS_KEY],
             [
@@ -399,8 +421,6 @@ export const heartbeat = async (req: Request, res: Response) => {
                 id as string,
                 cutoffMs,
                 isUser ? "user" : "guest",
-                cutoffMs,
-                nowMs,
             ],
         )
 
@@ -408,8 +428,6 @@ export const heartbeat = async (req: Request, res: Response) => {
         // which owns that document. The heartbeat used to also write it behind a
         // per-instance throttle, so N warm instances produced N competing writes of
         // slightly different values for the same field set.
-        void activeUsersNow
-        void activeGuestsNow
 
         // Structured SLI: the heartbeat is the hottest path in the app and its
         // round-trip budget is now a contract (2 on the cache-hit path). Emitting it
@@ -430,7 +448,24 @@ export const heartbeat = async (req: Request, res: Response) => {
                 lastSeenWriteMs.clear()
             }
             lastSeenWriteMs.set(id, nowMs)
-            await db.collection(firestoreCollection).doc(id).set({ lastSeen: now }, { merge: true })
+            // A heartbeat must never CREATE a document. For a guest it could: a `gid`
+            // cookie whose guest doc was gone got `set(..., {merge: true})`, which mints
+            // a stub holding nothing but `lastSeen` — no `ip`, no `createdAt`. Those
+            // stubs then caused both reported symptoms from one cause:
+            //   1. enrichGuestGeo reads `ip.raw`, finds nothing, skips — so no IP
+            //      intelligence was ever recorded and the geo cache stayed empty.
+            //   2. computeRangeMetric filters `guests.createdAt >= start`, which cannot
+            //      match a document without that field, so every range disagreed with
+            //      the daily aggregates.
+            // ponytail: `update()` rather than an existence read — the same one
+            // round-trip, and a missing guest is an expected race (a cookie outliving a
+            // cleanup), not an error worth 500-ing the heartbeat over.
+            const ref = db.collection(firestoreCollection).doc(id as string)
+            if (isUser) {
+                await ref.set({ lastSeen: now }, { merge: true })
+            } else {
+                await ref.update({ lastSeen: now }).catch(() => undefined)
+            }
         }
 
         return res.json({ success: true, lastSeen: now, requiresReauth })

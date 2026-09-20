@@ -1,4 +1,3 @@
-/* eslint-disable valid-jsdoc */
 /* eslint-disable max-len */
 /**
  * Tests for the Redis hygiene audit.
@@ -22,7 +21,10 @@ import {
   type HygieneReport,
 } from "../../scripts/redis-hygiene"
 
-/** Builds a fake client from a key -> ttl map plus a backlog size. */
+/** Builds a fake client from a key -> ttl map plus a backlog size.
+ * @param {*} options
+ * @return {*}
+ */
 const createFakeRedis = (options: {
   keys: Record<string, number>
   backlog?: number
@@ -48,7 +50,13 @@ const createFakeRedis = (options: {
   }
 }
 
+/**
+ * redis hygiene audit
+ */
 describe("redis hygiene audit", () => {
+  /**
+   * flags a sampled key that has no expiry
+   */
   it("flags a sampled key that has no expiry", async () => {
     const redis = createFakeRedis({
       keys: {
@@ -65,6 +73,9 @@ describe("redis hygiene audit", () => {
     assert.equal(report.minTtlSeconds, null)
   })
 
+  /**
+   * reports the shortest TTL among samples
+   */
   it("reports the shortest TTL among samples", async () => {
     const redis = createFakeRedis({
       keys: {
@@ -81,6 +92,9 @@ describe("redis hygiene audit", () => {
     assert.equal(report.minTtlSeconds, 42)
   })
 
+  /**
+   * counts keys that vanish between SCAN and TTL as drained, not unbounded
+   */
   it("counts keys that vanish between SCAN and TTL as drained, not unbounded", async () => {
     const base = createFakeRedis({keys: {"session:a": 60}})
     const redis: AuditRedis = {
@@ -94,6 +108,9 @@ describe("redis hygiene audit", () => {
     assert.equal(report.withoutExpiry, 0)
   })
 
+  /**
+   * allows the analytics list to have no TTL because it is capped by LTRIM
+   */
   it("allows the analytics list to have no TTL because it is capped by LTRIM", async () => {
     const redis = createFakeRedis({keys: {[ANALYTICS_EVENTS_KEY]: -1}})
 
@@ -102,6 +119,9 @@ describe("redis hygiene audit", () => {
     assert.equal(report.withoutExpiry, 0)
   })
 
+  /**
+   * fails the run when the analytics backlog exceeds its ingress cap
+   */
   it("fails the run when the analytics backlog exceeds its ingress cap", async () => {
     const redis = createFakeRedis({keys: {}, backlog: CLIENT_EVENT_LIST_MAX + 1})
 
@@ -113,6 +133,9 @@ describe("redis hygiene audit", () => {
     assert.match(text, /OVER LIMIT/)
   })
 
+  /**
+   * passes when every sampled key is bounded and the backlog is within the cap
+   */
   it("passes when every sampled key is bounded and the backlog is within the cap", async () => {
     const redis = createFakeRedis({
       keys: {
@@ -136,6 +159,9 @@ describe("redis hygiene audit", () => {
     assert.match(text, new RegExp(ONLINE_GUESTS_KEY))
   })
 
+  /**
+   * lists the offending prefix for each unbounded key
+   */
   it("lists the offending prefix for each unbounded key", async () => {
     const redis = createFakeRedis({keys: {"guestfp:x": -1, "trusted:u:d": -1}})
 

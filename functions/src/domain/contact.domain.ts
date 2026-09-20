@@ -1,4 +1,3 @@
-/* eslint-disable valid-jsdoc */
 /* eslint-disable object-curly-spacing */
 /* eslint-disable max-len */
 import { Timestamp } from "firebase-admin/firestore"
@@ -24,6 +23,8 @@ export interface ContactSubmission {
 
 /**
  * Validates contact form input and returns a list of error messages.
+ * @param {*} body
+ * @return {*}
  */
 export const validateContactInput = (body: Record<string, unknown>): string[] => {
   const errors: string[] = []
@@ -64,6 +65,8 @@ export const validateContactInput = (body: Record<string, unknown>): string[] =>
 
 /**
  * Sanitizes and prepares contact form data for Firestore storage.
+ * @param {*} body
+ * @return {*}
  */
 export const sanitizeContactInput = (body: Record<string, unknown>): Omit<ContactSubmission, "createdAt"> => ({
   name: String(body.name ?? "").trim().slice(0, 100),
@@ -87,6 +90,7 @@ export const sanitizeContactInput = (body: Record<string, unknown>): Omit<Contac
  * In the emulator, silently passes when the token is absent since App Check
  * is not enforced there. In production a missing token is rejected so the
  * gate cannot be bypassed by simply omitting the header.
+ * @param {*} token
  */
 export const verifyRecaptchaToken = async (token: string | null | undefined): Promise<boolean> => {
   if (!token) {
@@ -112,6 +116,7 @@ export const verifyRecaptchaToken = async (token: string | null | undefined): Pr
 /**
  * Stores a validated contact submission in Firestore under the "contacts" collection.
  * Returns the generated document ID.
+ * @param {*} data
  */
 export const storeContactSubmission = async (
   data: Omit<ContactSubmission, "createdAt">
@@ -132,6 +137,7 @@ export const storeContactSubmission = async (
  * new contact form is submitted. The sender receives a confirmation too.
  *
  * Silently swallows errors so a failed email never breaks the form response.
+ * @param {*} data
  */
 export const sendContactNotification = async (
   data: Omit<ContactSubmission, "createdAt">

@@ -1,5 +1,3 @@
-/* eslint-disable valid-jsdoc */
-/* eslint-disable require-jsdoc */
 /* eslint-disable max-len */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
@@ -14,39 +12,23 @@
 import {Request, Response, NextFunction} from "express"
 import {Ratelimit} from "@upstash/ratelimit"
 import {env} from "../config/env"
-import {redis as sharedRedis, isRedisEnabled} from "../app/cacheConfig"
+import {redis as sharedRedis, isRedisEnabled, isEncryptedPlaceholder, isHttpUrl, sanitizeUpstashRestUrl} from "../app/cacheConfig"
 import {lookupGeoByIp} from "../gfunctions/analytics"
+import {
+  AUTH_RATE_LIMIT_PREFIX,
+  EVENT_RATE_LIMIT_PREFIX,
+  RATE_LIMIT_SKIP_PATHS,
+  RATE_LIMIT_TIER_MULTIPLIERS,
+  type RateLimitTier,
+  functionsRateLimitKey,
+  rateLimitAuthMax,
+  rateLimitEventMax,
+  rateLimitFunctionMax,
+  rateLimitWindow,
+  resolveRateLimitTier as resolveTier,
+} from "../../../src/config/redis-keys"
 
-const sanitizeUpstashRestUrl = (value: string): string => {
-  if (!value) {
-    return ""
-  }
-
-  try {
-    const parsed = new URL(value)
-    if (parsed.hostname.endsWith(".upstash.io.upstash.io")) {
-      parsed.hostname = parsed.hostname.replace(/\.upstash\.io\.upstash\.io$/, ".upstash.io")
-      return parsed.toString().replace(/\/$/, "")
-    }
-    return value
-  } catch {
-    return value
-      .trim()
-      .replace(/\.upstash\.io\.upstash\.io(?=$|\/)/, ".upstash.io")
-  }
-}
-
-const isEncryptedPlaceholder = (value: string): boolean =>
-  /^encrypted:/i.test((value || "").trim())
-
-const isHttpUrl = (value: string): boolean => {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
-  } catch {
-    return false
-  }
-}
+const isProd = env.PRODUCTION === "true"
 
 const upstashUrl = sanitizeUpstashRestUrl(env.UPSTASH_REDIS_REST_URL)
 const upstashToken = env.UPSTASH_REDIS_REST_TOKEN || env.UPSTASH_REDIS_REST_PASSWORD
@@ -58,7 +40,7 @@ const shouldEnableUpstashRateLimit =
   !isEncryptedPlaceholder(upstashUrl) &&
   !isEncryptedPlaceholder(upstashToken)
   /* ( !isFunctionsEmulator ||  ) */
-if (!shouldEnableUpstashRateLimit && env.PRODUCTION === "true") {
+if (!shouldEnableUpstashRateLimit && isProd) {
   console.error(
     "upstash-limiter: DISABLED. No shared Redis client, so rate limiting and IP/country " +
     "deny-lists are inactive on this path.",
@@ -73,27 +55,23 @@ const redis = shouldEnableUpstashRateLimit ? (sharedRedis as unknown as Record<s
  * Firebase Functions rate limiter, scaled by billing tier.
  * Development: 1 min window, 50 requests. Production: 15 min window, 100.
  * Paid tiers multiply the base cap; roles come from the Firebase `role` claim.
+ *
+ * The caps, windows, prefixes and the tier map live in `src/config/redis-keys.ts`
+ * because the Elysia BFF (`bff/limiter.ts`) applies the identical policy — two
+ * copies meant two places to change and a silent split-brain budget.
  */
-const TIER_MULTIPLIERS: Record<string, number> = {
-  free: 1,
-  pro: 3,
-  enterprise: 8,
-  admin: 20,
-}
-const baseFunctionMax = env.PRODUCTION === "true" ? 100 : 50
-
 const functionRatelimits: Record<string, Ratelimit | null> = Object.fromEntries(
-  Object.entries(TIER_MULTIPLIERS).map(([tier, multiplier]) => [
+  Object.keys(RATE_LIMIT_TIER_MULTIPLIERS).map((tier) => [
     tier,
     shouldEnableUpstashRateLimit ? new Ratelimit({
       redis: redis as any,
       limiter: Ratelimit.slidingWindow(
-        Math.max(1, Math.floor(baseFunctionMax * multiplier)),
-        env.PRODUCTION === "true" ? "15 m" : "1 m"
+        rateLimitFunctionMax(tier as RateLimitTier, isProd),
+        rateLimitWindow(isProd)
       ),
-      analytics: env.PRODUCTION === "true",
-      enableProtection: env.PRODUCTION === "true",
-      prefix: `functionsRateLimit:${tier}`,
+      analytics: isProd,
+      enableProtection: isProd,
+      prefix: functionsRateLimitKey(tier),
     }) : null,
   ])
 )
@@ -107,12 +85,12 @@ const functionRatelimit = functionRatelimits.free
 const authRatelimit = shouldEnableUpstashRateLimit ? new Ratelimit({
   redis: redis as any,
   limiter: Ratelimit.slidingWindow(
-    env.PRODUCTION === "true" ? 10 : 50,
-    env.PRODUCTION === "true" ? "15 m" : "1 m"
+    rateLimitAuthMax(isProd),
+    rateLimitWindow(isProd)
   ),
-  analytics: env.PRODUCTION === "true",
-  enableProtection: env.PRODUCTION === "true",
-  prefix: "authRateLimit",
+  analytics: isProd,
+  enableProtection: isProd,
+  prefix: AUTH_RATE_LIMIT_PREFIX,
 }) : null
 
 /**
@@ -123,12 +101,12 @@ const authRatelimit = shouldEnableUpstashRateLimit ? new Ratelimit({
 const eventRatelimit = shouldEnableUpstashRateLimit ? new Ratelimit({
   redis: redis as any,
   limiter: Ratelimit.slidingWindow(
-    env.PRODUCTION === "true" ? 100 : 50,
-    env.PRODUCTION === "true" ? "15 m" : "1 m"
+    rateLimitEventMax(isProd),
+    rateLimitWindow(isProd)
   ),
-  analytics: env.PRODUCTION === "true",
+  analytics: isProd,
   enableProtection: false,
-  prefix: "eventRateLimit",
+  prefix: EVENT_RATE_LIMIT_PREFIX,
 }) : null
 
 /**
@@ -137,6 +115,12 @@ const eventRatelimit = shouldEnableUpstashRateLimit ? new Ratelimit({
  * (ipregistry when IPREGISTRY_API_KEY is set). Cached 6h, so only first-seen
  * IPs ever hit the provider. Lookups are skipped on the event limiter
  * (enableProtection=false) where country only feeds analytics, never a block.
+ */
+/**
+ * resolveCountryCode
+ * @param {*} req
+ * @param {*} ip
+ * @param {*} allowDenyListBlock
  */
 async function resolveCountryCode(
   req: Request,
@@ -159,28 +143,14 @@ async function resolveCountryCode(
 }
 
 /**
- * Normalize the `role` custom claim to a known tier key, defaulting to "free".
- * @param {unknown} role The authenticated user's role claim.
- * @return {string} One of TIER_MULTIPLIERS' keys.
+ * applyRateLimit
+ * @param {*} req
+ * @param {*} res
+ * @param {*} next
+ * @param {*} ratelimit
+ * @param {*} allowDenyListBlock
+ * @param {*} tiered
  */
-const resolveTier = (role: unknown): string => {
-  const normalized = typeof role === "string" ? role.trim().toLowerCase() : ""
-  if (!normalized) {
-    return "free"
-  }
-  // Longest / most specific first: an "enterprise_admin" is an admin.
-  if (normalized.includes("admin")) {
-    return "admin"
-  }
-  if (normalized.includes("enterprise")) {
-    return "enterprise"
-  }
-  if (normalized.includes("pro")) {
-    return "pro"
-  }
-  return "free"
-}
-
 async function applyRateLimit(
   req: Request,
   res: Response,
@@ -199,14 +169,31 @@ async function applyRateLimit(
     return next()
   }
 
-  // Skip rate limiting for health checks
-  if (req.path === "/health" || req.path === "/ping" || req.path === "/") {
+  // Health checks must never be throttled — shared policy, shared list.
+  if (RATE_LIMIT_SKIP_PATHS.includes(req.path)) {
     return next()
   }
 
   try {
-    // Extract client IP
-    const ip = req.ip || req.socket?.remoteAddress || "unknown"
+    // Client IP. Cloudflare overwrites `cf-connecting-ip` with the true visitor on
+    // every request it proxies, which makes it the only trustworthy source once the
+    // domain sits behind the Cloudflare edge.
+    //
+    // Why `req.ip` had to stop being first: with Cloudflare in front of Firebase
+    // Hosting, `req.ip` resolved to the EDGE address, so the buckets in Redis were
+    // `eventRateLimit:104.22.177.35:*`, `162.158.210.40`, `172.68.62.200` — i.e. one
+    // shared bucket per Cloudflare PoP, with every user behind it throttling every
+    // other user, and `enableProtection`'s per-IP deny list keyed on Cloudflare.
+    // Verified in Redis 2026-09-15.
+    //
+    // `cf-ray` is required alongside it: the origin is also reachable directly
+    // (`*.web.app`), where a client could forge both headers. The real fix for that is
+    // locking the origin to Cloudflare's ranges; this guard means the CF path is only
+    // trusted when the request actually came through Cloudflare.
+    // ponytail: header-based, so a direct-to-origin caller can still lie about its IP —
+    // exactly as it already could via x-forwarded-for. Origin lockdown is the boundary.
+    const edgeIp = req.get("cf-ray") ? req.get("cf-connecting-ip") : undefined
+    const ip = (edgeIp || req.ip || req.socket?.remoteAddress || "unknown").trim()
     const userAgent = req.get("user-agent") || "unknown"
 
     // Use user UID if authenticated, otherwise use IP
@@ -225,10 +212,12 @@ async function applyRateLimit(
       }
     )
 
-    // Wait for analytics to complete if pending
-    if (pending) {
-      await pending
-    }
+    // ponytail: `pending` is Upstash's own usage/deny-list bookkeeping promise, not a
+    // check — the limit decision above is final. Awaiting it added one more sequential
+    // REST round trip to *every* request (SSR page renders and /event/* included),
+    // which at cross-region latency is the single cheapest latency win here.
+    // Fire-and-forget, but don't let it surface as an unhandled rejection.
+    void pending?.catch(() => undefined)
 
     // Set rate limit headers
     res.set("RateLimit-Limit", limit.toString())
@@ -342,6 +331,12 @@ async function applyRateLimit(
  * @param {Response} res - Express response object
  * @param {NextFunction} next - Express next middleware function
  */
+/**
+ * upstashFunctionLimiter
+ * @param {*} req
+ * @param {*} res
+ * @param {*} next
+ */
 export async function upstashFunctionLimiter(
   req: Request,
   res: Response,
@@ -350,6 +345,12 @@ export async function upstashFunctionLimiter(
   return applyRateLimit(req, res, next, functionRatelimit, true, true)
 }
 
+/**
+ * upstashEventLimiter
+ * @param {*} req
+ * @param {*} res
+ * @param {*} next
+ */
 export async function upstashEventLimiter(
   req: Request,
   res: Response,
@@ -365,6 +366,12 @@ export async function upstashEventLimiter(
  * @param {Response} res Express response.
  * @param {NextFunction} next Express next middleware.
  * @return {Promise<Response | void>} Resolves after the limit check.
+ */
+/**
+ * upstashAuthLimiter
+ * @param {*} req
+ * @param {*} res
+ * @param {*} next
  */
 export async function upstashAuthLimiter(
   req: Request,

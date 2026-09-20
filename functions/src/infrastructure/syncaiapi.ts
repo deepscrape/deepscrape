@@ -1,7 +1,6 @@
 /* eslint-disable object-curly-spacing */
 /* eslint-disable indent */
 /* eslint-disable new-cap */
-/* eslint-disable require-jsdoc */
 /* eslint-disable @typescript-eslint/no-empty-function */
 /* eslint-disable max-len */
 import { NextFunction, Request, Response, Router } from "express"
@@ -13,6 +12,7 @@ import { auth, db } from "../app/config"
 import { BillingSnapshot, getBillingAccessMode, resolveBillingPricingPolicy } from "../domain"
 import { consumeBillingCredits, releaseBillingCredits, reserveBillingCredits } from "../app/billing-credits"
 import { requirePermission } from "./authz.middleware"
+import { authErrorCode as getAuthErrorCode } from "./auth-error"
 
 type BillingChargeContext = {
     uid: string
@@ -62,22 +62,20 @@ const canInviteOrganizationRole = (
 
 const randomSuffix = (): string => Math.random().toString(36).slice(2, 10)
 
-const getAuthErrorCode = (error: unknown): string => {
-    if (typeof error === "object" && error !== null && "code" in error) {
-        return String((error as { code?: unknown }).code || "")
-    }
-
-    return ""
-}
-
 const isPlatformAdminRequest = (req: Request): boolean => {
     const role = typeof req.user?.role === "string" ? req.user.role.trim().toLowerCase() : ""
     return role === "admin"
 }
 
+/**
+ * ReverseAPIProxy
+ */
 class ReverseAPIProxy {
     public router: Router
 
+    /**
+     * callback
+     */
     constructor() {
         this.router = Router()
         this.httpRoutesGets()
@@ -88,6 +86,12 @@ class ReverseAPIProxy {
 
     // ------------------- Node JS Security -------------------
     // Middleware to verify Firebase JWT
+    /**
+     * isJwtAuth
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     async isJwtAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
         const authHeader = req.headers["authorization"] as string
 
@@ -120,6 +124,12 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * requirePaidAccess
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     async requirePaidAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
         const uid = req.user?.uid
         if (!uid) {
@@ -231,11 +241,17 @@ class ReverseAPIProxy {
                         }
                     }
 
+                    /**
+                     * finish
+                     */
                     res.once("finish", () => {
                         const success = res.statusCode >= 200 && res.statusCode < 400
                         void settleCharge(success)
                     })
 
+                    /**
+                     * close
+                     */
                     res.once("close", () => {
                         if (!res.writableEnded) {
                             void settleCharge(false)
@@ -258,6 +274,11 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private listOrganizations = async (req: Request, res: Response): Promise<void> => {
         const uid = req.user?.uid
         if (!uid) {
@@ -271,6 +292,10 @@ class ReverseAPIProxy {
                 .limit(100)
                 .get()
 
+            /**
+             * callback
+             * @param {*} membershipDoc
+             */
             const organizations = await Promise.all(membershipsSnap.docs.map(async (membershipDoc) => {
                 const membership = membershipDoc.data() as {
                     orgId?: string
@@ -302,10 +327,58 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * Second line of defence for handlers that read tenant data with the Admin SDK.
+     *
+     * ponytail: requirePermission is the authoritative gate, but everything in this
+     * class reads Firestore through the ADMIN SDK, which bypasses firestore.rules
+     * entirely — so a route registered without the middleware would expose the data
+     * with no other check at all. Requiring the middleware's subject to be present
+     * makes that mistake fail CLOSED rather than open, and costs zero extra reads:
+     * requirePermission already computed the subject and its membership map into
+     * res.locals.
+     *
+     * hasOwnProperty rather than a truthy lookup: memberships is a plain object, so
+     * `memberships["constructor"]` resolves to Object's constructor and would read as
+     * a membership for an org literally named `constructor`.
+     *
+     * ponytail: ceiling — this accepts ANY membership in the org, not the specific
+     * action role (rename is owner-only, invitations are owner/admin). It is a
+     * backstop for a missing middleware, not a re-implementation of the policy;
+     * requirePermission still decides. Give it allowedRoles if it ever has to stand
+     * on its own.
+     * @param {*} res
+     * @param {*} orgId
+     * @return {*}
+     */
+    private isOrgAuthorized = (res: Response, orgId: string): boolean => {
+        const subject = res.locals?.authzSubject as {
+            isPlatformAdmin?: boolean
+            memberships?: Record<string, string>
+        } | undefined
+
+        if (!subject) {
+            return false
+        }
+
+        return subject.isPlatformAdmin === true ||
+            Object.prototype.hasOwnProperty.call(subject.memberships || {}, orgId)
+    }
+
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private getOrganization = async (req: Request, res: Response): Promise<void> => {
         const orgId = req.params.orgId
         if (!orgId) {
             res.status(400).json({ error: "bad_request", code: "bad_request" })
+            return
+        }
+
+        if (!this.isOrgAuthorized(res, orgId)) {
+            res.status(403).json({ error: "forbidden", code: "forbidden" })
             return
         }
 
@@ -323,6 +396,11 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private createOrganization = async (req: Request, res: Response): Promise<void> => {
         const uid = req.user?.uid
         if (!uid) {
@@ -370,6 +448,11 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private createInvitation = async (req: Request, res: Response): Promise<void> => {
         const uid = req.user?.uid
         const orgId = req.params.orgId
@@ -432,10 +515,25 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private listOrganizationMembers = async (req: Request, res: Response): Promise<void> => {
         const orgId = req.params.orgId
         if (!orgId) {
             res.status(400).json({ error: "bad_request", code: "bad_request" })
+            return
+        }
+
+        // ponytail: the middleware is the authoritative gate; this is the belt to its
+        // braces. This query has no uid filter — it returns EVERY membership for the
+        // org — and it runs on the Admin SDK, so firestore.rules never sees it. If
+        // requirePermission is ever dropped from this route, fail closed here instead
+        // of handing over the roster.
+        if (!this.isOrgAuthorized(res, orgId)) {
+            res.status(403).json({ error: "forbidden", code: "forbidden" })
             return
         }
 
@@ -445,6 +543,10 @@ class ReverseAPIProxy {
                 .limit(200)
                 .get()
 
+            /**
+             * callback
+             * @param {*} doc
+             */
             const members = membershipsSnap.docs.map((doc) => ({
                 id: doc.id,
                 ...(doc.data() || {}),
@@ -457,6 +559,11 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private removeOrganizationMember = async (req: Request, res: Response): Promise<void> => {
         const actorUid = req.user?.uid
         const orgId = req.params.orgId
@@ -502,6 +609,11 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private listOrgInvitations = async (req: Request, res: Response): Promise<void> => {
         const uid = req.user?.uid
         const orgId = req.params.orgId
@@ -511,6 +623,14 @@ class ReverseAPIProxy {
         }
         if (!orgId) {
             res.status(400).json({ error: "bad_request", code: "bad_request", message: "orgId is required" })
+            return
+        }
+
+        // ponytail: belt to the middleware's braces — pending invitations expose
+        // invitee emails, and this query runs on the Admin SDK where rules are not
+        // evaluated. Fail closed if requirePermission is ever dropped from the route.
+        if (!this.isOrgAuthorized(res, orgId)) {
+            res.status(403).json({ error: "forbidden", code: "forbidden" })
             return
         }
 
@@ -524,6 +644,10 @@ class ReverseAPIProxy {
             const orgSnap = await db.collection("organizations").doc(orgId).get()
             const orgName = orgSnap.exists ? (orgSnap.data()?.name || orgId) : orgId
 
+            /**
+             * callback
+             * @param {*} doc
+             */
             const invitations = invitesSnap.docs.map((doc) => ({
                 id: doc.id,
                 orgName,
@@ -537,6 +661,11 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private listMyInvitations = async (req: Request, res: Response): Promise<void> => {
         const uid = req.user?.uid
         if (!uid) {
@@ -579,6 +708,11 @@ class ReverseAPIProxy {
                 }
             }
 
+            /**
+             * callback
+             * @param {*} doc
+             * @return {*}
+             */
             const invitations = invitesSnap.docs.map((doc) => {
                 const data = doc.data()
                 return {
@@ -595,6 +729,11 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private acceptInvitation = async (req: Request, res: Response): Promise<void> => {
         const uid = req.user?.uid
         const invitationId = req.params.invitationId
@@ -684,12 +823,27 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * callback
+     * @param {*} req
+     * @param {*} res
+     */
     private renameOrganization = async (req: Request, res: Response): Promise<void> => {
         const orgId = req.params.orgId
         const name = typeof req.body?.name === "string" ? req.body.name.trim() : ""
 
         if (!orgId || name.length < 2 || name.length > 64) {
             res.status(400).json({ error: "bad_request", code: "bad_request", message: "name must be between 2 and 64 characters" })
+            return
+        }
+
+        // ponytail: belt to the middleware's braces. This is a WRITE to
+        // organizations/{orgId} via the Admin SDK — the exact operation
+        // firestore.rules denies clients (`allow create, update, delete: if false`),
+        // which is why the middleware, not the rules, was the only thing standing
+        // between an authenticated user and another tenant's org. Fail closed.
+        if (!this.isOrgAuthorized(res, orgId)) {
+            res.status(403).json({ error: "forbidden", code: "forbidden" })
             return
         }
 
@@ -711,6 +865,9 @@ class ReverseAPIProxy {
      * https Router Gets
      */
 
+    /**
+     * httpRoutesGets
+     */
     private httpRoutesGets(): void {
         this.router.get("/orgs", requirePermission("organization", "read"), this.listOrganizations)
         this.router.get("/orgs/:orgId", requirePermission("organization", "read"), this.getOrganization)
@@ -756,6 +913,9 @@ class ReverseAPIProxy {
      * https Router Post
      */
 
+    /**
+     * httpRoutesPosts
+     */
     private httpRoutesPosts(): void {
         this.router.post("/orgs", requirePermission("organization", "manage"), this.createOrganization)
         this.router.post("/orgs/:orgId/invitations", requirePermission("organization", "invite"), this.createInvitation)
@@ -785,6 +945,9 @@ class ReverseAPIProxy {
        * https Router Put
        */
 
+    /**
+     * httpRoutesPut
+     */
     private httpRoutesPut(): void {
         this.router.put("/orgs/:orgId", requirePermission("organization", "manage"), this.renameOrganization)
 
@@ -814,6 +977,9 @@ class ReverseAPIProxy {
      * https Router Delete
      */
 
+    /**
+     * httpRoutesDelete
+     */
     private httpRoutesDelete(): void {
         this.router.delete("/orgs/:orgId/members/:userId", requirePermission("organization", "manage"), this.removeOrganizationMember)
 

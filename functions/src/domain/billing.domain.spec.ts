@@ -3,15 +3,78 @@ import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {
   canPurchaseStandaloneCredits,
+  computeBillingMetrics,
   getBillingAccessMode,
   getIncludedCreditsAvailable,
   getPurchasedCreditsAvailable,
   hasBillingAccess,
   isPaidPlan,
+  monthlyRecurringAmountEur,
   normalizeBillingPlan,
 } from "./billing.domain"
 
 describe("billing.domain", () => {
+  it("monthlyRecurringAmountEur normalises each interval and drops one-offs", () => {
+    assert.equal(monthlyRecurringAmountEur(999, "monthly"), 999)
+    assert.equal(monthlyRecurringAmountEur(2799, "quarterly"), 933)
+    assert.equal(monthlyRecurringAmountEur(9999, "annually"), 833.25)
+
+    // A credit pack is not recurring revenue, and unknown shapes never count.
+    assert.equal(monthlyRecurringAmountEur(1900, "payAsYouGo"), 0)
+    assert.equal(monthlyRecurringAmountEur(999, null), 0)
+    assert.equal(monthlyRecurringAmountEur(999, "weekly"), 0)
+    assert.equal(monthlyRecurringAmountEur(-999, "monthly"), 0)
+    assert.equal(monthlyRecurringAmountEur("not-a-number", "monthly"), 0)
+  })
+
+  it("computeBillingMetrics counts MRR, trials and payment risk separately", () => {
+    const now = Date.parse("2026-09-18T00:00:00Z")
+    const prices: Record<string, number> = {
+      "starter:monthly": 999,
+      "starter:quarterly": 2799,
+      "pro:monthly": 1999,
+      "pro:annually": 19999,
+    }
+    const priceFor = (plan: string, interval: string): number => prices[`${plan}:${interval}`] ?? 0
+
+    const metrics = computeBillingMetrics([
+      {plan: "starter", planInterval: "monthly", status: "active"},
+      {plan: "pro", planInterval: "annually", status: "active"},
+      // Past due still bills, so it stays in MRR -- and is counted as risk.
+      {plan: "starter", planInterval: "quarterly", status: "past_due"},
+      {
+        plan: "trial",
+        status: "trialing",
+        trialEndsAt: "2026-09-25T00:00:00Z",
+        trialPlanTarget: "pro",
+      },
+      // Expired trial: no longer an active trial, and contributes nothing.
+      {plan: "trial", status: "trialing", trialEndsAt: "2026-09-01T00:00:00Z", trialPlanTarget: "pro"},
+      {plan: "starter", planInterval: "monthly", status: "canceled"},
+      {plan: "free"},
+    ], priceFor as never, now)
+
+    assert.equal(metrics.payingAccounts, 3, "canceled and free are not paying accounts")
+    assert.equal(metrics.pastDueAccounts, 1)
+    assert.equal(metrics.activeTrials, 1, "an expired trial is not active")
+    assert.equal(metrics.trialPipelineEurMinor, 1999, "trial pipeline prices the target plan monthly")
+    assert.deepEqual(metrics.planMix, {starter: 3, pro: 1, trial: 2, free: 1})
+
+    // 999 + 19999/12 + 933, rounded once at the sum.
+    assert.equal(Math.round(metrics.mrrEurMinor), 3599)
+  })
+
+  it("computeBillingMetrics treats a missing status as paying", () => {
+    const legacy = computeBillingMetrics(
+      [{plan: "starter", planInterval: "monthly"}],
+      (() => 999) as never,
+      Date.parse("2026-09-18T00:00:00Z"),
+    )
+
+    assert.equal(legacy.payingAccounts, 1, "rows written before `status` existed are still subscriptions")
+    assert.equal(Math.round(legacy.mrrEurMinor), 999)
+  })
+
   it("normalizeBillingPlan falls back unknown plans to free", () => {
     assert.equal(normalizeBillingPlan("starter"), "starter")
     assert.equal(normalizeBillingPlan("garbage"), "free")

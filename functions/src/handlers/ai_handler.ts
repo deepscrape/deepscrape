@@ -59,8 +59,37 @@ export const crawl4aiCore = async (req: Request, res: Response) => {
     // const decodedUrl = decodeURIComponent(url) // decode the URL
     const apiUrl = `${env.API_CRAWL4AI_URL}/crawl`
     const { urls, priority } = req.body
+
+    // ponytail: the crawler agent egresses on our behalf and nothing downstream
+    // blocks private space (no RFC1918 / link-local / metadata guard exists
+    // anywhere in this repo), so an unvalidated list here is an internal-read
+    // primitive — POST /api/crawl {"urls":["http://169.254.169.254/latest/meta-data/iam/"]}
+    // returns the metadata body to the caller. Scheme allowlist + host blocklist
+    // is the cheap half; the agent needs the same list re-checked after redirects,
+    // which is the half this repo cannot do for it.
+    const BLOCKED_HOST = /^(localhost|\.?0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|.*\.local$|.*\.internal$)/i
+    const safeUrls = Array.isArray(urls) ?
+        urls.filter((candidate: unknown): candidate is string => {
+            if (typeof candidate !== "string" || candidate.length > 2048) {
+                return false
+            }
+            try {
+                const parsed = new URL(candidate)
+                return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+                    !BLOCKED_HOST.test(parsed.hostname)
+            } catch {
+                return false
+            }
+        }).slice(0, 50) :
+        []
+
+    if (!safeUrls.length) {
+        res.status(400).json({ error: "Invalid target URLs" })
+        return
+    }
+
     const body = {
-        urls,
+        urls: safeUrls,
         priority,
     }
 
@@ -73,10 +102,9 @@ export const crawl4aiCore = async (req: Request, res: Response) => {
         "X-With-Generated-Alt": req.headers["x-with-generated-alt"] as string || "true",
     }
 
-    if (req.headers["x-set-cookie"]?.length) {
-        headers["X-Set-Cookie"] = req.headers["x-set-cookie"] as string
-    }
-
+    // ponytail: the client-supplied `x-set-cookie` passthrough was removed here.
+    // It let a caller plant cookies into the crawler's request context (session
+    // fixation). Nothing legitimately needs to set cookies on this read path.
     try {
         const fetchOptions: RequestInit = {
             method: "POST",
@@ -123,10 +151,20 @@ export const jinaAICrawl = async (req: Request, res: Response) => {
         "X-With-Generated-Alt": req.headers["x-with-generated-alt"] as string || "true",
     }
 
-    if (req.headers["x-set-cookie"]?.length) {
-        headers["X-Set-Cookie"] = req.headers["x-set-cookie"] as string
+    // ponytail: the client-supplied `x-set-cookie` passthrough was removed here.
+    // It let a caller plant cookies into the upstream fetch context (session
+    // fixation). Nothing legitimately needs to set cookies on a read-only fetch.
+    const decoded = customUrlDecoder(url)
+
+    // ponytail: the decoder is base64+reverse+Caesar(-3) — obfuscation, not a
+    // signature — so it must not be the only thing standing between a caller and
+    // the project's JinaAI key. Require an http(s) target; r.jina.ai is a fixed
+    // host so this closes quota/cost abuse, not SSRF.
+    if (!/^https?:\/\/[^\s]+$/i.test(decoded) || decoded.length > 2048) {
+        res.status(400).json({ error: "Invalid target URL" })
+        return
     }
-    // const decodedUrl = decodeURIComponent(url) // decode the URL
+
     const apiUrl = `https://r.jina.ai/${customUrlDecoder(url)}`
 
     try {

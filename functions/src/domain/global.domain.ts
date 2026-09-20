@@ -162,6 +162,13 @@ export type Guest = {
   isBot?: boolean
   botKind?: "ai-assistant" | "ai-crawler" | "bot" | null
   fingerprint: string // Unique fingerprint for guest tracking
+  /**
+   * How this guest's identity was established, so the IP fallback can be audited:
+   * `new` for a first-ever visitor, `ip` when an unknown fingerprint was absorbed
+   * into the guest already mapped to that IP (see `GUEST_IP_TTL_SECONDS`).
+   * Absent on documents written before the index existed.
+   */
+  identitySource?: "new" | "ip"
   createdAt: Date
   lastSeen: Date
   linkedAt?: Date | null

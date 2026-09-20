@@ -1,15 +1,17 @@
 /* eslint-disable indent */
 /* eslint-disable max-len */
-/* eslint-disable valid-jsdoc */
 /* eslint-disable linebreak-style */
-// import {geoDBManager} from "./analytics"
-import {initializeGeoDatabase} from "./analytics"
 import {env} from "../config/env"
 const port = env.PORT || 4000
 /**
  * Soft Decryption Algorithm: Reverses the soft encryption process.
  * @param input - The transformed string to decrypt.
  * @return The original string.
+ */
+/**
+ * customUrlDecoder
+ * @param {*} input
+ * @return {*}
  */
 export function customUrlDecoder(input: string): string {
     // Step 1: Base64 decode the string
@@ -28,22 +30,12 @@ export function customUrlDecoder(input: string): string {
 
 
 /**
- * Event listener for HTTP server "listening" event.
- */
-export function onListening() {
-    // Warm up once at startup. initializeGeoDatabase is promise-cached and idempotent.
-    void initializeGeoDatabase()
-        .then(() => {
-            console.log("Geo lookup API initialized successfully.")
-        })
-        .catch((error) => {
-            console.error("Error initializing geo lookup API:", error)
-        })
-    // debug('Listening on ' + bind);
-}
-
-/**
  * Normalize a port into a number, string, or false.
+ */
+/**
+ * normalizePort
+ * @param {*} servPort
+ * @return {*}
  */
 export function normalizePort(servPort: string) {
     const port = parseInt(servPort, 10)
@@ -58,6 +50,10 @@ export function normalizePort(servPort: string) {
  * Event listener for HTTP server "error" event.
  * @param error
  * @returns {void}
+ */
+/**
+ * onError
+ * @param {*} error
  */
 export function onError(error: unknown): void {
     const normalizedError = error as { syscall?: string; code?: string }

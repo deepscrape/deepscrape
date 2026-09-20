@@ -17,7 +17,13 @@ const sessionsSource = () => readFileSync(join(__dirname, "sessions.ts"), "utf8"
 const countMatches = (source: string, pattern: RegExp): number =>
   [...source.matchAll(pattern)].length
 
+/**
+ * redis access patterns
+ */
 describe("redis access patterns", () => {
+  /**
+   * bounds the verification-code budget with one atomic increment
+   */
   it("bounds the verification-code budget with one atomic increment", () => {
     const source = sessionsSource()
 
@@ -34,6 +40,9 @@ describe("redis access patterns", () => {
     )
   })
 
+  /**
+   * never writes a Redis key without a TTL constant in the sessions module
+   */
   it("never writes a Redis key without a TTL constant in the sessions module", () => {
     const source = sessionsSource()
 
@@ -49,6 +58,9 @@ describe("redis access patterns", () => {
     )
   })
 
+  /**
+   * keeps every session-cache write behind an existence guard
+   */
   it("keeps every session-cache write behind an existence guard", () => {
     const source = sessionsSource()
 
@@ -61,6 +73,9 @@ describe("redis access patterns", () => {
     )
   })
 
+  /**
+   * batches the sign-out invalidation into one pipeline
+   */
   it("batches the sign-out invalidation into one pipeline", () => {
     const source = sessionsSource()
     const region = source.slice(

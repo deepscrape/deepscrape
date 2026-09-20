@@ -72,7 +72,7 @@ describe("redis round-trip budget", () => {
   it("keeps the presence region to a single script call", () => {
     const region = betweenMarkers(
       handler,
-      "One script for presence liveness, sorted-set upsert, stale trim, and both",
+      "One script for presence liveness, sorted-set upsert, and stale trim",
       "Structured SLI",
     )
 

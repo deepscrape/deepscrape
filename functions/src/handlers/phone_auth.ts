@@ -1,30 +1,17 @@
 /* eslint-disable object-curly-spacing */
 /* eslint-disable indent */
 /* eslint-disable new-cap */
-/* eslint-disable require-jsdoc */
 /* eslint-disable @typescript-eslint/no-empty-function */
 
 import { Request, Response } from "express"
 import { auth, db } from "../app/config"
+import { authErrorCode as getErrorCode } from "../infrastructure/auth-error"
 
 // Phone number validation regex (E.164 format)
 const PHONE_REGEX = /^\+[1-9]\d{1,14}$/
 
-const getErrorCode = (error: unknown): string => {
-    if (typeof error === "object" && error !== null && "code" in error) {
-        return String((error as { code?: unknown }).code || "")
-    }
-
-    return ""
-}
-
-const getErrorMessage = (error: unknown): string => {
-    if (typeof error === "object" && error !== null && "message" in error) {
-        return String((error as { message?: unknown }).message || "")
-    }
-
-    return "Unknown error"
-}
+// ponytail: getErrorMessage() deleted. Its only consumers were the 500 handlers
+// below, which leaked raw error.message to unauthenticated callers.
 
 const mergeCustomClaims = async (
     uid: string,
@@ -77,7 +64,6 @@ export const verifyPhoneNumber = async (req: Request, res: Response) => {
         console.error("Error verifying phone number:", error)
         return res.status(500).send({
             error: "Internal Server Error",
-            message: getErrorMessage(error),
         })
     }
 }
@@ -133,7 +119,6 @@ export const linkPhoneToAccount = async (req: Request, res: Response) => {
         console.error("Error linking phone to account:", error)
         return res.status(500).send({
             error: "Internal Server Error",
-            message: getErrorMessage(error),
         })
     }
 }
@@ -203,7 +188,6 @@ export const updatePhoneVerificationStatus = async (
         console.error("Error updating phone verification status:", error)
         return res.status(500).send({
             error: "Internal Server Error",
-            message: getErrorMessage(error),
         })
     }
 }
@@ -233,9 +217,13 @@ export const checkPhoneNumberExists = async (req: Request, res: Response) => {
         }
     } catch (error: unknown) {
         console.error("Error checking phone number existence:", error)
+        // ponytail: `message: getErrorMessage(error)` removed. This route is
+        // public (/oauth/provider/phone/check), and the helper is a raw
+        // error.message passthrough — FirebaseAuthError internals reached
+        // unauthenticated callers. The distinction that the login UX needs
+        // (auth/user-not-found) is handled in the 200 branches above.
         return res.status(500).send({
             error: "Internal Server Error",
-            message: getErrorMessage(error),
         })
     }
 }

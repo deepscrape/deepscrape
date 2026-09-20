@@ -1,12 +1,11 @@
-/* eslint-disable valid-jsdoc */
 /* eslint-disable max-len */
 /* eslint-disable object-curly-spacing */
 /* eslint-disable indent */
 /* eslint-disable new-cap */
-/* eslint-disable require-jsdoc */
 /* eslint-disable @typescript-eslint/no-empty-function */
 import { auth, db } from "../app/config"
 import { Request, Response } from "express"
+import { authErrorCode as getErrorCode } from "../infrastructure/auth-error"
 
 
 // test email before checking providers with pattern
@@ -25,14 +24,6 @@ const mergeCustomClaims = async (
         ...existingClaims,
         ...claims,
     })
-}
-
-const getErrorCode = (error: unknown): string | undefined => {
-    if (typeof error === "object" && error !== null && "code" in error) {
-        return String((error as { code: unknown }).code)
-    }
-
-    return undefined
 }
 
 const getErrorMessage = (error: unknown): string => {
@@ -85,8 +76,20 @@ export const checkUserEmailExistance = async (req: Request, res: Response) => {
 export const checkUserEmailForDifferentProvider =
     async (req: Request, res: Response) => {
         const { email: encodedEmail } = req.params as { email: string }
-        const email = decodeURIComponent(encodedEmail)
         res.type("json")
+
+        // ponytail: this decode sat outside the try, so `GET /oauth/provider/email/%25E0`
+        // threw URIError as an unhandled rejection. Express 4 never routes those, so
+        // the request hung to the function timeout — remotely, with no credentials
+        // (this route is mounted without isJwtAuth). Decode inside the guard.
+        let email = ""
+        try {
+            email = decodeURIComponent(encodedEmail)
+        } catch {
+            return res.status(400).send({ error: "Invalid email format",
+                message: "Please provide a valid email address." })
+        }
+
         try {
             // eslint-disable-next-line max-len
             if (!email || !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email)) {
@@ -119,8 +122,11 @@ export const checkUserEmailForDifferentProvider =
                 "Error checking user email for different provider:",
                 error,
             )
-            return res.status(500).send({ error: "Internal Server Error",
-                message: getErrorMessage(error) })
+            // ponytail: `message: getErrorMessage(error)` removed. This route is
+            // public (/oauth, no isJwtAuth), and the helper is a raw error.message
+            // passthrough — FirebaseAuthError internals reached unauthenticated
+            // callers. The logger above already keeps the detail.
+            return res.status(500).send({ error: "Internal Server Error" })
         }
     }
 
@@ -259,6 +265,8 @@ const USERNAME_REGEX = /^[a-zA-Z0-9._-]{2,64}$/
  * Response 200: { email: string }
  * Response 400: invalid input
  * Response 404: user not found
+ * @param {*} req
+ * @param {*} res
  */
 export const resolveIdentifier = async (req: Request, res: Response) => {
     res.type("application/json")

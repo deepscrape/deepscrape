@@ -5,7 +5,10 @@ import { FieldPath, FieldValue } from "firebase-admin/firestore"
 import { db, dbName, getSecretFromManager, purgeSecretAndAllRevisions, saveToSecretManager, auth as adminAuth } from "./config"
 import { auth, runWith } from "firebase-functions/v1"
 import { onDocumentWritten } from "firebase-functions/v2/firestore"
-import { HttpsError, onCall as onCallv2 } from "firebase-functions/v2/https"
+import { HttpsError } from "firebase-functions/v2/https"
+// ponytail: auth/billing/API-key callables now metered per UID. Aliased — no call
+// site changes. Includes createBootstrapAdminPasswordAccount and enableTotpMfa.
+import { guardedOnCall as onCallv2 } from "../infrastructure/callable-limiter"
 import { env, functionsEnvJson } from "../config/env"
 
 const bootstrapAdminEmails = new Set(
@@ -23,14 +26,21 @@ const isBootstrapAdmin = (email?: string | null): boolean => {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-const resolveUserEmail = async (user: { uid: string; email?: string | null }): Promise<string | null> => {
-    if (user.email) {
+const resolveUserEmail = async (user: { uid: string; email?: string | null; emailVerified?: boolean }): Promise<string | null> => {
+    // ponytail: only a PROVIDER-VERIFIED address may resolve. `user.email` on a
+    // fresh email/password signup is whatever the client typed into
+    // createUserWithEmailAndPassword, and its only consumer is
+    // `isBootstrapAdmin(email) ? "admin" : "user"` in the onCreate triggers — so
+    // an unverified signup with the configured admin address used to be handed
+    // `role: "admin"` before anyone proved they owned the mailbox.
+    // Unverified ⇒ null ⇒ "user". Verification re-runs this on first verified sign-in.
+    if (user.emailVerified && user.email) {
         return user.email
     }
 
     try {
         const authUser = await adminAuth.getUser(user.uid)
-        return authUser.email || null
+        return authUser.emailVerified ? authUser.email || null : null
     } catch {
         return null
     }
@@ -264,6 +274,24 @@ export const createBootstrapAdminPasswordAccount = onCallv2({ secrets: [function
         throw new HttpsError("invalid-argument", "A valid email is required")
     }
 
+    // ponytail: this callable had NO req.auth check — the only gate was
+    // `isBootstrapAdmin(req.data.email)`, i.e. the caller picked the address it
+    // was checked against. An unauthenticated request naming the configured
+    // admin address created that account with an attacker-chosen password and
+    // then received `role: "admin"` via syncBootstrapAdminRole. Mirror
+    // ensureBootstrapAdminAccess: the caller must be an existing, verified
+    // bootstrap admin. Both checks stay, because they mean different things —
+    // callers may only mint admins for allowlisted addresses.
+    const callerUid = req.auth?.uid
+    if (!callerUid) {
+        throw new HttpsError("unauthenticated", "User must be authenticated")
+    }
+
+    const callerRecord = await adminAuth.getUser(callerUid)
+    if (!callerRecord.emailVerified || !isBootstrapAdmin(callerRecord.email)) {
+        throw new HttpsError("permission-denied", "Bootstrap admin access is required")
+    }
+
     if (!isBootstrapAdmin(email)) {
         throw new HttpsError(
             "permission-denied",
@@ -403,6 +431,10 @@ export const createDefaultOrganization = auth
  * Admin SDK operation using Identity Platform API.
  * @see https://firebase.google.com/docs/auth/admin/manage-sessions#enable_mfa_for_a_user
  */
+/**
+ * callback
+ * @param {*} req
+ */
 export const enableTotpMfa = onCallv2({ secrets: [functionsEnvJson] }, async (req) => {
     const DEFAULT_ADJACENT_INTERVALS = 5
     try {
@@ -438,6 +470,10 @@ export const enableTotpMfa = onCallv2({ secrets: [functionsEnvJson] }, async (re
         const configManager = adminAuth.projectConfigManager()
         const currentConfig = await configManager.getProjectConfig()
         const mfaConfig = currentConfig.multiFactorConfig
+        /**
+         * callback
+         * @param {*} providerConfig
+         */
         const totpProviderConfig = mfaConfig?.providerConfigs?.find((providerConfig) => !!providerConfig.totpProviderConfig)
         const isAlreadyEnabled = mfaConfig?.state === "ENABLED" && totpProviderConfig?.state === "ENABLED"
         const currentAdjacentIntervals = typeof totpProviderConfig?.totpProviderConfig?.adjacentIntervals === "number"?
@@ -754,6 +790,10 @@ export const deleteMyApiKey = onCallv2(async (req) => {
     check available policies
     bash: gcloud iam service-accounts list --project=libnet-d76db
 **/
+/**
+ * callback
+ * @param {*} req
+ */
 export const getApiKeyDoVisible = onCallv2(async (req) => {
     const { apiKey } = req.data
 

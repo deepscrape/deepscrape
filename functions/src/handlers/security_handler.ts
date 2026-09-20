@@ -1,4 +1,3 @@
-/* eslint-disable valid-jsdoc */
 /* eslint-disable max-len */
 /* eslint-disable indent */
 import {Request, Response} from "express"
@@ -7,6 +6,8 @@ import {Request, Response} from "express"
  * Serves the security.txt file as per RFC 9116
  * Provides security researchers with a standardized way to report vulnerabilities
  * Available at: /.well-known/security.txt
+ * @param {*} req
+ * @param {*} res
  */
 export const serveSecurity = async (req: Request, res: Response) => {
   try {

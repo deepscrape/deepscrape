@@ -34,7 +34,13 @@ type Manifest = {
 const readManifest = (): Manifest =>
   JSON.parse(readFileSync(join(functionsRoot, "package.json"), "utf8"))
 
+/**
+ * functions dependency tree
+ */
 describe("functions dependency tree", () => {
+  /**
+   * never pins path-to-regexp with a bare override
+   */
   it("never pins path-to-regexp with a bare override", () => {
     const {overrides = {}} = readManifest()
 
@@ -45,6 +51,9 @@ describe("functions dependency tree", () => {
     )
   })
 
+  /**
+   * resolves a path-to-regexp that router can actually call
+   */
   it("resolves a path-to-regexp that router can actually call", () => {
     assert.ok(
       existsSync(routerLayer),

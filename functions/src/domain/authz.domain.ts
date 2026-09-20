@@ -1,5 +1,4 @@
 /* eslint-disable max-len */
-/* eslint-disable require-jsdoc */
 import {DecodedIdToken} from "firebase-admin/auth"
 
 export type OrgRole = "owner" | "admin" | "member" | "viewer"
@@ -89,6 +88,12 @@ const POLICIES = {
   },
 } as const satisfies RolePolicies
 
+/**
+ * resolveEffectiveRoles
+ * @param {*} subject
+ * @param {*} data
+ * @return {*}
+ */
 function resolveEffectiveRoles(subject: AuthorizationSubject, data?: { orgId?: string; ownerId?: string }): EffectiveRole[] {
   const roles: EffectiveRole[] = []
 
@@ -106,6 +111,15 @@ function resolveEffectiveRoles(subject: AuthorizationSubject, data?: { orgId?: s
   return roles
 }
 
+/**
+ * canPerform
+ * @param {*} subject
+ * @param {*} resource
+ * @param {*} action
+ * @param {*} data
+ * @param {*} context
+ * @return {*}
+ */
 export function canPerform<Resource extends keyof AuthResources>(
   subject: AuthorizationSubject,
   resource: Resource,

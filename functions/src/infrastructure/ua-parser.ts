@@ -1,4 +1,3 @@
-/* eslint-disable valid-jsdoc */
 /**
  * Drop-in replacement for the unmaintained `useragent@2.3.0` package.
  * Wraps `ua-parser-js` (actively maintained) behind the same
@@ -26,6 +25,11 @@ export interface AgentInfo {
  * Classify a UA string. AI agents are checked first so the more specific
  * label wins (they are also plain bots/crawlers to `isBot`).
  */
+/**
+ * detectBot
+ * @param {*} ua
+ * @return {*}
+ */
 function detectBot(ua: string): { isBot: boolean, botKind: BotKind } {
   if (isAIAssistant(ua)) return {isBot: true, botKind: "ai-assistant"}
   if (isAICrawler(ua)) return {isBot: true, botKind: "ai-crawler"}
@@ -40,6 +44,11 @@ function detectBot(ua: string): { isBot: boolean, botKind: BotKind } {
  * ponytail: bot detection takes the raw UA string on purpose. Passing a parsed
  * result silently returns false because the result is built without the bot
  * extensions — verified against Googlebot/GPTBot/ChatGPT-User.
+ */
+/**
+ * parseUA
+ * @param {*} rawUA
+ * @return {*}
  */
 export function parseUA(rawUA: string): AgentInfo {
   const ua = rawUA || ""

@@ -1,4 +1,3 @@
-/* eslint-disable valid-jsdoc */
 /* eslint-disable max-len */
 /* eslint-disable indent */
 /* eslint-disable linebreak-style */
@@ -7,7 +6,7 @@ import { Redis } from "@upstash/redis"
 import chalk from "chalk"
 import {env} from "../config/env"
 
-const sanitizeUpstashRestUrl = (value: string): string => {
+export const sanitizeUpstashRestUrl = (value: string): string => {
     if (!value) {
         return ""
     }
@@ -21,10 +20,10 @@ const sanitizeUpstashRestUrl = (value: string): string => {
     return /^https?:\/\//i.test(normalized) ? normalized : `https://${normalized}`
 }
 
-const isEncryptedPlaceholder = (value: string): boolean =>
+export const isEncryptedPlaceholder = (value: string): boolean =>
     /^encrypted:/i.test((value || "").trim())
 
-const isHttpUrl = (value: string): boolean => {
+export const isHttpUrl = (value: string): boolean => {
     try {
         const parsed = new URL(value)
         return parsed.protocol === "http:" || parsed.protocol === "https:"
@@ -49,7 +48,7 @@ const upstashRestEnabled =
 const NOOP_PIPELINE_COMMANDS = [
     "get", "getex", "set", "setex", "del", "incr", "incrby", "expire", "ttl",
     "zadd", "zremrangebyscore", "zcount", "zcard", "zrange",
-    "lpush", "lrange", "lpop", "ltrim", "llen",
+    "lpush", "lrange", "lpop", "rpop", "ltrim", "llen",
 ] as const
 
 const createNoopPipeline = (): Record<string, unknown> => {
@@ -81,6 +80,9 @@ const createNoopRedis = (): Redis => ({
     lpush: async () => 0,
     lrange: async () => [],
     lpop: async () => null,
+    // Paired with lpush above: the analytics drain consumes the tail (RPOP) so a
+    // FIFO queue does not starve its oldest entries.
+    rpop: async () => null,
     ltrim: async () => "OK",
     llen: async () => 0,
     // Hot-path scripts. Returning the "nothing cached" shape lets callers fall
@@ -95,6 +97,27 @@ const redis: Redis = upstashRestEnabled ? new Redis({
     url: upstashUrl,
     token: upstashToken,
 }) : createNoopRedis()
+
+/**
+ * Run a Lua script through the shared client.
+ *
+ * `@upstash/redis` exposes `eval`, but the no-op fallback models only the
+ * commands the app uses, so the cast lives here once instead of at every call
+ * site — a missing method on that stub is a runtime TypeError, not a no-op.
+ *
+ * @param {string} script Lua source to execute.
+ * @param {string[]} keys Keys the script may access.
+ * @param {(string | number)[]} args Positional script arguments.
+ * @return {Promise<TData>} Whatever the script returns.
+ */
+export const redisEval = async <TData>(
+    script: string,
+    keys: string[],
+    args: (string | number)[],
+): Promise<TData> =>
+    (redis as unknown as {
+        eval: (script: string, keys: string[], args: (string | number)[]) => Promise<TData>
+    }).eval(script, keys, args)
 
 /**
  * Whether the process is talking to a real Redis instance.
@@ -136,6 +159,8 @@ if (upstashRestEnabled) {
  * Verified against a live instance: `get()` -> typeof "object", and
  * `pipeline().exec()` -> [object, object, ...] in command order.
  * Normalizing here means callers never have to care which shape they got.
+ * @param {*} value
+ * @return {*}
  */
 export const parseCachedJson = <T>(value: unknown): T | null => {
     if (value === null || value === undefined) {

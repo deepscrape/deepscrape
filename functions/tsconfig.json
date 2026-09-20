@@ -33,8 +33,7 @@
   "include": [
     "src",
     "scripts",
-    "cp-angular.js",
-    "api"
+    "cp-angular.js"
   ],
   "exclude": [
     "lib",

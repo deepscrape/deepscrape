@@ -1,7 +1,6 @@
 /* eslint-disable object-curly-spacing */
 /* eslint-disable indent */
 /* eslint-disable new-cap */
-/* eslint-disable require-jsdoc */
 /* eslint-disable @typescript-eslint/no-empty-function */
 
 import { NextFunction, Request, Response, Router } from "express"
@@ -17,19 +16,18 @@ import {
     checkPhoneNumberExists,
     resolveIdentifier,
 } from "../handlers"
-
-const getAuthErrorCode = (error: unknown): string => {
-    if (typeof error === "object" && error !== null && "code" in error) {
-        return String((error as { code?: unknown }).code || "")
-    }
-
-    return ""
-}
+import { authErrorCode as getAuthErrorCode } from "./auth-error"
 
 /* eslint-disable max-len */
+/**
+ * AuthAPIProxy
+ */
 class AuthAPIProxy {
     public router: Router
 
+    /**
+     * callback
+     */
     constructor() {
         this.router = Router()
         this.httpRoutesGets()
@@ -38,6 +36,12 @@ class AuthAPIProxy {
         // this.httpRoutesDelete()
     }
 
+    /**
+     * isJwtAuth
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     private async isJwtAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
         const authHeader = req.headers["authorization"] as string
 
@@ -64,6 +68,12 @@ class AuthAPIProxy {
         }
     }
 
+    /**
+     * requireSelfOrAdmin
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
     private requireSelfOrAdmin(req: Request, res: Response, next: NextFunction): void {
         const targetUid = req.body?.uid as string | undefined
         const callerUid = req.user?.uid
@@ -87,11 +97,17 @@ class AuthAPIProxy {
         res.status(403).json({ error: "Forbidden", message: "Insufficient permissions" })
     }
 
+    /**
+     * httpRoutesGets
+     */
     private httpRoutesGets(): void {
         // Check if user email exists and which provider is used
         this.router.get("/provider/email/:email", checkUserEmailForDifferentProvider)
     }
 
+    /**
+     * httpRoutesPosts
+     */
     private httpRoutesPosts(): void {
         // Resolve a username or phone number to the account email
         this.router.post("/resolve-identifier", upstashAuthLimiter, resolveIdentifier)

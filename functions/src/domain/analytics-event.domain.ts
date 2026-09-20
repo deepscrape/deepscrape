@@ -1,6 +1,4 @@
 /* eslint-disable max-len */
-/* eslint-disable valid-jsdoc */
-/* eslint-disable require-jsdoc */
 /**
  * `analytics_events` — append-only fact table.
  *
@@ -51,11 +49,31 @@ export type AnalyticsEventInput = {
 }
 
 /** UTC day key used for both `metrics_daily` and `analytics_events`. */
+/**
+ * toEventDate
+ * @param {*} ts
+ * @return {*}
+ */
 export function toEventDate(ts: Date): string {
   return ts.toISOString().split("T")[0]
 }
 
+/** UTC hour key used for `metrics_hourly` (`YYYY-MM-DD-HH`), read by the 30m/1h/24h ranges. */
+/**
+ * toEventHour
+ * @param {*} ts
+ * @return {*}
+ */
+export function toEventHour(ts: Date): string {
+  return `${toEventDate(ts)}-${String(ts.getUTCHours()).padStart(2, "0")}`
+}
+
 /** Normalize a trigger's context into the stored fact. */
+/**
+ * buildAnalyticsEvent
+ * @param {*} input
+ * @return {*}
+ */
 export function buildAnalyticsEvent(input: AnalyticsEventInput): AnalyticsEvent {
   const ts = input.ts || new Date()
 
@@ -77,6 +95,11 @@ export function buildAnalyticsEvent(input: AnalyticsEventInput): AnalyticsEvent 
  * Bots are counted separately and kept out of the funnel so conversion
  * rates are not diluted by crawlers.
  */
+/**
+ * toFunnelCounterKeys
+ * @param {*} event
+ * @return {*}
+ */
 export function toFunnelCounterKeys(event: Pick<AnalyticsEvent, "name" | "isBot" | "botKind">): string[] {
   if (event.isBot) {
     return ["bots", `byBotKind.${event.botKind || "bot"}`]
@@ -90,6 +113,11 @@ export function toFunnelCounterKeys(event: Pick<AnalyticsEvent, "name" | "isBot"
  * Amounts stay currency-scoped on purpose — one mixed-currency total is silently
  * wrong, and a key per currency costs nothing. Keys remain a single level deep so
  * `collectBreakdown` can merge them into `metrics_range` later.
+ */
+/**
+ * toPaidCounterKeys
+ * @param {*} props
+ * @return {*}
  */
 export function toPaidCounterKeys(props: AnalyticsEventProps): Array<[string, number]> {
   const currency = String(props.currency || "unknown").toUpperCase()

@@ -231,7 +231,13 @@ export class FirestoreService {
 
       return null
     } catch (err) {
-      console.error("Failed to get user's data:", err)
+      // ponytail: a permission-denied read while nobody is signed in is the expected
+      // outcome of an app boot or a revoked session, not a failure. Logging it buried
+      // real errors and sent every signed-out user hunting for a rules bug.
+      const denied = (err as {code?: string})?.code === 'permission-denied'
+      if (!denied || this.afAuth.currentUser) {
+        console.error("Failed to get user's data:", err)
+      }
       return null
     }
   }

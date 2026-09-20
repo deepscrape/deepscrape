@@ -20,6 +20,19 @@ function isBackendRequest(req: HttpRequest<unknown>, win: Window): boolean {
   }
 }
 
+/**
+ * Every code that means "this local session is dead, sign in again". The session gates
+ * report their own cause (`home_handler.denySession`) and Firebase reports the other
+ * two; the client recovery is identical for all of them, the server logs keep the why.
+ */
+const SESSION_DENIAL_CODES = new Set([
+  'session_revoked',
+  'session_signed_out',
+  'session_mismatch',
+  'auth/id-token-revoked',
+  'id-token-revoked',
+])
+
 function isSessionRevocationError(error: unknown): error is HttpErrorResponse {
   if (!(error instanceof HttpErrorResponse) || error.status !== 401) {
     return false
@@ -29,8 +42,7 @@ function isSessionRevocationError(error: unknown): error is HttpErrorResponse {
     ? String((error.error as { code?: unknown; error?: unknown }).code || (error.error as { error?: unknown }).error || '')
     : ''
 
-  const normalized = code.toLowerCase()
-  return normalized === 'session_revoked' || normalized === 'auth/id-token-revoked' || normalized === 'id-token-revoked'
+  return SESSION_DENIAL_CODES.has(code.trim().toLowerCase())
 }
 
 export const sessionRevocationInterceptor: HttpInterceptorFn = (

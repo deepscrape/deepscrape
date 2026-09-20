@@ -717,7 +717,11 @@ export const createLoginSession = onCall(
       const resolvedGeo = await resolveSessionGeo(request, metrics.ip)
       const resolvedLocation = metrics.location && metrics.location !== "Unknown" ? metrics.location : resolvedGeo.location
       const resolvedIp = resolvedGeo.ip || metrics.ip || "0.0.0.0"
-      const deviceFingerprint = `${metrics.userAgent || ""}|${resolvedIp}`
+      // ponytail: UA only — same contract as computeDeviceFingerprint in
+      // handlers/home_handler.ts. Storing this geo-resolved IP next to a heartbeat that
+      // compares against the socket IP made the check fail for honest users (dual-stack,
+      // mobile handover, proxy hops). IP movement is alerted by detectNewLoginLocation.
+      const deviceFingerprint = metrics.userAgent || ""
       const sessionId = `${userId}-${deviceId}-${Date.now()}-${randomUUID()}`
 
       // Security: warn when this login comes from a country the user has never used.

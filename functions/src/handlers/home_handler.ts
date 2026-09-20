@@ -84,8 +84,23 @@ export const statusCheck = async (req: Request, res: Response) => {
     }
 }
 
-const computeDeviceFingerprint = (userAgent: string, ipAddress: string): string =>
-    `${userAgent}|${ipAddress}`
+// ponytail: UA only. The old value mixed the *geo-resolved* IP stored at login
+// (`resolvedGeo.ip`, ipregistry's canonical answer) with the *socket* IP seen on each
+// heartbeat (`req.ip` behind Cloudflare → Hosting → Cloud Run, and dual-stack clients
+// flip IPv4/IPv6 between requests) — two different sources for the same "identity", so
+// honest users tripped the mismatch branch permanently. IP movement is alerted
+// separately by detectNewLoginLocation at login time.
+const computeDeviceFingerprint = (userAgent: string, _ipAddress?: string): string => userAgent
+
+// Every session gate used to return `session_revoked`, so a session that was merely
+// signed out — or belonged to another account — looked revoked and the client could not
+// choose a recovery. Each gate now names its own cause; the client treats all three as
+// "this local session is dead" while the reason survives in the logs.
+const denySession = (
+    res: Response,
+    code: "session_revoked" | "session_signed_out" | "session_mismatch",
+    message: string,
+) => res.status(401).json({success: false, code, message})
 
 // Heartbeat write throttle. The heartbeat used to read the user doc from Firestore
 // purely to decide whether to write `lastSeen`; deciding from process memory skips
@@ -201,11 +216,7 @@ export const heartbeat = async (req: Request, res: Response) => {
                 )
 
                 if (cachedRevoked) {
-                    return res.status(401).json({
-                        success: false,
-                        code: "session_revoked",
-                        message: "Session has been revoked",
-                    })
+                    return denySession(res, "session_revoked", "Session has been revoked")
                 }
                 // Upstash auto-deserializes, so this is already an object, not a string —
                 // the old `typeof === "string"` guard was always false, so the cache never
@@ -324,12 +335,14 @@ export const heartbeat = async (req: Request, res: Response) => {
                                 }
                             }
                         } else {
-                            // Revoked or invalid
-                            return res.status(401).json({
-                                success: false,
-                                code: "session_revoked",
-                                message: "Session has been revoked",
-                            })
+                            // Three different causes used to collapse into one body.
+                            if (sessionData?.userId !== userId) {
+                                return denySession(res, "session_mismatch", "Session belongs to another account")
+                            }
+                            if (sessionData?.revokedAt) {
+                                return denySession(res, "session_revoked", "Session has been revoked")
+                            }
+                            return denySession(res, "session_signed_out", "Session is no longer active")
                         }
                     }
                 } catch (e) {
@@ -352,11 +365,7 @@ export const heartbeat = async (req: Request, res: Response) => {
                     }
 
                     if (revokedCache?.revokedAt) {
-                        return res.status(401).json({
-                            success: false,
-                            code: "session_revoked",
-                            message: "Session has been revoked",
-                        })
+                        return denySession(res, "session_revoked", "Session has been revoked")
                     }
 
                     const loginDocPath =
@@ -383,11 +392,8 @@ export const heartbeat = async (req: Request, res: Response) => {
                                 LEGACY_REVOCATION_TTL_SECONDS,
                                 revokedData,
                             )
-                            return res.status(401).json({
-                                success: false,
-                                code: "session_revoked",
-                                message: "Session has been revoked",
-                            })
+                            // ponytail: a legacy login_metrics row says signed out, not revoked.
+                            return denySession(res, "session_signed_out", "Session is no longer active")
                         }
                     }
                 }

@@ -121,7 +121,11 @@ export class HeartbeatService {
     }
 
     private handleHeartbeatError(error: any) {
-        if (error?.status === 401 && error?.error?.code === 'session_revoked') {
+        // ponytail: the server reports every session gate as a `session_*` code
+        // (revoked / signed_out / mismatch). The local session is dead in all three
+        // cases, so one prefix check is enough here — see the interceptor for the set.
+        const code = String(error?.error?.code || '')
+        if (error?.status === 401 && code.startsWith('session_')) {
             this.sessionRevokedSubject.next();
             return throwError(() => error);
         }

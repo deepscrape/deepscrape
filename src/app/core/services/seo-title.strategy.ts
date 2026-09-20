@@ -123,7 +123,16 @@ function orgJsonLd(): object {
     '@context': 'https://schema.org',
     '@graph': [
       { '@type': 'WebSite', '@id': `${ORIGIN}/#website`, url: `${ORIGIN}/`, name: SITE },
-      { '@type': 'Organization', '@id': `${ORIGIN}/#organization`, url: `${ORIGIN}/`, name: SITE, logo: `${ORIGIN}/favicon.ico` },
+      {
+        '@type': 'Organization',
+        '@id': `${ORIGIN}/#organization`,
+        url: `${ORIGIN}/`,
+        name: SITE,
+        // ponytail: a raster logo (Google ignores favicon.ico for the knowledge
+        // panel) plus sameAs — the entity signal that wins the brand SERP.
+        logo: `${ORIGIN}/icons/icon-512x512.png`,
+        sameAs: ['https://github.com/deepscrape/deepscrape'],
+      },
     ],
   };
 }

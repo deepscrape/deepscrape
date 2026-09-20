@@ -1,14 +1,10 @@
 import { RenderMode, ServerRoute } from '@angular/ssr';
-import type { BillingPlanTier } from './core/types';
 
-const BILLING_PLAN_TIERS: BillingPlanTier[] = ['free', 'trial', 'starter', 'pro', 'enterprise'];
-
+// ponytail: there is no top-level `billing/plans/:planId` route — the plan page is
+// `/user/billing/plans/:planId` behind authGuard. Prerendering the un-prefixed path
+// shipped five live-but-empty URLs (`/billing/plans/starter` …) that the SEO strategy
+// correctly noindexes; delete the entry rather than publish soft 404s.
 export const serverRoutes: ServerRoute[] = [
-    {
-        path: 'billing/plans/:planId',
-        renderMode: RenderMode.Prerender,
-        getPrerenderParams: async () => BILLING_PLAN_TIERS.map((planId) => ({ planId })),
-    },
     // ponytail: do NOT statically bake authenticated/private pages. They only
     // render a guest shell, and building them executes browser-only Firebase
     // Auth (TOTP/MFA) on the server, spamming auth/operation-not-supported.
@@ -18,6 +14,5 @@ export const serverRoutes: ServerRoute[] = [
     { path: 'dashboard/**', renderMode: RenderMode.Server },
     { path: 'operations/**', renderMode: RenderMode.Server },
     { path: 'user/**', renderMode: RenderMode.Server },
-    { path: 'billing/**', renderMode: RenderMode.Server },
     { path: '**', renderMode: RenderMode.Prerender },
 ];

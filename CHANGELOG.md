@@ -1,3 +1,16 @@
+# [0.9.0-beta.7](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.6...v0.9.0-beta.7) (2026-09-20)
+
+
+### Bug Fixes
+
+* **auth:** name each session denial and stop fingerprinting on IP ([da590f0](https://github.com/deepscrape/deepscrape/commit/da590f0e56c09ffdb713ce45d70762089a822ee9))
+* **prerender:** serve the billing family per-request instead of baking shells ([20dae7d](https://github.com/deepscrape/deepscrape/commit/20dae7d382b4d367a38a23320ecce1ea9783aa98))
+
+
+### Features
+
+* **seo:** add the deep-scraper and crawl4ai-alternative pages ([b9f3b8d](https://github.com/deepscrape/deepscrape/commit/b9f3b8de232ccd782defe0aabaec7ff257ab59c9))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

@@ -1,3 +1,10 @@
+# [0.9.0-beta.6](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.5...v0.9.0-beta.6) (2026-09-20)
+
+
+### Bug Fixes
+
+* **seo:** stop publishing the mis-pathed plan URLs as soft 404s ([1c3695b](https://github.com/deepscrape/deepscrape/commit/1c3695bcbc4cb75d701f5b58322381e52e1be360))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

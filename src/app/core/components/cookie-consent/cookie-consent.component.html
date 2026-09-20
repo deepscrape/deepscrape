@@ -1,0 +1,106 @@
+@if (visible()) {
+  <div
+    role="dialog"
+    aria-modal="false"
+    aria-labelledby="cookie-consent-title"
+    class="glass animate-ds-fade-up motion-reduce:animate-none fixed bottom-4 right-4 z-[60] flex w-[calc(100vw-2rem)] max-w-md flex-col rounded-2xl">
+    <div class="flex flex-col gap-2 px-5 pt-5">
+      <h2
+        id="cookie-consent-title"
+        class="font-display text-base font-bold tracking-tight text-gray-900 dark:text-white">
+        {{ 'COOKIE_CONSENT.TITLE' | translate }}
+      </h2>
+      <p class="text-[13px] leading-relaxed text-gray-600 dark:text-gray-300">
+        {{ 'COOKIE_CONSENT.BODY' | translate }}
+        <a
+          routerLink="/privacy"
+          class="font-medium text-cyan-700 underline underline-offset-2 transition-colors hover:text-cyan-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 dark:text-cyan-400 dark:hover:text-cyan-300"
+          >{{ 'COOKIE_CONSENT.POLICY' | translate }}</a
+        >
+      </p>
+    </div>
+
+    @if (expanded()) {
+      <div class="mt-4 flex flex-col gap-1 border-t border-black/5 px-5 pt-3 dark:border-white/10">
+        <div class="flex items-start justify-between gap-4 py-2">
+          <div class="min-w-0">
+            <p class="text-[13px] font-semibold text-gray-900 dark:text-white">
+              {{ 'COOKIE_CONSENT.NECESSARY_TITLE' | translate }}
+            </p>
+            <p class="mt-0.5 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
+              {{ 'COOKIE_CONSENT.NECESSARY_DESC' | translate }}
+            </p>
+          </div>
+          <span
+            class="glass-pill mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-300">
+            {{ 'COOKIE_CONSENT.ALWAYS_ON' | translate }}
+          </span>
+        </div>
+
+        @for (category of categories; track category.key) {
+          <div class="flex items-start justify-between gap-4 py-2">
+            <div class="min-w-0">
+              <p [id]="'cc-' + category.key" class="text-[13px] font-semibold text-gray-900 dark:text-white">
+                {{ category.titleKey | translate }}
+              </p>
+              <p class="mt-0.5 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
+                {{ category.descKey | translate }}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              [attr.aria-checked]="isOn(category.key)"
+              [attr.aria-labelledby]="'cc-' + category.key"
+              (click)="toggle(category.key)"
+              [class]="
+                isOn(category.key)
+                  ? 'border-cyan-500 bg-cyan-500'
+                  : 'border-gray-300 bg-gray-300 dark:border-white/20 dark:bg-white/15'
+              "
+              class="relative mt-0.5 inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600">
+              <span
+                class="block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform duration-200 dark:ring-white/20"
+                [class]="isOn(category.key) ? 'translate-x-[1.15rem]' : 'translate-x-[0.15rem]'"></span>
+            </button>
+          </div>
+        }
+      </div>
+    }
+
+    <div class="flex flex-col gap-2 px-5 pb-5 pt-4">
+      <button
+        type="button"
+        (click)="acceptAll()"
+        class="w-full rounded-full bg-cyan-700 px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-cyan-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600">
+        {{ 'COOKIE_CONSENT.ACCEPT_ALL' | translate }}
+      </button>
+
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          (click)="necessaryOnly()"
+          class="flex-1 whitespace-nowrap rounded-full border border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 dark:border-white/15 dark:text-gray-300 dark:hover:bg-white/10">
+          {{ 'COOKIE_CONSENT.NECESSARY_ONLY' | translate }}
+        </button>
+        @if (expanded()) {
+          <button
+            type="button"
+            (click)="save()"
+            class="flex-1 whitespace-nowrap rounded-full border border-cyan-700/40 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-700 transition-colors hover:bg-cyan-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 dark:border-cyan-400/30 dark:text-cyan-300">
+            {{ 'COOKIE_CONSENT.SAVE' | translate }}
+          </button>
+        }
+      </div>
+
+      <button
+        type="button"
+        (click)="expanded.set(!expanded())"
+        [attr.aria-expanded]="expanded()"
+        class="self-start text-xs font-medium text-gray-600 underline underline-offset-2 transition-colors hover:text-gray-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 dark:text-gray-400 dark:hover:text-gray-200">
+        {{ (expanded() ? 'COOKIE_CONSENT.HIDE' : 'COOKIE_CONSENT.MANAGE') | translate }}
+      </button>
+    </div>
+  </div>
+}
+

@@ -1,0 +1,127 @@
+<div class="relative">
+  <!-- Trigger: circular icon button with hover surface, press scale and focus ring -->
+  <button
+    type="button"
+    appRipple
+    ripplColor="light"
+    class="group relative flex items-center justify-center rounded-full p-2 text-gray5 transition-all duration-200 hover:bg-gray2/60 hover:text-gray7 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/60 active:scale-95 dark:text-gray3 dark:hover:bg-white/10 dark:hover:text-white"
+    aria-label="Notifications"
+    aria-haspopup="true"
+    [attr.aria-expanded]="open()"
+    (click)="toggle()">
+    <mat-icon
+      class="!h-[22px] !w-[22px] !text-[22px] leading-none transition-transform duration-300"
+      [class]="center.unread() ? 'motion-preset-wiggle' : 'group-hover:scale-110'">notifications</mat-icon>
+    @if (center.unread(); as count) {
+      <span
+        class="motion-preset-pop absolute right-0.5 top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white dark:ring-gray7">
+        {{ count > 99 ? '99+' : (count > 9 ? '9+' : count) }}
+      </span>
+    }
+  </button>
+
+  @if (open()) {
+    <!-- Click-away layer: cheaper and more reliable than a document listener here. -->
+    <div class="fixed inset-0 z-40" (click)="close()" aria-hidden="true"></div>
+
+    <div
+      role="dialog"
+      aria-label="Notifications"
+      class="motion-preset-slide-down absolute right-0 z-50 mt-3 w-[400px] max-w-[calc(100vw-1.5rem)] origin-top-right overflow-hidden rounded-xl border border-gray2/70 bg-white shadow-[0_16px_48px_-12px_rgba(18,24,27,0.35)] dark:border-white/10 dark:bg-gray6">
+      <header class="flex items-center justify-between px-4 pb-2 pt-4">
+        <h2 class="text-base font-semibold text-gray7 dark:text-white">Notifications</h2>
+        <div class="flex items-center gap-1">
+          @if (center.items().length) {
+            <button
+              type="button"
+              class="rounded-full px-2.5 py-1 text-xs font-medium text-gray5 transition-colors hover:bg-gray2/60 hover:text-gray7 dark:text-gray3 dark:hover:bg-white/10 dark:hover:text-white"
+              (click)="center.clear()">
+              Clear
+            </button>
+          }
+          <a
+            routerLink="/settings/general"
+            (click)="close()"
+            class="flex items-center justify-center rounded-full p-1.5 text-gray5 transition-colors hover:bg-gray2/60 hover:text-gray7 dark:text-gray3 dark:hover:bg-white/10 dark:hover:text-white"
+            aria-label="Notification settings">
+            <mat-icon class="!h-[18px] !w-[18px] !text-[18px] leading-none">settings</mat-icon>
+          </a>
+        </div>
+      </header>
+
+      <!-- All / Unread tabs -->
+      <div role="tablist" class="flex gap-1.5 px-4 pb-3">
+        @for (tab of tabs; track tab) {
+          <button
+            type="button"
+            role="tab"
+            [attr.aria-selected]="filter() === tab"
+            class="rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors duration-200"
+            [class]="filter() === tab
+              ? 'bg-gray7 text-white dark:bg-white dark:text-gray7'
+              : 'bg-gray2/50 text-gray5 hover:bg-gray2/80 dark:bg-white/10 dark:text-gray3 dark:hover:bg-white/20'"
+            (click)="setFilter(tab)">
+            {{ tab }}
+          </button>
+        }
+      </div>
+
+      @if (!visible().length) {
+        <p class="px-4 py-10 text-center text-sm text-gray4 dark:text-gray3">
+          @if (filter() === 'unread') {
+            You're all caught up.
+          } @else {
+            Nothing yet. Crawl results and security notices land here.
+          }
+        </p>
+      } @else {
+        <ul class="max-h-[420px] divide-y divide-gray2/60 overflow-y-auto dark:divide-white/10">
+          @for (item of visible(); track item.id) {
+            <li class="motion-preset-fade">
+              <a
+                [routerLink]="item.link || []"
+                (click)="close()"
+                class="flex gap-3 px-4 py-3 transition-colors duration-150 hover:bg-gray1 dark:hover:bg-white/5"
+                [class]="item.read ? '' : 'bg-rose-50/60 dark:bg-rose-500/[0.07]'">
+                <!-- Rounded avatar-style icon, like a channel avatar -->
+                <span
+                  class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                  [class]="kindMeta[item.kind].circle">
+                  <mat-icon class="!h-[18px] !w-[18px] !text-[18px] leading-none" [class]="kindMeta[item.kind].ring">
+                    {{ kindMeta[item.kind].icon }}
+                  </mat-icon>
+                </span>
+
+                <span class="min-w-0 flex-1">
+                  <span class="flex items-start gap-2">
+                    <span
+                      class="min-w-0 flex-1 text-[13px] leading-5 text-gray7 dark:text-gray1"
+                      [class]="item.read ? 'font-normal' : 'font-semibold'">
+                      {{ item.title }}
+                    </span>
+                    @if (!item.read) {
+                      <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-rose-600" aria-label="Unread"></span>
+                    }
+                  </span>
+                  @if (item.body) {
+                    <span class="mt-0.5 line-clamp-2 block text-xs leading-5 text-gray4 dark:text-gray3">{{ item.body }}</span>
+                  }
+                  <span class="mt-1 block text-[11px] text-gray4/80 dark:text-gray3/70">{{ center.ago(item.at) }}</span>
+                </span>
+              </a>
+            </li>
+          }
+        </ul>
+
+        <footer class="border-t border-gray2/60 px-4 py-2.5 text-center dark:border-white/10">
+          <a
+            routerLink="/settings/security"
+            (click)="close()"
+            class="text-xs font-medium text-rose-700 hover:underline dark:text-rose-400">
+            See security settings
+          </a>
+        </footer>
+      }
+    </div>
+  }
+</div>

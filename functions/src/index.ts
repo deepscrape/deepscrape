@@ -5,12 +5,15 @@
 /*
 https://medium.com/@unravel-technologies/angular-loading-performance-deploying-ssr-ssg-to-firebase-2a48d4cc7fc5
 */
-import * as app from "./server"
 import * as auth from "./app/auth"
 import * as stripe from "./app/stripe"
 import * as analyticsRealtime from "./gfunctions/analytics-realtime"
+import * as analyticsHealth from "./gfunctions/analytics-health"
+import * as billingMetrics from "./gfunctions/billing-metrics"
 import * as sessions from "./gfunctions/sessions"
 import * as webauthn from "./gfunctions/webauthn"
+import * as notifications from "./gfunctions/notifications"
+import * as alertFanout from "./gfunctions/alert-fanout"
 // import path, { join } from "node:path"
 // import { fileURLToPath } from "node:url"
 
@@ -19,10 +22,6 @@ import * as webauthn from "./gfunctions/webauthn"
 // const __filename = fileURLToPath(import.meta.url)
 // const __dirname = dirname(__filename)
 
-
-// Export the Firebase deepscrape SPA app
-// https://firebase.google.com/docs/functions/networking
-export const deepscrape = app.deepscrape
 
 /* Auth - Functions */
 // User Management - Functions
@@ -60,6 +59,7 @@ export const resumeSubscriptionCancellation = stripe.resumeSubscriptionCancellat
 export const verifyCheckoutSession = stripe.verifyCheckoutSession
 export const getBillingUsage = stripe.getBillingUsage
 export const stripeWebhook = stripe.stripeWebhook
+export const stripeWebhookTest = stripe.stripeWebhookTest
 export const grantPromotionalCredits = stripe.grantPromotionalCredits
 export const getAdminBillingObservability = stripe.getAdminBillingObservability
 export const acknowledgeBillingIncident = stripe.acknowledgeBillingIncident
@@ -67,6 +67,7 @@ export const requestStripeEventRetry = stripe.requestStripeEventRetry
 export const expireTrialsToFree = stripe.expireTrialsToFree
 export const expireStaleCredits = stripe.expireStaleCredits
 export const downgradePastDueAccounts = stripe.downgradePastDueAccounts
+export const checkStripeCatalogHealth = stripe.checkStripeCatalogHealth
 
 
 // API SECRET KEYS - Functions
@@ -103,6 +104,25 @@ export const computeDailyTrends = analyticsRealtime.computeDailyTrends
 export const computeRangeMetrics = analyticsRealtime.computeRangeMetrics
 export const cleanupOldMetrics = analyticsRealtime.cleanupOldAnalytics
 export const computeActiveUsersNow = analyticsRealtime.computeActiveUsersNow
+
+// BILLING METRICS - Scheduled (nightly MRR / plan mix / trials / past due)
+export const computeBillingMetricsDaily = billingMetrics.computeBillingMetricsDaily
+
+// ANALYTICS PIPELINE HEALTH - Scheduled (raises an incident when guest creation stalls)
+export const checkAnalyticsPipelineHealth = analyticsHealth.checkAnalyticsPipelineHealth
+
+// PUSH NOTIFICATIONS - Functions (Callable)
+export const registerNotificationToken = notifications.registerNotificationToken
+export const unregisterNotificationToken = notifications.unregisterNotificationToken
+export const getMyNotificationTokens = notifications.getMyNotificationTokens
+export const sendTestNotification = notifications.sendTestNotification
+
+// SECURITY ALERTS - Firestore trigger (Resend email + web push fan-out)
+// Must be exported from the entry point above, not just the gfunctions barrel:
+// the CLI builds its manifest from THIS module, so an unexported trigger is
+// silently "deleted" on the next deploy and every security alert stops being
+// delivered. See domain/notifications/alert-presentation.ts.
+export const onSecurityAlertCreated = alertFanout.onSecurityAlertCreated
 
 /* Sessions — Presence */
 export const recordGuestPresence = sessions.recordGuestPresence

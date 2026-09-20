@@ -1,9 +1,16 @@
 /* eslint-disable indent */
-/* eslint-disable require-jsdoc */
 /* eslint-disable object-curly-spacing */
 /* eslint-disable linebreak-style */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import * as admin from "firebase-admin"
+// Bun ESM does not expose the legacy namespaced CJS surface through `import *`,
+// so `admin.apps` / `admin.initializeApp` / `admin.firestore()` came back
+// undefined and `admin?.apps.length` threw at module load.
+// The CJS exports object is reachable as `.default`; under tsc
+// /CommonJS the namespace *is* the exports,
+// so this resolves to the same object in both runtimes.
+const adminNs = (admin as unknown as { default?: typeof admin })
+    .default ?? admin
 import Stripe from "stripe"
 import { defineSecret, defineJsonSecret } from "firebase-functions/params"
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager"
@@ -25,6 +32,14 @@ export const serviceAccountKeyParam =
     defineJsonSecret("FIRE_SERVICE_ACCOUNT_KEY")
 export const stripeSecrets = [stripeSecretParam, stripeWebhookSecretParam,
     functionsEnvJson]
+// Sandbox twin of the pair above, bound to the test-mode webhook function.
+// A secret name holds one value per project, so the sandbox cannot share the
+// live names: a sandbox delivery verified with the live secret is a 400.
+export const stripeTestSecretParam = defineSecret("STRIPE_SECRET_KEY_TEST")
+export const stripeTestWebhookSecretParam =
+    defineSecret("STRIPE_WEBHOOK_SECRET_TEST")
+export const stripeTestSecrets = [stripeTestSecretParam,
+    stripeTestWebhookSecretParam, functionsEnvJson]
 const configuredDbName = (env.DB_NAME || "").trim()
 const fallbackDbName = env.IS_PRODUCTION ? "easyscrape" : "(default)"
 export const dbName = configuredDbName || fallbackDbName
@@ -38,9 +53,21 @@ if (!configuredDbName) {
 }
 
 const resolveLocalServiceAccount = (): admin.ServiceAccount | null => {
+    // `__dirname` is undefined under Bun ESM, and path.resolve(undefined, ...)
+    // threw before anything could run — taking down every module that imports
+    // this file (all of gfunctions/* and infrastructure/*). There is no local
+    // serviceAccount.json on Cloud Run either, so skip the lookup instead of
+    // guessing a directory. Inert for the deployed function: tsc emits CommonJS
+    // where `__dirname` is always defined.
+    const moduleDir = typeof __dirname === "string" ? __dirname : ""
+
+    if (!moduleDir) {
+        return null
+    }
+
     const candidatePaths = [
-        path.resolve(__dirname, "../serviceAccount.json"),
-        path.resolve(__dirname, "../../src/serviceAccount.json"),
+        path.resolve(moduleDir, "../serviceAccount.json"),
+        path.resolve(moduleDir, "../../src/serviceAccount.json"),
     ]
 
     for (const candidatePath of candidatePaths) {
@@ -103,23 +130,23 @@ const selectedServiceAccount = productionServiceAccount || localServiceAccount
 
 // Only initialize Firebase if it hasn't been initialized already
 // This prevents errors when multiple modules load config.ts during tests
-const wasAlreadyInitialized = admin?.apps.length > 0
+const wasAlreadyInitialized = adminNs?.apps.length > 0
 if (!wasAlreadyInitialized) {
-    admin.initializeApp(
+    adminNs.initializeApp(
         selectedServiceAccount ?
-            {credential: admin.credential.cert(selectedServiceAccount)} :
+            {credential: adminNs.credential.cert(selectedServiceAccount)} :
             undefined
     )
 }
 
-export const db = admin.firestore()
+export const db = adminNs.firestore()
 // Only call settings() if we just initialized Firebase for the first time
 // Otherwise, Firestore is already initialized and this call will fail
 if (!wasAlreadyInitialized) {
     db.settings({ databaseId: dbName })
 }
 
-export const auth = admin.auth()
+export const auth = adminNs.auth()
 
 const resolveStripeSecret = (secret: string | undefined) => {
     const candidate = typeof secret === "string" ? secret.trim() : ""
@@ -171,26 +198,55 @@ export const getStripe = (secret: string | undefined) => {
 }
 
 // Helper: Generate a secure random API key
+/**
+ * generateApiKey
+ * @return {*}
+ */
 export function generateApiKey() {
     return crypto.randomBytes(32).toString("hex")
 }
 
+/**
+ * isEmulatorSecretPath
+ * @param {*} secretPath
+ * @return {*}
+ */
 function isEmulatorSecretPath(secretPath: string): boolean {
     return secretPath.startsWith(EMULATOR_SECRET_PREFIX)
 }
 
+/**
+ * toEmulatorSecretPath
+ * @param {*} secretId
+ * @return {*}
+ */
 function toEmulatorSecretPath(secretId: string): string {
     return `${EMULATOR_SECRET_PREFIX}${secretId}`
 }
 
+/**
+ * fromEmulatorSecretPath
+ * @param {*} secretPath
+ * @return {*}
+ */
 function fromEmulatorSecretPath(secretPath: string): string {
     return secretPath.slice(EMULATOR_SECRET_PREFIX.length)
 }
 
+/**
+ * getEmulatorSecretDoc
+ * @param {*} secretId
+ * @return {*}
+ */
 function getEmulatorSecretDoc(secretId: string) {
     return db.collection(EMULATOR_SECRETS_COLLECTION).doc(secretId)
 }
 
+/**
+ * saveEmulatorSecret
+ * @param {*} secretId
+ * @param {*} value
+ */
 async function saveEmulatorSecret(
     secretId: string,
     value: string
@@ -203,6 +259,10 @@ async function saveEmulatorSecret(
     return toEmulatorSecretPath(secretId)
 }
 
+/**
+ * readEmulatorSecret
+ * @param {*} secretPath
+ */
 async function readEmulatorSecret(secretPath: string): Promise<string> {
     const secretId = fromEmulatorSecretPath(secretPath)
     const snapshot = await getEmulatorSecretDoc(secretId).get()
@@ -210,6 +270,10 @@ async function readEmulatorSecret(secretPath: string): Promise<string> {
     return typeof value === "string" ? value : ""
 }
 
+/**
+ * deleteEmulatorSecret
+ * @param {*} secretPath
+ */
 async function deleteEmulatorSecret(
     secretPath: string
 ): Promise<SecretPurgeResult> {
@@ -225,6 +289,11 @@ async function deleteEmulatorSecret(
 
 
 // Helper: Store API key in Cloud Secret Manager
+/**
+ * saveToSecretManager
+ * @param {*} secretId
+ * @param {*} apiKey
+ */
 export async function saveToSecretManager(
     secretId: string | null | undefined,
     apiKey: string
@@ -274,6 +343,10 @@ export async function saveToSecretManager(
     return secret.name
 }
 
+/**
+ * getSecretFromManager
+ * @param {*} secretPath
+ */
 export async function getSecretFromManager(secretPath: string) {
     if (isEmulatorSecretPath(secretPath)) {
         return readEmulatorSecret(secretPath)
@@ -293,6 +366,10 @@ export type SecretPurgeResult = {
     secretDeleted: boolean
 }
 
+/**
+ * purgeSecretAndAllRevisions
+ * @param {*} secretPath
+ */
 export async function purgeSecretAndAllRevisions(secretPath: string):
     Promise<SecretPurgeResult> {
     if (isEmulatorSecretPath(secretPath)) {

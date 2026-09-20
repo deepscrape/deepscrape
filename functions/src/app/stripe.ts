@@ -1,5 +1,4 @@
 /* eslint-disable object-curly-spacing */
-/* eslint-disable require-jsdoc */
 /* eslint-disable max-len */
 /* eslint-disable indent */
 // Takes a Firebase user and creates a Stripe customer account
@@ -9,6 +8,7 @@ import {
   dbName,
   auth as adminAuth,
   stripeSecrets,
+  stripeTestSecrets,
   getStripe,
   getStripeWebhookSecret,
 } from "./config"
@@ -16,11 +16,18 @@ import { grantBillingCredits } from "./billing-credits"
 import type { UserInfo } from "firebase-admin/auth"
 import { FieldValue } from "firebase-admin/firestore"
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
-import { HttpsError, onCall as onCallv2, onRequest } from "firebase-functions/v2/https"
+import { HttpsError, onRequest, type HttpsFunction, type Request } from "firebase-functions/v2/https"
+import type { SecretParam } from "firebase-functions/params"
+// ponytail: all ~25 billing callables now go through the per-UID budget. Aliased so
+// not one of the definitions below changes. The Express limiters never see an
+// onCall, so createPaymentIntent/createCheckoutSession were unbounded per account.
+import { guardedOnCall as onCallv2 } from "../infrastructure/callable-limiter"
 import { onSchedule } from "firebase-functions/v2/scheduler"
-import { Users, Guest, ANALYTICS_EVENTS, buildAnalyticsEvent, canPurchaseStandaloneCredits, getPurchasedCreditsAvailable, toPaidCounterKeys } from "../domain"
+import { Users, Guest, ANALYTICS_EVENTS, buildAnalyticsEvent, canPurchaseStandaloneCredits, getPurchasedCreditsAvailable, toEventHour, toPaidCounterKeys } from "../domain"
 import Stripe from "stripe"
 import { env } from "../config/env"
+import { findUnusableCatalogPrices, lookupKeyForCredits, lookupKeyForPlan, resolvePriceId } from "./stripe-price-resolution"
+import { lookupGeoByIp } from "../gfunctions/analytics"
 
 type BillingPlanTier = "free" | "trial" | "starter" | "pro" | "enterprise"
 type BillingInterval = "payAsYouGo" | "monthly" | "quarterly" | "annually"
@@ -190,7 +197,11 @@ const addCreditsLedgerEntry = async (args: {
   })
 }
 
-const getInvoiceRecurringPriceId = (invoice: Stripe.Invoice): string | null => {
+// Both identifiers for an invoice's recurring price. `lookupKey` is the portable one.
+export type InvoicePriceRef = { id: string | null, lookupKey: string | null }
+
+// Exported for the spec: this is the mapping production silently failed to match.
+export const getInvoiceRecurringPrice = (invoice: Stripe.Invoice): InvoicePriceRef | null => {
   const lines = invoice.lines?.data || []
 
   for (const line of lines) {
@@ -203,18 +214,17 @@ const getInvoiceRecurringPriceId = (invoice: Stripe.Invoice): string | null => {
       }
     }
 
-    const directPriceId = lineWithPrice.price?.id
-    if (directPriceId) {
-      return directPriceId
+    if (lineWithPrice.price?.id) {
+      return { id: lineWithPrice.price.id, lookupKey: lineWithPrice.price.lookup_key || null }
     }
 
     const pricingPrice = lineWithPrice.pricing?.price_details?.price
     if (typeof pricingPrice === "string") {
-      return pricingPrice
+      return { id: pricingPrice, lookupKey: null }
     }
 
     if (pricingPrice && typeof pricingPrice === "object" && "id" in pricingPrice) {
-      return pricingPrice.id
+      return { id: pricingPrice.id, lookupKey: pricingPrice.lookup_key || null }
     }
   }
 
@@ -415,6 +425,8 @@ const recordBillingIncident = async (args: {
   eventId?: string | null
   eventType?: string | null
   uid?: string | null
+  /** Stable identifier for recurring checks, so they can find their own open incident. */
+  source?: string
   message: string
   metadata?: Record<string, unknown>
 }): Promise<void> => {
@@ -424,6 +436,7 @@ const recordBillingIncident = async (args: {
     eventId: args.eventId || null,
     eventType: args.eventType || null,
     uid: args.uid || null,
+    source: args.source || null,
     message: args.message,
     metadata: args.metadata || {},
     createdAt: FieldValue.serverTimestamp(),
@@ -465,7 +478,12 @@ const emitUsageAlert = async (args: {
   }, { merge: true })
 }
 
-const billingPlanCatalog: BillingPlanCatalog[] = [
+/**
+ * List prices per plan and interval, in EUR minor units. Exported so the
+ * analytics snapshot can price subscriptions from the same numbers the checkout
+ * charges -- a second copy would silently drift on the next price change.
+ */
+export const billingPlanCatalog: BillingPlanCatalog[] = [
   {
     id: "free",
     label: "Free",
@@ -533,6 +551,38 @@ const creditPackCatalog: CreditPackCatalog[] = [
   { id: "credits_500", label: "500 credits", credits: 500, amount: 7900, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_500 || "price_1T7ZbeFVGcR0rD8ffuQZ0XgM" },
   { id: "credits_2000", label: "2000 credits", credits: 2000, amount: 24900, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_2000 || "price_1T7ZbeFVGcR0rD8fX73Nv2Cs" },
 ]
+
+// Every price above carries a hardcoded TEST-mode price id (account
+// acct_1Qag9KFVGcR0rD8f, `livemode: false`, verified against the Stripe API on
+// 2026-09-20) when its env var is unset. Stripe ids do not cross modes, so these ids are
+// now only a fallback: `createCheckoutSession` resolves the price by lookup_key first
+// (see ./stripe-price-resolution), which is mode- and environment-independent. The id is
+// what the resolver returns when the key is missing or Stripe is unreachable, so a
+// mistake degrades to the previous behaviour instead of breaking checkout.
+// This comment used to claim these were live ids, which inverted the risk and hid the
+// fact that production had no catalog at all.
+// The ids stay - removing them would turn a missing variable into a broken checkout in
+// dev too - but the substitution must never be silent.
+// This names exactly which variables are missing, once per cold start.
+const PRICE_ENV_KEYS: Array<keyof typeof env> = [
+  "STRIPE_PRICE_STARTER_PAYG", "STRIPE_PRICE_STARTER_MONTHLY",
+  "STRIPE_PRICE_STARTER_QUARTERLY", "STRIPE_PRICE_STARTER_ANNUAL",
+  "STRIPE_PRICE_PRO_PAYG", "STRIPE_PRICE_PRO_MONTHLY",
+  "STRIPE_PRICE_PRO_QUARTERLY", "STRIPE_PRICE_PRO_ANNUAL",
+  "STRIPE_PRICE_ENTERPRISE_MONTHLY", "STRIPE_PRICE_ENTERPRISE_QUARTERLY",
+  "STRIPE_PRICE_ENTERPRISE_ANNUAL", "STRIPE_PRICE_CREDITS_100",
+  "STRIPE_PRICE_CREDITS_500", "STRIPE_PRICE_CREDITS_2000",
+]
+
+const missingPriceEnv = PRICE_ENV_KEYS.filter((key) => !env[key])
+if (missingPriceEnv.length) {
+  console.warn(
+    `[billing] price ids falling back to hardcoded test-mode ids: ${missingPriceEnv.join(", ")}. ` +
+    "Checkout resolves the price by lookup_key first, so this only breaks if the account " +
+    "also lacks those keys - which is exactly what production did. " +
+    "Run validateStripeCatalog against the deployed environment.",
+  )
+}
 
 const getFeaturesFromPlan = (plan: BillingPlanTier): Record<string, boolean> => {
   const allFeatures = [
@@ -662,11 +712,15 @@ const inferPayAsYouGoPlanFromPayment = (args: {
   return matches[0].id
 }
 
-const inferRecurringPlanFromPriceId = (priceId: string | null | undefined): {
+// Exported for the spec: the lookup_key-first match is what production got wrong.
+export const inferRecurringPlanFromPriceId = (
+  priceId: string | null | undefined,
+  lookupKey?: string | null,
+): {
   plan: BillingPlanTier
   interval: BillingInterval
 } | null => {
-  if (!priceId) {
+  if (!priceId && !lookupKey) {
     return null
   }
 
@@ -677,7 +731,10 @@ const inferRecurringPlanFromPriceId = (priceId: string | null | undefined): {
 
     const recurringIntervals: BillingInterval[] = ["monthly", "quarterly", "annually"]
     for (const interval of recurringIntervals) {
-      if (plan.prices[interval]?.stripePriceId === priceId) {
+      const catalogPrice = plan.prices[interval]
+      // lookup_key first: it is the only identifier that survives the test/live split.
+      const matchesLookupKey = Boolean(lookupKey) && lookupKeyForPlan(plan.id, interval) === lookupKey
+      if (matchesLookupKey || catalogPrice?.stripePriceId === priceId) {
         return {
           plan: plan.id,
           interval,
@@ -685,6 +742,12 @@ const inferRecurringPlanFromPriceId = (priceId: string | null | undefined): {
       }
     }
   }
+
+  console.error(
+    `[billing] price ${priceId || "(none)"} / lookup_key ${lookupKey || "(none)"} matched no ` +
+    "catalog price, so plan inference failed. Usually the account is missing the catalog, " +
+    "or the lookup_key convention drifted.",
+  )
 
   return null
 }
@@ -920,13 +983,16 @@ const recordPaidFact = async (
     },
   })
 
+  const paidCounters = Object.fromEntries(
+    toPaidCounterKeys(fact.props).map(([key, delta]) => [key, FieldValue.increment(delta)]),
+  )
   const batch = db.batch()
   batch.create(db.collection(ANALYTICS_EVENTS).doc(`paid_${payment.id}`), fact)
-  batch.set(
-    db.doc(`metrics_daily/${fact.date}`),
-    Object.fromEntries(toPaidCounterKeys(fact.props).map(([key, delta]) => [key, FieldValue.increment(delta)])),
-    { merge: true },
-  )
+  batch.set(db.doc(`metrics_daily/${fact.date}`), paidCounters, { merge: true })
+  // Same counters into the hour bucket so the revenue panels also answer for
+  // 30m/1h/24h. `set`+merge, not `create`, so the ALREADY_EXISTS abort below still
+  // guarantees the *whole* batch is all-or-nothing.
+  batch.set(db.doc(`metrics_hourly/${toEventHour(fact.ts)}`), paidCounters, { merge: true })
 
   try {
     await batch.commit()
@@ -948,7 +1014,15 @@ type StripeCustomerInput = {
   phoneNumber?: string | null
 }
 
+/**
+ * createCustomer
+ * @param {*} firebaseUser
+ */
 export async function createCustomer(firebaseUser: StripeCustomerInput): Promise<Stripe.Response<Stripe.Customer>> {
+  /**
+   * callback
+   * @param {*} s
+   */
   const secret = stripeSecrets.find((s) => s.name === "STRIPE_SECRET_KEY")?.value()
   const stripe = getStripe(secret)
   const providerData = firebaseUser?.providerData as UserInfo[] | undefined
@@ -1069,19 +1143,27 @@ export const createPaymentIntent = onCallv2(
     // Where the cart id is the cart id of last paymentIntent
     // plan chosen plan from cache memmory
     let clientSecret = ""
-    let { amount, currency, cartId } = req.data
+    let { amount, cartId } = req.data
+    // The caller does not get to name the price. `currency` was the dangerous half: a
+    // zero-decimal currency (JPY, KRW) redefines what an amount is worth, so the currency
+    // comes from the catalog instead. The amount stays caller-chosen because a credit top-up
+    // is deliberately pay-what-you-want, but it is now bounded by the same credits the
+    // catalog actually sells.
+    const currency = customCreditsCatalog.currency
+    const amountCents = Number(amount)
+    const minAmountCents = customCreditsCatalog.minimumCredits * customCreditsCatalog.unitAmount
+    const maxAmountCents = customCreditsCatalog.maximumCredits * customCreditsCatalog.unitAmount
     try {
       const userId = req?.auth?.uid
       if (!userId) {
         throw new HttpsError("unauthenticated", "User must be authenticated")
       }
 
-      if (!Number.isFinite(Number(amount)) || Number(amount) < 50) {
-        throw new HttpsError("invalid-argument", "Invalid payment amount")
-      }
-
-      if (!currency || typeof currency !== "string") {
-        throw new HttpsError("invalid-argument", "Invalid currency")
+      if (!Number.isFinite(amountCents) || amountCents < minAmountCents || amountCents > maxAmountCents) {
+        throw new HttpsError(
+          "invalid-argument",
+          `Amount must be between ${minAmountCents} and ${maxAmountCents} ${currency}`,
+        )
       }
 
       console.log(`userId : ${userId}`)
@@ -1113,7 +1195,7 @@ export const createPaymentIntent = onCallv2(
           currency,
           customer: user?.stripeId,
           payment_method_types: ["card"],
-          amount: Number(amount),
+          amount: amountCents,
         })
         // FIXME: need to specified the cartId or create new cart if it doesn't exist
         const newCart = await db.collection(`users/${userId}/paymentcart`).add({
@@ -1365,6 +1447,7 @@ export const validateStripeCatalog = onCallv2(
         (Object.keys(plan.prices) as BillingInterval[])
           .map((interval) => ({
             id: plan.prices[interval].stripePriceId,
+            lookupKey: lookupKeyForPlan(plan.id, interval),
             type: "plan" as const,
             ref: `${plan.id}:${interval}`,
             expectedAmount: plan.prices[interval].amount,
@@ -1377,6 +1460,7 @@ export const validateStripeCatalog = onCallv2(
       ...creditPackCatalog
         .map((pack) => ({
           id: pack.stripePriceId,
+          lookupKey: lookupKeyForCredits(pack.credits),
           type: "credit" as const,
           ref: pack.id,
           expectedAmount: pack.amount,
@@ -1387,6 +1471,7 @@ export const validateStripeCatalog = onCallv2(
         .filter((item) => Boolean(item.id)),
     ] as Array<{
       id?: string
+      lookupKey: string
       type: "plan" | "credit"
       ref: string
       expectedAmount: number
@@ -1404,13 +1489,35 @@ export const validateStripeCatalog = onCallv2(
       }
 
       try {
-        const price = await stripe.prices.retrieve(priceRef.id, {
-          expand: ["product"],
+        // Same resolution order as checkout: lookup_key first, id as the fallback. Validating
+        // only the hardcoded ids reported every price as broken on a deployment that serves a
+        // catalog built from lookup_keys, and said nothing at all when the key was missing.
+        const byLookupKey = await stripe.prices.list({
+          lookup_keys: [priceRef.lookupKey],
+          limit: 1,
+          expand: ["data.product"],
         })
+
+        let price = byLookupKey.data[0]
+
+        if (!price) {
+          price = await stripe.prices.retrieve(priceRef.id, { expand: ["product"] })
+          issues.push({
+            id: price.id,
+            type: priceRef.type,
+            ref: priceRef.ref,
+            severity: "warning",
+            message: `Resolved by price id fallback; lookup_key ${priceRef.lookupKey} is not in this account`,
+          })
+        }
+
+        // Past this point the issues name the price that actually answered, not the
+        // configured fallback id, so the report points at a real object in this account.
+        const priceId = price.id
 
         if (price.currency !== priceRef.expectedCurrency) {
           issues.push({
-            id: priceRef.id,
+            id: priceId,
             type: priceRef.type,
             ref: priceRef.ref,
             severity: "error",
@@ -1420,7 +1527,7 @@ export const validateStripeCatalog = onCallv2(
 
         if ((price.unit_amount ?? null) !== priceRef.expectedAmount) {
           issues.push({
-            id: priceRef.id,
+            id: priceId,
             type: priceRef.type,
             ref: priceRef.ref,
             severity: "error",
@@ -1430,7 +1537,7 @@ export const validateStripeCatalog = onCallv2(
 
         if (!price.active) {
           issues.push({
-            id: priceRef.id,
+            id: priceId,
             type: priceRef.type,
             ref: priceRef.ref,
             severity: "warning",
@@ -1441,7 +1548,7 @@ export const validateStripeCatalog = onCallv2(
         const recurring = price.recurring
         if (priceRef.expectedRecurring && !recurring) {
           issues.push({
-            id: priceRef.id,
+            id: priceId,
             type: priceRef.type,
             ref: priceRef.ref,
             severity: "error",
@@ -1451,7 +1558,7 @@ export const validateStripeCatalog = onCallv2(
 
         if (!priceRef.expectedRecurring && recurring) {
           issues.push({
-            id: priceRef.id,
+            id: priceId,
             type: priceRef.type,
             ref: priceRef.ref,
             severity: "error",
@@ -1463,7 +1570,7 @@ export const validateStripeCatalog = onCallv2(
           const actualMonths = getIntervalMonths(recurring.interval, recurring.interval_count)
           if (actualMonths !== priceRef.expectedMonths) {
             issues.push({
-              id: priceRef.id,
+              id: priceId,
               type: priceRef.type,
               ref: priceRef.ref,
               severity: "warning",
@@ -1479,7 +1586,7 @@ export const validateStripeCatalog = onCallv2(
           products.add(product.id)
           if ("active" in product && !product.active) {
             issues.push({
-              id: priceRef.id,
+              id: priceId,
               type: priceRef.type,
               ref: priceRef.ref,
               severity: "warning",
@@ -1500,8 +1607,27 @@ export const validateStripeCatalog = onCallv2(
       }
     }))
 
+    // Which account answered matters: the hardcoded fallback ids belong to the sandbox
+    // account, so a live run reporting them as missing is expected, not a config error.
+    // Derive the mode from the key prefix; the key itself is never returned or logged.
+    let keyMode = "unknown"
+    if (secret?.includes("_live_")) {
+      keyMode = "live"
+    } else if (secret?.includes("_test_")) {
+      keyMode = "test"
+    }
+
+    let accountId: string | null = null
+    try {
+      const account = await stripe.accounts.retrieve()
+      accountId = account.id
+    } catch {
+      // Hint only - never fail validation because the account could not be read.
+    }
+
     return {
-      accountHint: "Sandbox account expected: acct_1Qag9KFVGcR0rD8f",
+      mode: keyMode,
+      accountHint: `${keyMode} key on account: ${accountId ?? "unknown"}`,
       checkedPrices: priceRefs.length,
       resolvedPrices: validCount,
       distinctProducts: products.size,
@@ -1620,8 +1746,8 @@ export const getMyEntitlements = onCallv2(
           .filter((subscription) => ["active", "trialing", "past_due", "unpaid"].includes(subscription.status))
           .sort((a, b) => b.created - a.created)[0]
 
-        const recurringPriceId = latestActiveRecurring?.items?.data?.[0]?.price?.id
-        const recurringMatch = inferRecurringPlanFromPriceId(recurringPriceId)
+        const recurringPrice = latestActiveRecurring?.items?.data?.[0]?.price
+        const recurringMatch = inferRecurringPlanFromPriceId(recurringPrice?.id, recurringPrice?.lookup_key)
 
         if (latestActiveRecurring && recurringMatch) {
           const effectivePlan: BillingPlanTier = latestActiveRecurring.status === "trialing" ? "trial" : recurringMatch.plan
@@ -2116,7 +2242,20 @@ export const createCheckoutSession = onCallv2(
     }
 
     const selectedPlanPrice = selectedPlan ? selectedPlan.prices[interval] : undefined
-    const stripePriceId = isCreditPack ? selectedPack?.stripePriceId : selectedPlanPrice?.stripePriceId
+    const catalogPriceId = isCreditPack ? selectedPack?.stripePriceId : selectedPlanPrice?.stripePriceId
+    // Resolve by lookup_key first so one deployment works in test and live, falling back
+    // to the catalog id, which is what this did before the resolver existed.
+    let priceLookupKey: string | undefined
+    if (isCreditPack && selectedPack) {
+      priceLookupKey = lookupKeyForCredits(selectedPack.credits)
+    } else if (selectedPlan) {
+      priceLookupKey = lookupKeyForPlan(selectedPlan.id, interval)
+    }
+
+    let stripePriceId = catalogPriceId
+    if (priceLookupKey) {
+      stripePriceId = await resolvePriceId(stripe, priceLookupKey, catalogPriceId)
+    }
 
     if (!isCustomCredits && !stripePriceId) {
       throw new HttpsError("failed-precondition", "Stripe price id is missing for selected option")
@@ -2161,13 +2300,55 @@ export const createCheckoutSession = onCallv2(
       quantity: isCreditPack ? Math.max(1, quantity) : 1,
     }]
 
+    // What currency the customer is shown. Stripe Tax never reads this - it uses the
+    // customer's address - so a mismatch is harmless; this only decides the number on the
+    // button. A returning payer's saved address is the stronger signal (it is the address the
+    // tax will use), the request's own country is the fallback. There is no map to maintain:
+    // only "us" has its own price book today, everything else stays in the integration
+    // currency. Add a branch when a second currency earns its place, not before.
+    let currency: string | undefined
+    let country: string | null = null
+    if (user?.stripeId) {
+      try {
+        const savedCustomer = await stripe.customers.retrieve(user.stripeId)
+        if (!savedCustomer.deleted) {
+          country = savedCustomer.address?.country || null
+        }
+      } catch {
+        // Never block a checkout on a lookup that only picks a currency.
+      }
+    }
+    if (!country) {
+      const geo = await lookupGeoByIp(req.rawRequest?.ip, { firebaseUid: userId })
+      country = geo?.countryShort || null
+    }
+    if (country?.toUpperCase() === "US") {
+      currency = "usd"
+    }
+
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: checkoutMode,
+      // undefined leaves the choice to Stripe (integration currency, or local presentment
+      // once that is switched on). Setting it means "use my currency_options amount".
+      currency,
       line_items: lineItems,
       success_url: successUrl,
       cancel_url: cancelUrl,
       metadata: checkoutMetadata,
+      // The catalog's prices are tax_behavior "inclusive", so the tax is carved back out of the
+      // displayed amount rather than added on top - the number on the pricing page is the number
+      // charged, and registering for VAT later changes what you keep, not what the customer pays.
+      // Stripe still needs the customer's location to calculate it, and `customer_update.address`
+      // is what lets the address collected at checkout be used for a customer we already created -
+      // remove it and every session with an existing customer fails to create.
+      // billing_address_collection stays at its "auto" default: Checkout collects exactly the
+      // fields the tax calculation needs.
+      automatic_tax: { enabled: true },
+      customer_update: { address: "auto", name: "auto" },
+      // Lets a business enter a VAT ID, which is what turns an EU B2B sale into a reverse
+      // charge instead of a VAT charge. Drop this line if you only want consumer sales taxed.
+      tax_id_collection: { enabled: true },
       payment_intent_data: checkoutMode === "payment" ? {
         metadata: checkoutMetadata,
       } : undefined,
@@ -2254,8 +2435,8 @@ export const resumeSubscriptionCancellation = onCallv2(
       cancel_at_period_end: false,
     })
 
-    const recurringPriceId = updatedSubscription.items.data[0]?.price?.id
-    const recurringMatch = inferRecurringPlanFromPriceId(recurringPriceId)
+    const recurringPrice = updatedSubscription.items.data[0]?.price
+    const recurringMatch = inferRecurringPlanFromPriceId(recurringPrice?.id, recurringPrice?.lookup_key)
     const currentPlan = billing?.plan || mapPlanIdToTier(user?.plan || "free")
     const effectivePlan: BillingPlanTier = updatedSubscription.status === "trialing" ?
      "trial" : (recurringMatch?.plan || currentPlan)
@@ -2539,8 +2720,8 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     let planInterval: BillingInterval | undefined
     let features: Record<string, boolean> | undefined
     let trialFields: Partial<UserBilling> = {}
-    const recurringPriceId = getInvoiceRecurringPriceId(invoice)
-    const recurringMatch = inferRecurringPlanFromPriceId(recurringPriceId)
+    const recurringPrice = getInvoiceRecurringPrice(invoice)
+    const recurringMatch = inferRecurringPlanFromPriceId(recurringPrice?.id, recurringPrice?.lookupKey)
 
     if (recurringMatch) {
       plan = recurringMatch.plan
@@ -2732,14 +2913,16 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     // previous_attributes comes from the Stripe webhook event payload, not the subscription object.
     const eventWithPrev = event as unknown as { previous_attributes?: { items?: { data?: Array<{ price?: { id?: string } }> } } }
     const previousPriceId = eventWithPrev.previous_attributes?.items?.data?.[0]?.price?.id
-    const recurringPriceId = subscription.items.data[0]?.price?.id
-    const recurringMatch = inferRecurringPlanFromPriceId(recurringPriceId)
+    const recurringPrice = subscription.items.data[0]?.price
+    const recurringMatch = inferRecurringPlanFromPriceId(recurringPrice?.id, recurringPrice?.lookup_key)
     if (!recurringMatch) {
       break
     }
 
-    // Detect plan changes from Stripe Customer Portal (price ID changed).
-    const previousMatch = previousPriceId && previousPriceId !== recurringPriceId ?
+    // Detect plan changes from Stripe Customer Portal (price ID changed). The previous
+    // price arrives as a partial object (changed fields only), so it usually carries no
+    // lookup_key; matching it by id is enough to notice that a change happened.
+    const previousMatch = previousPriceId && previousPriceId !== recurringPrice?.id ?
       inferRecurringPlanFromPriceId(previousPriceId) :
       null
     const planChanged = previousMatch !== null &&
@@ -2760,7 +2943,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
           newPlan: recurringMatch.plan,
           newInterval: recurringMatch.interval,
           previousPriceId,
-          newPriceId: recurringPriceId,
+          newPriceId: recurringPrice?.id,
         },
       })
     }
@@ -3074,6 +3257,47 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     })
     break
   }
+  case "invoice.upcoming": {
+    // Fires the configured number of days before a renewal is charged - the only warning
+    // this platform gets before money moves. The Invoice in this payload deliberately has
+    // NO id (it does not exist yet), so the renewal is the identity: one alert per
+    // subscription per period, or Stripe's repeated sends would mint an alert each time.
+    const upcoming = event.data.object as Stripe.Invoice
+    const upcomingUid = upcoming.metadata?.uid || await resolveUidByStripeCustomer(upcoming.customer)
+    if (!upcomingUid) {
+      break
+    }
+
+    const subscriptionRef = upcoming.subscription
+    const upcomingSubscriptionId = typeof subscriptionRef === "string" ? subscriptionRef : subscriptionRef?.id || null
+    const upcomingAmount = Number(upcoming.amount_due || 0)
+    if (!upcomingSubscriptionId || upcomingAmount <= 0) {
+      break
+    }
+
+    // A renewal is not an incident, so this does not touch billing_incidents: one admin
+    // row per subscriber per month would bury the rows an operator acts on. Duplicates
+    // Stripe's own renewal email when that Dashboard setting is on, but this is where the
+    // customer can actually fix the card.
+    const chargeAtMs = (upcoming.next_payment_attempt || upcoming.period_start) * 1000
+    await emitUsageAlert({
+      uid: upcomingUid,
+      alertId: createAlertId("invoice_upcoming", `${upcomingSubscriptionId}_${upcoming.period_start}`),
+      title: "Upcoming charge",
+      message: `Your subscription renews for ${(upcomingAmount / 100).toFixed(2)} ` +
+        `${upcoming.currency.toUpperCase()} on ${new Date(chargeAtMs).toLocaleDateString()}. ` +
+        "Update your payment method before then if anything has changed.",
+      severity: "info",
+      metadata: {
+        amountDue: upcomingAmount,
+        currency: upcoming.currency,
+        subscriptionId: upcomingSubscriptionId,
+        chargeAt: new Date(chargeAtMs).toISOString(),
+        billingReason: upcoming.billing_reason,
+      },
+    })
+    break
+  }
   default: {
     // Catch billing.meter events that are not in the Stripe SDK type union.
     const rawType = (event as unknown as { type: string }).type
@@ -3103,13 +3327,41 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
   }
 }
 
-export const stripeWebhook = onRequest({ secrets: stripeSecrets }, async (req, res) => {
-    const stripeSecret: string | undefined = stripeSecrets.find((secret) => secret.name === "STRIPE_SECRET_KEY")?.value()
+// Which deployment is answering. Everything the body used to read from the module - the
+// secrets to verify with, the mode to accept - arrives as a parameter, because production
+// and sandbox must not share either. A secret name holds ONE value per project, so a single
+// function could only ever verify one endpoint's signature and the other endpoint got a 400
+// on every delivery; `expectLivemode` also replaces the `env.IS_PRODUCTION` check, which
+// conflated "deployed in production" with "this endpoint serves live events".
+type StripeWebhookBinding = {
+  secrets: SecretParam[]
+  stripeKeyName: string
+  webhookSecretName: string
+  expectLivemode: boolean
+}
+
+// The response object `onRequest` hands its callback, derived so express does not have to be
+// imported just to name it.
+type StripeWebhookResponse = Parameters<HttpsFunction>[1]
+
+/**
+ * Verify one Stripe delivery and apply it, for whichever deployment is bound.
+ * @param {*} req Request carrying the raw body the signature is computed over.
+ * @param {*} res Response to acknowledge or reject with.
+ * @param {*} binding Which function is answering: its secrets, key names and mode.
+ * @return {*} Resolves after the response has been sent.
+ */
+async function processStripeWebhookRequest(
+  req: Request,
+  res: StripeWebhookResponse,
+  binding: StripeWebhookBinding,
+): Promise<void> {
+    const stripeSecret: string | undefined = binding.secrets.find((secret) => secret.name === binding.stripeKeyName)?.value()
     const stripe = getStripe(stripeSecret)
-    const webhookSecret: string | undefined = stripeSecrets.find((secret) => secret.name === "STRIPE_WEBHOOK_SECRET")?.value()
+    const webhookSecret: string | undefined = binding.secrets.find((secret) => secret.name === binding.webhookSecretName)?.value()
     const stripeWebhookSecret = getStripeWebhookSecret(webhookSecret)
     if (!stripeWebhookSecret) {
-      console.error("Missing STRIPE_WEBHOOK_SECRET")
+      console.error(`Missing ${binding.webhookSecretName}`)
       res.status(500).send("Webhook secret missing")
       return
     }
@@ -3129,18 +3381,13 @@ export const stripeWebhook = onRequest({ secrets: stripeSecrets }, async (req, r
       return
     }
 
-    // Reject events that don't match the current environment's mode.
-    // In production (IS_PRODUCTION=true), only accept livemode events.
-    // In development/staging, only accept testmode events.
-    if (env.IS_PRODUCTION && !event.livemode) {
-      console.warn(`Ignoring test-mode Stripe event ${event.id} in production environment`)
-      res.status(200).send("Ignored test-mode event in production")
-      return
-    }
-
-    if (!env.IS_PRODUCTION && event.livemode) {
-      console.warn(`Ignoring live-mode Stripe event ${event.id} in non-production environment`)
-      res.status(200).send("Ignored live-mode event in non-production environment")
+    // One endpoint, one mode: the live function must never act on a sandbox event, and the
+    // sandbox function must never act on a live one, so the expected mode travels with the
+    // binding instead of being inferred from the environment the code happens to run in.
+    if (event.livemode !== binding.expectLivemode) {
+      const eventMode = event.livemode ? "live-mode" : "test-mode"
+      console.warn(`Ignoring ${eventMode} Stripe event ${event.id} on the ${binding.expectLivemode ? "live" : "sandbox"} endpoint`)
+      res.status(200).send(`Ignored ${eventMode} event`)
       return
     }
 
@@ -3148,6 +3395,9 @@ export const stripeWebhook = onRequest({ secrets: stripeSecrets }, async (req, r
     try {
       await eventRef.create({
         type: event.type,
+        // Both functions write to this collection and event ids are unique per mode, so
+        // without this a failed sandbox delivery reads as a failed live one in the panel.
+        livemode: event.livemode,
         processed: false,
         failed: false,
         retryCount: 0,
@@ -3204,7 +3454,25 @@ export const stripeWebhook = onRequest({ secrets: stripeSecrets }, async (req, r
       })
       res.status(500).send("Webhook processing error")
     }
-  })
+}
+
+export const stripeWebhook = onRequest({ secrets: stripeSecrets }, (req, res) =>
+  processStripeWebhookRequest(req, res, {
+    secrets: stripeSecrets,
+    stripeKeyName: "STRIPE_SECRET_KEY",
+    webhookSecretName: "STRIPE_WEBHOOK_SECRET",
+    expectLivemode: env.IS_PRODUCTION,
+  }))
+
+// The sandbox twin: its own URL, its own signing secret, its own Stripe key, test-mode events
+// only. Point the Stripe test-mode endpoint here instead of at the production function.
+export const stripeWebhookTest = onRequest({ secrets: stripeTestSecrets }, (req, res) =>
+  processStripeWebhookRequest(req, res, {
+    secrets: stripeTestSecrets,
+    stripeKeyName: "STRIPE_SECRET_KEY_TEST",
+    webhookSecretName: "STRIPE_WEBHOOK_SECRET_TEST",
+    expectLivemode: false,
+  }))
 
 export const updateUsage = onDocumentCreated(
   {
@@ -3794,7 +4062,13 @@ export const downgradePastDueAccounts = onSchedule(
   {
     schedule: "every 1 hours",
     timeZone: "UTC",
+    // Without this the secret is unbound, getStripe throws, and the catch below turns a
+    // broken downgrade into an hourly warning nobody reads. Accounts stay past_due forever.
+    secrets: stripeSecrets,
   },
+  /**
+   * callback
+   */
   async () => {
     const now = new Date()
     const nowIso = now.toISOString()
@@ -3821,6 +4095,10 @@ export const downgradePastDueAccounts = onSchedule(
       // Cancel the Stripe subscription if one exists.
       if (billing.subscriptionId) {
         try {
+          /**
+           * callback
+           * @param {*} s
+           */
           const secret: string | undefined = stripeSecrets.find((s) => s.name === "STRIPE_SECRET_KEY")?.value()
           const stripe = getStripe(secret)
           await stripe.subscriptions.cancel(billing.subscriptionId)
@@ -3885,6 +4163,9 @@ export const expireStaleCredits = onSchedule(
     schedule: "every 6 hours",
     timeZone: "UTC",
   },
+  /**
+   * callback
+   */
   async () => {
     const now = new Date()
     const nowIso = now.toISOString()
@@ -3988,6 +4269,11 @@ export const expireStaleCredits = onSchedule(
 
       // Mark the original grant ledger entries as expired so they're not re-processed.
       // We update them rather than delete for audit trail.
+      /**
+       * callback
+       * @param {*} d
+       * @return {*}
+       */
       const userLedgerEntries = expiredLedgerSnap.docs.filter((d) => {
         const pathParts = d.ref.path.split("/")
         const docUid = d.data().uid || (pathParts.length >= 3 ? pathParts[1] : null)
@@ -4005,6 +4291,88 @@ export const expireStaleCredits = onSchedule(
 
     await Promise.all(deletions)
     console.log("expireStaleCredits completed", { checkedAt: nowIso, expiredUsers: expiredCount })
+  },
+)
+
+/**
+ * Hourly check that every price the catalog can sell is actually sellable in the connected
+ * Stripe account.
+ *
+ * Why this exists: production had no catalog at all - the live account held one unrelated
+ * product - and nothing said so. Checkout resolves by lookup_key and falls back to a
+ * hardcoded test-mode id when the key misses, so live checkouts were rejected with Stripe's
+ * "No such price" and the first person to find out was the customer. `validateStripeCatalog`
+ * answers far more than this, but it only runs when an admin remembers to call it, so it
+ * cannot be the thing that notices.
+ *
+ * The incident lands in `billing_incidents`, which the admin bell already lists and
+ * acknowledges, so this needs no new collection, UI or alert channel.
+ *
+ * ponytail: asks only "would a checkout succeed", which is the question that stayed silent.
+ * Amount/currency/interval drift stays in the admin-triggered audit.
+ */
+const CATALOG_INCIDENT_SOURCE = "stripe-catalog-health"
+/** Reminder interval while the catalog stays broken. One incident, then at most one a day. */
+const CATALOG_INCIDENT_COOLDOWN_MS = 24 * 60 * 60 * 1000
+
+export const checkStripeCatalogHealth = onSchedule(
+  {
+    schedule: "every 1 hours",
+    timeZone: "UTC",
+    secrets: stripeSecrets,
+  },
+  async () => {
+    const secret: string | undefined = stripeSecrets.find((secret) => secret.name === "STRIPE_SECRET_KEY")?.value()
+    const stripe = getStripe(secret)
+
+    // ponytail: third place that walks the catalog. Extract a shared enumerator when a
+    // fourth appears - the two existing callers want different fields off it.
+    const entries = [
+      ...billingPlanCatalog.flatMap((plan) =>
+        (Object.keys(plan.prices) as BillingInterval[]).map((interval) => ({
+          key: lookupKeyForPlan(plan.id, interval),
+          fallbackId: plan.prices[interval].stripePriceId,
+        })),
+      ),
+      ...creditPackCatalog.map((pack) => ({
+        key: lookupKeyForCredits(pack.credits),
+        fallbackId: pack.stripePriceId,
+      })),
+    ]
+
+    const unusable = await findUnusableCatalogPrices(stripe, entries)
+    if (!unusable.length) {
+      return
+    }
+
+    // One incident, then at most one reminder a day. Keyed on the newest incident from this
+    // check whether or not it was acknowledged: an ack means "I know", not "nag me hourly".
+    const recent = await db.collection("billing_incidents")
+      .orderBy("createdAt", "desc")
+      .limit(20)
+      .get()
+    const lastOwn = recent.docs.find((doc) => {
+      const data = doc.data() as { source?: string }
+      return data.source === CATALOG_INCIDENT_SOURCE
+    })
+    const lastOwnMs = lastOwn ? timestampToMillis(lastOwn.data().createdAt) : 0
+    if (Date.now() - lastOwnMs < CATALOG_INCIDENT_COOLDOWN_MS) {
+      return
+    }
+
+    await recordBillingIncident({
+      type: "stripe_catalog_incomplete",
+      severity: "error",
+      source: CATALOG_INCIDENT_SOURCE,
+      message: `Checkout cannot resolve ${unusable.length} of ${entries.length} catalog prices. ` +
+        "Create them in this Stripe account with the matching lookup_keys, or set the " +
+        `corresponding STRIPE_PRICE_* variables. First failures: ${unusable.slice(0, 6).join("; ")}`,
+      metadata: {
+        unusableCount: unusable.length,
+        catalogSize: entries.length,
+        unusable: unusable.slice(0, 30),
+      },
+    })
   },
 )
 

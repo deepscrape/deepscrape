@@ -1,3 +1,10 @@
+# [0.9.0-beta.8](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.7...v0.9.0-beta.8) (2026-09-20)
+
+
+### Bug Fixes
+
+* **auth:** key device identity on the persisted id, not a per-login timestamp ([3f03f7c](https://github.com/deepscrape/deepscrape/commit/3f03f7c8d470ffa39020d71bee5f96fff5477984))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

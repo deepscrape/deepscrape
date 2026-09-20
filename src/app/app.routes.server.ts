@@ -1,9 +1,10 @@
 import { RenderMode, ServerRoute } from '@angular/ssr';
 
-// ponytail: there is no top-level `billing/plans/:planId` route — the plan page is
-// `/user/billing/plans/:planId` behind authGuard. Prerendering the un-prefixed path
-// shipped five live-but-empty URLs (`/billing/plans/starter` …) that the SEO strategy
-// correctly noindexes; delete the entry rather than publish soft 404s.
+// ponytail: `UserRoutes` is mounted at the root (`path: ''`), so `billing/plans/:planId`
+// is a real, auth-guarded route — NOT a marketing page. Prerendering it baked the guest
+// shell into five live URLs (`/billing/plans/starter` …); `billing/**` below serves the
+// whole family per-request instead, which also satisfies the parameterised route (a
+// Server route needs no getPrerenderParams, a `**` Prerender fallback does).
 export const serverRoutes: ServerRoute[] = [
     // ponytail: do NOT statically bake authenticated/private pages. They only
     // render a guest shell, and building them executes browser-only Firebase
@@ -14,5 +15,6 @@ export const serverRoutes: ServerRoute[] = [
     { path: 'dashboard/**', renderMode: RenderMode.Server },
     { path: 'operations/**', renderMode: RenderMode.Server },
     { path: 'user/**', renderMode: RenderMode.Server },
+    { path: 'billing/**', renderMode: RenderMode.Server },
     { path: '**', renderMode: RenderMode.Prerender },
 ];

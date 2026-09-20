@@ -1,3 +1,18 @@
+# [0.9.0-beta.5](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.4...v0.9.0-beta.5) (2026-09-20)
+
+
+### Bug Fixes
+
+* **analytics:** give non-routable addresses their own bucket ([fbc09ba](https://github.com/deepscrape/deepscrape/commit/fbc09babd722eea6b6901be75e947b8283ff32e6))
+
+
+### Features
+
+* **bff:** add the Elysia BFF sources and Cloud Run image inputs ([b362ec3](https://github.com/deepscrape/deepscrape/commit/b362ec3fb99f442fcfe61ffbe925c48428707556))
+* **billing:** resolve prices by lookup key and split the webhooks ([c125670](https://github.com/deepscrape/deepscrape/commit/c1256700b3e01259f657cde6413c711edb9771c2))
+* **functions:** add notifications, alert fan-out and billing metrics ([ca95df2](https://github.com/deepscrape/deepscrape/commit/ca95df26ac366a710867458f30ca47ede514978f))
+* **ui:** add the notification centre, consent banner and messaging worker ([fe92271](https://github.com/deepscrape/deepscrape/commit/fe922712ea37a2199943f26648c79b7006ffcd9a))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

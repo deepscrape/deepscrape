@@ -3,6 +3,7 @@ import { HttpClientTestingModule, HttpTestingController } from '@angular/common/
 import { TestBed } from '@angular/core/testing';
 import { AuthService } from './auth.service';
 import { API_ARACHNEFLY_URL } from '../variables';
+import { getTestProviders } from 'src/app/testing';
 
 describe('DeploymentService', () => {
   let service: DeploymentService;
@@ -14,7 +15,7 @@ describe('DeploymentService', () => {
 
     TestBed.configureTestingModule({
       imports: [HttpClientTestingModule],
-      providers: [{ provide: AuthService, useValue: authServiceMock }],
+      providers: [...getTestProviders(), { provide: AuthService, useValue: authServiceMock }],
     });
 
     service = TestBed.inject(DeploymentService);

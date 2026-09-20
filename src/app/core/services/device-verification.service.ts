@@ -54,6 +54,8 @@ export class DeviceVerificationService {
   /** First-party cookie holding the device id, matching the consent cookie's flags. */
   private static readonly DEVICE_ID_COOKIE = 'device_id'
   private static readonly DEVICE_ID_DAYS = 365
+  /** Same id, mirrored: a cleared cookie jar keeps the device instead of re-trusting. */
+  private static readonly DEVICE_ID_STORAGE = 'dc_device_id'
 
   readonly requiresVerification = signal(false)
   readonly pendingDeviceId = signal('')
@@ -121,12 +123,30 @@ export class DeviceVerificationService {
     } catch {
       deviceId = ''
     }
+
+    // Mirror in both directions: whichever store survived carries the identity, and the
+    // missing one is refilled. Cookie-only meant "clearing cookies = new device".
+    const stored = this.readStorageDeviceId()
+    if (!deviceId && stored) {
+      deviceId = stored
+      this.writeCookieDeviceId(deviceId)
+      return deviceId
+    }
     if (deviceId) {
+      if (!stored) {
+        this.writeStorageDeviceId(deviceId)
+      }
       return deviceId
     }
 
     deviceId = globalThis.crypto?.randomUUID?.()
       ?? this.hashString(`device-${Date.now()}-${Math.random()}`)
+    this.writeCookieDeviceId(deviceId)
+    this.writeStorageDeviceId(deviceId)
+    return deviceId
+  }
+
+  private writeCookieDeviceId(deviceId: string): void {
     try {
       this.cookieService.set(
         DeviceVerificationService.DEVICE_ID_COOKIE,
@@ -140,7 +160,23 @@ export class DeviceVerificationService {
     } catch {
       // A blocked cookie store (private mode) only means verifying again next visit.
     }
-    return deviceId
+  }
+
+  private readStorageDeviceId(): string {
+    try {
+      return this.documentRef?.defaultView?.localStorage?.getItem(DeviceVerificationService.DEVICE_ID_STORAGE) || ''
+    } catch {
+      // Storage disabled: nothing to read.
+      return ''
+    }
+  }
+
+  private writeStorageDeviceId(deviceId: string): void {
+    try {
+      this.documentRef?.defaultView?.localStorage?.setItem(DeviceVerificationService.DEVICE_ID_STORAGE, deviceId)
+    } catch {
+      // Storage disabled: the cookie is then the only copy.
+    }
   }
 
   /**
@@ -150,11 +186,13 @@ export class DeviceVerificationService {
     try {
       // Query user's trustedDevices collection
       const trustedDevices = await this.firestore.callFunction<
-        { userId: string; deviceId: string },
+        { userId: string; deviceId: string; userAgent: string },
         { trusted: boolean }
       >('isDeviceTrusted', {
         userId,
-        deviceId: fingerprint.deviceId
+        deviceId: fingerprint.deviceId,
+        // Used only to alias a legacy trusted row (ids that carried a timestamp).
+        userAgent: fingerprint.userAgent,
       })
       return trustedDevices.trusted || false
     } catch (error) {

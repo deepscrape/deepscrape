@@ -1,7 +1,7 @@
 import { inject, Injectable, signal, computed, Signal, PLATFORM_ID } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { CookieService } from 'ngx-cookie-service';
-import { cleanAndParseJSON, getBrowser, getDeviceFingerprintHash } from 'src/app/core/functions';
+import { cleanAndParseJSON, getBrowser, getDeviceFingerprintHash, getDeviceSignalsHash } from 'src/app/core/functions';
 import { Guest, loginHistoryInfo } from '../types';
 import { DeviceVerificationService } from './device-verification.service';
 import { FirestoreService } from './firestore.service';
@@ -292,6 +292,9 @@ export class GuestTrackingService {
           os: this.detectOsFromUserAgent(userAgent),
           location: 'Unknown',
           providerId,
+          // Risk signal, not identity: the server stores it on the session and only ever
+          // warns / steps up when it changes.
+          deviceSignals: await getDeviceSignalsHash(this.window),
         },
       });
 

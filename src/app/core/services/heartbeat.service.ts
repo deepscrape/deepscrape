@@ -1,10 +1,11 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { CookieService } from 'ngx-cookie-service';
-import { Subscription, merge, fromEvent, timer, Subject, throwError, Observable, of } from 'rxjs';
+import { Subscription, merge, fromEvent, timer, Subject, throwError, Observable, of, from } from 'rxjs';
 import { takeUntil, switchMap, filter, startWith, tap, catchError } from 'rxjs/operators';
 import { WindowToken } from './window.service';
 import { GuestTrackingService } from './guest-tracking.service';
+import { getDeviceSignalsHash } from 'src/app/core/functions';
 
 @Injectable({ providedIn: 'root' })
 export class HeartbeatService {
@@ -69,7 +70,13 @@ export class HeartbeatService {
                     return of({ success: false, skipped: true, reason: 'missing-id' });
                 }
 
-                return this.http.post('/event/heartbeat', {}, { headers }).pipe(
+                // The hash is cached per page load inside `getDeviceSignalsHash`, so this is one
+                // canvas read per session, not per beat. An empty string means the probes were
+                // blocked; the server then falls back to its user-agent check.
+                return from(getDeviceSignalsHash(this.window)).pipe(
+                    switchMap((deviceSignals) =>
+                        this.http.post('/event/heartbeat', { deviceSignals }, { headers })
+                    ),
                     catchError((error) => this.handleHeartbeatError(error))
                 );
             }),

@@ -531,3 +531,98 @@ export async function getDeviceFingerprintHash(fingerprintData: string | null, w
 
     return deviceFingerprintHash
 }
+
+/**
+ * Passive device signals, collected the way device-intelligence SDKs do it: canvas and
+ * WebGL render output, hardware and display characteristics, locale and timezone.
+ *
+ * The IP is deliberately absent — it changes with every network and says nothing about
+ * the device. This value is a RISK signal only; the device identity is the persisted id
+ * cookie (`DeviceVerificationService.getOrCreateDeviceId`). Keeping the two apart is the
+ * whole point: entropy drifts (browser updates, canvas randomisation in Brave/Firefox)
+ * and would otherwise unpick a trusted device.
+ *
+ * ponytail: no audio-context pass and no font probing. Canvas + WebGL carry most of the
+ * entropy; add them only if two real devices need to be told apart.
+ */
+export function collectDeviceSignals(window: Window): string {
+  try {
+    const navigatorRef = window.navigator as Navigator & { deviceMemory?: number };
+    const screenRef = window.screen;
+    return [
+      navigatorRef.userAgent,
+      navigatorRef.platform,
+      (navigatorRef.languages || []).join(','),
+      String(navigatorRef.hardwareConcurrency || ''),
+      String(navigatorRef.deviceMemory || ''),
+      String(navigatorRef.maxTouchPoints || ''),
+      `${screenRef?.width}x${screenRef?.height}x${screenRef?.colorDepth}@${window.devicePixelRatio || 1}`,
+      `${screenRef?.availWidth}x${screenRef?.availHeight}`,
+      Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+      String(new Date().getTimezoneOffset()),
+      canvasSignal(window),
+      webglSignal(window),
+    ].join('|');
+  } catch {
+    return '';
+  }
+}
+
+/** Canvas text + shape render output. Brave/Firefox randomise it per session by design. */
+function canvasSignal(window: Window): string {
+  try {
+    const canvas = window.document.createElement('canvas');
+    canvas.width = 220;
+    canvas.height = 40;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return '';
+    }
+    context.textBaseline = 'top';
+    context.font = '14px Arial';
+    context.fillStyle = '#f60';
+    context.fillRect(0, 0, 110, 22);
+    context.fillStyle = '#069';
+    context.fillText('deepscrape-1', 2, 2);
+    context.globalCompositeOperation = 'multiply';
+    context.fillStyle = 'rgb(120,200,60)';
+    context.fillText('deepscrape-2', 6, 6);
+    return canvas.toDataURL();
+  } catch {
+    return '';
+  }
+}
+
+/** GPU vendor/renderer (unmasked where the browser allows it) plus a capability probe. */
+function webglSignal(window: Window): string {
+  try {
+    const canvas = window.document.createElement('canvas');
+    const gl = canvas.getContext('webgl') as WebGLRenderingContext | null;
+    if (!gl) {
+      return '';
+    }
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    const vendor = debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+    const renderer = debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    return `${vendor}~${renderer}~${gl.getParameter(gl.MAX_TEXTURE_SIZE)}`;
+  } catch {
+    return '';
+  }
+}
+
+// Collected once per page load: the canvas read is the expensive part, and the signals
+// cannot change while the document is alive.
+let deviceSignalsHashCache = '';
+
+/**
+ * SHA-256 of the passive signals, cached for the lifetime of the page.
+ *
+ * @return The signals hash, or an empty string when the browser blocks the probes.
+ */
+export async function getDeviceSignalsHash(window: Window): Promise<string> {
+  if (deviceSignalsHashCache) {
+    return deviceSignalsHashCache;
+  }
+  deviceSignalsHashCache = await getDeviceFingerprintHash(collectDeviceSignals(window), window);
+  return deviceSignalsHashCache;
+}

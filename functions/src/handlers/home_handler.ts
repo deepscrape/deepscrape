@@ -102,6 +102,9 @@ const denySession = (
     message: string,
 ) => res.status(401).json({success: false, code, message})
 
+/* Narrow an unknown body field to the signals string, or "". */
+const signalsOf = (value: unknown): string => (typeof value === "string" ? value : "")
+
 // Heartbeat write throttle. The heartbeat used to read the user doc from Firestore
 // purely to decide whether to write `lastSeen`; deciding from process memory skips
 // that read (and usually the write) entirely.
@@ -225,6 +228,7 @@ export const heartbeat = async (req: Request, res: Response) => {
                     userId?: string
                     active?: boolean
                     deviceFingerprint?: string
+                    deviceSignalsHash?: string
                     browser?: string
                     os?: string
                     providerId?: string
@@ -233,15 +237,25 @@ export const heartbeat = async (req: Request, res: Response) => {
                     try {
                         if (sessionData.userId === userId && sessionData.active) {
                             // PHASE 3.1: Device fingerprint verification and suspicious activity logging.
-                            if (sessionData.deviceFingerprint) {
+                            if (sessionData.deviceFingerprint || sessionData.deviceSignalsHash) {
+                                // Signals first, user agent as the fallback for sessions created
+                                // before they existed. Both are risk signals — the identity is the
+                                // persisted deviceId, which is why a changed hash warns and
+                                // re-baselines instead of killing the session.
+                                const providedSignals = signalsOf((req.body as { deviceSignals?: unknown } | undefined)?.deviceSignals)
+                                const storedSignals = signalsOf(sessionData.deviceSignalsHash)
                                 const currentUserAgent = req.get("user-agent") || ""
                                 const ipAddress = req.ip || req.connection.remoteAddress || ""
-                                const expectedFingerprint = computeDeviceFingerprint(currentUserAgent, ipAddress)
-                                const storedFingerprint = sessionData.deviceFingerprint
+                                let expectedFingerprint = computeDeviceFingerprint(currentUserAgent, ipAddress)
+                                let storedFingerprint = sessionData.deviceFingerprint
+                                if (providedSignals && storedSignals) {
+                                    expectedFingerprint = providedSignals
+                                    storedFingerprint = storedSignals
+                                }
 
-                                if (expectedFingerprint !== storedFingerprint) {
+                                if (storedFingerprint && expectedFingerprint !== storedFingerprint) {
                                     requiresReauth = true
-                                    console.warn(`⚠️ Device fingerprint mismatch for session ${loginId}: IP or UA changed`)
+                                    console.warn(`⚠️ Device signal mismatch for session ${loginId}: browser or environment changed`)
                                     try {
                                         await logSuspiciousDeviceMismatch({
                                             userId,
@@ -301,6 +315,7 @@ export const heartbeat = async (req: Request, res: Response) => {
                             active?: boolean
                             revokedAt?: Timestamp | null
                             deviceFingerprint?: string
+                            deviceSignalsHash?: string
                             browser?: string
                             os?: string
                             providerId?: string
@@ -309,13 +324,21 @@ export const heartbeat = async (req: Request, res: Response) => {
                         }
 
                         if (sessionData?.userId === userId && sessionData?.active === true && !sessionData?.revokedAt) {
-                            if (sessionData.deviceFingerprint) {
+                            if (sessionData.deviceFingerprint || sessionData.deviceSignalsHash) {
+                                // Same rule as the cached path: signals first, user agent as the
+                                // fallback for sessions created before they existed.
+                                const providedSignals = signalsOf((req.body as { deviceSignals?: unknown } | undefined)?.deviceSignals)
+                                const storedSignals = signalsOf(sessionData.deviceSignalsHash)
                                 const currentUserAgent = req.get("user-agent") || ""
                                 const ipAddress = req.ip || req.connection.remoteAddress || ""
-                                const expectedFingerprint = computeDeviceFingerprint(currentUserAgent, ipAddress)
-                                const storedFingerprint = sessionData.deviceFingerprint
+                                let expectedFingerprint = computeDeviceFingerprint(currentUserAgent, ipAddress)
+                                let storedFingerprint = sessionData.deviceFingerprint
+                                if (providedSignals && storedSignals) {
+                                    expectedFingerprint = providedSignals
+                                    storedFingerprint = storedSignals
+                                }
 
-                                if (expectedFingerprint !== storedFingerprint) {
+                                if (storedFingerprint && expectedFingerprint !== storedFingerprint) {
                                     requiresReauth = true
                                     try {
                                         await logSuspiciousDeviceMismatch({

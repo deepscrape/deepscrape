@@ -42,6 +42,24 @@
       </div>
     </div>
     <div class="text-center">
+      <!-- Internal links the crawler needs. These are the only pages targeting the
+           non-brand queries, and without a link from a prerendered page they rely on
+           the sitemap alone. ponytail: English-only labels until the copy is translated
+           into the five locales the rest of the shell supports. -->
+      <nav
+        class="mb-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm"
+        aria-label="Explore">
+        <a
+          routerLink="/deep-scraper"
+          class="text-gray6 underline-offset-2 transition-colors hover:text-[#3a0d2f] hover:underline dark:text-white dark:hover:text-[#c549a6]"
+          >Deep scraper</a
+        >
+        <a
+          routerLink="/alternatives/crawl4ai"
+          class="text-gray6 underline-offset-2 transition-colors hover:text-[#3a0d2f] hover:underline dark:text-white dark:hover:text-[#c549a6]"
+          >Crawl4AI alternative</a
+        >
+      </nav>
       <!-- Legal links. The footer is the only place a no-auth visitor can reach
            these, so they live here rather than on the pages themselves. -->
       <nav

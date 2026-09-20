@@ -1,0 +1,121 @@
+<div class="min-h-screen section-dark relative flex flex-col">
+  <!-- Decorative backdrop (landpage research-lab language) -->
+  <div class="absolute inset-0 grid-lines pointer-events-none opacity-15 dark:opacity-50"></div>
+  <div class="absolute inset-0 overflow-hidden pointer-events-none">
+    <div class="absolute -top-24 -right-24 w-96 h-96 orb-cyan-md rounded-full blur-3xl"></div>
+    <div class="absolute -bottom-24 -left-24 w-96 h-96 orb-rose-md rounded-full blur-3xl"></div>
+  </div>
+
+  <app-landing-subheader></app-landing-subheader>
+
+  <main class="relative z-10 flex-1 w-full mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-14">
+    <div class="glass rounded-2xl p-5 sm:p-10 border border-white/5 dark:border-white/10 shadow-xl">
+      <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">Deep scraper</p>
+      <h1 class="text-3xl sm:text-5xl font-display font-bold tracking-tight text-gray-900 dark:text-white">
+        The deep scraper for pages that fight back
+      </h1>
+      <p class="mt-4 text-lg leading-8 text-gray-600 dark:text-gray-300">
+        A deep scraper does not just fetch HTML — it renders the page like a browser, works around
+        bot protection, follows the links that matter, and returns the fields you asked for instead of
+        a pile of markup. deepscrape is that, as an API you call instead of infrastructure you babysit.
+      </p>
+
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a
+          [routerLink]="['/service/signup']"
+          class="rounded-lg bg-cyan-600 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-cyan-500"
+          >Start free</a
+        >
+        <a
+          [routerLink]="['/']"
+          fragment="pricing"
+          class="rounded-lg border border-cyan-600/40 px-5 py-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-500/10 dark:text-cyan-300"
+          >See pricing</a
+        >
+      </div>
+
+      <div class="prose prose-gray mt-10 max-w-none space-y-8 text-[15px] leading-7 text-gray-600 dark:text-gray-300">
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">What makes a scrape "deep"</h2>
+          <ul class="list-disc space-y-2 pl-5">
+            <li>
+              <strong>Full rendering.</strong> Client-side apps are executed, so the data that appears after
+              hydration is reachable — not just the server HTML.
+            </li>
+            <li>
+              <strong>Anti-bot handling.</strong> Rotating egress and browser-like behaviour instead of a
+              request that gets a challenge page back.
+            </li>
+            <li>
+              <strong>Depth.</strong> Crawl orchestration follows links, schedules repeat runs, and keeps
+              browser profiles so logged-in or region-specific views stay consistent.
+            </li>
+            <li>
+              <strong>Structured output.</strong> You get fields, rows and JSON. Choosing the model that does
+              the extraction is your call — Anthropic, OpenAI, Groq, Google, Jina, Crawl4AI, or any
+              OpenAI-compatible endpoint.
+            </li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Call it in one request</h2>
+          <p>
+            Every feature above is one endpoint. Send URLs, get clean content back; add the structured
+            extraction on top when you want typed output instead of text.
+          </p>
+          <pre class="overflow-x-auto rounded-xl bg-gray-900/90 p-4 text-sm text-gray-100"><code>curl -X POST https://deepscrape.dev/api/crawl \
+  -H "Authorization: Bearer $DEEPSCRAPE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Return-Format: markdown" \
+  -d '&#123;"urls":["https://example.com/pricing"]&#125;'</code></pre>
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            API keys live in your dashboard under Settings → API keys. Prefer to keep it in code? The same
+            capability is exposed to agents over MCP, so a coding agent can call it directly.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Beyond a single page</h2>
+          <ul class="list-disc space-y-2 pl-5">
+            <li><strong>CrawlPack machines</strong> — deploy and manage your own crawlers instead of tuning a fleet by hand.</li>
+            <li><strong>Schedulers and operations</strong> — repeat runs, configs, browser profiles and results you can revisit.</li>
+            <li><strong>Usage you can see</strong> — operations history, credit passes and per-plan usage in the same place as billing.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Frequently asked</h2>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">What is a deep scraper?</h3>
+          <p>
+            A scraper that renders pages like a real browser and works past bot protection, so it can reach
+            content a plain HTTP request never sees. "Deep" refers to going past the initial response —
+            executing JavaScript, following a site's structure, and extracting structured fields.
+          </p>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">How is this different from a simple scrape request?</h3>
+          <p>
+            A simple scraper gets whatever the server returns to a generic client. deepscrape renders the
+            page, handles the anti-bot layer, and can keep sessions and profiles — then hands you the data
+            in the shape you asked for.
+          </p>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">Can I use my own LLM for extraction?</h3>
+          <p>
+            Yes. Provider choice is yours: Anthropic, OpenAI, Groq, Google, Jina, Fireworks, OpenRouter,
+            Crawl4AI, or any OpenAI-compatible endpoint. There is no lock-in to a single model.
+          </p>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">Do I have to manage proxies or browsers?</h3>
+          <p>
+            No. Rendering, egress rotation and browser profiles are managed for you. If you would rather run
+            the crawler yourself, CrawlPack machines let you deploy and manage your own.
+          </p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <app-footer></app-footer>
+</div>

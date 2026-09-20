@@ -29,6 +29,16 @@ const SEO: Record<string, { title: string; description: string }> = {
     description:
       'Plain-language terms for using deepscrape: acceptable use, billing, intellectual property, liability limits, and how we may update these terms over time.',
   },
+  '/deep-scraper': {
+    title: 'Deep Scraper API — Turn Any Page Into Structured Data | deepscrape',
+    description:
+      'A deep scraper that renders JavaScript, handles anti-bot protection and returns structured, AI-ready data. Bring your own LLM. Call it as an API — start free.',
+  },
+  '/alternatives/crawl4ai': {
+    title: 'Crawl4AI Alternative — deepscrape vs Self-Hosted Crawl4AI',
+    description:
+      'Crawl4AI is a library you self-host; deepscrape is the managed crawler built on the same idea — rendering, anti-bot, scheduling and billing handled for you.',
+  },
 };
 
 /** '/contact/' -> '/contact', '/' -> ''. Query/hash stripped. */

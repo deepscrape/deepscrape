@@ -1,0 +1,158 @@
+<div class="min-h-screen section-dark relative flex flex-col">
+  <!-- Decorative backdrop (landpage research-lab language) -->
+  <div class="absolute inset-0 grid-lines pointer-events-none opacity-15 dark:opacity-50"></div>
+  <div class="absolute inset-0 overflow-hidden pointer-events-none">
+    <div class="absolute -top-24 -right-24 w-96 h-96 orb-cyan-md rounded-full blur-3xl"></div>
+    <div class="absolute -bottom-24 -left-24 w-96 h-96 orb-rose-md rounded-full blur-3xl"></div>
+  </div>
+
+  <app-landing-subheader></app-landing-subheader>
+
+  <main class="relative z-10 flex-1 w-full mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-14">
+    <div class="glass rounded-2xl p-5 sm:p-10 border border-white/5 dark:border-white/10 shadow-xl">
+      <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">
+        Comparison
+      </p>
+      <h1 class="text-3xl sm:text-5xl font-display font-bold tracking-tight text-gray-900 dark:text-white">
+        A Crawl4AI alternative, without the operations
+      </h1>
+      <p class="mt-4 text-lg leading-8 text-gray-600 dark:text-gray-300">
+        Crawl4AI is a strong open-source crawler for LLM-ready output — and it is one of the crawling
+        backends behind deepscrape, so this is not a hit piece. The question is only whether you want to
+        own the infrastructure around it.
+      </p>
+
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a
+          [routerLink]="['/service/signup']"
+          class="rounded-lg bg-cyan-600 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-cyan-500"
+          >Start free</a
+        >
+        <a
+          [routerLink]="['/']"
+          fragment="pricing"
+          class="rounded-lg border border-cyan-600/40 px-5 py-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-500/10 dark:text-cyan-300"
+          >See pricing</a
+        >
+      </div>
+
+      <div class="prose prose-gray mt-10 max-w-none space-y-8 text-[15px] leading-7 text-gray-600 dark:text-gray-300">
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Where they differ</h2>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead>
+                <tr class="border-b border-gray-300 dark:border-white/10">
+                  <th class="py-2 pr-4 font-semibold"></th>
+                  <th class="py-2 pr-4 font-semibold text-gray-900 dark:text-white">Crawl4AI (self-hosted)</th>
+                  <th class="py-2 font-semibold text-gray-900 dark:text-white">deepscrape (managed)</th>
+                </tr>
+              </thead>
+              <tbody class="align-top">
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">What it is</td>
+                  <td class="py-3 pr-4">Open-source crawler library</td>
+                  <td class="py-3">Hosted API + dashboard</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Where it runs</td>
+                  <td class="py-3 pr-4">Your machine, container or cluster</td>
+                  <td class="py-3">Managed for you, no servers to run</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">How you call it</td>
+                  <td class="py-3 pr-4">Python / self-hosted services</td>
+                  <td class="py-3">REST endpoints, API keys, and MCP for agents</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Model choice</td>
+                  <td class="py-3 pr-4">Bring your own</td>
+                  <td class="py-3">Bring your own — Anthropic, OpenAI, Groq, Google, Jina, Fireworks, OpenRouter, Crawl4AI</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Browser rendering</td>
+                  <td class="py-3 pr-4">Headless browser, wired by you</td>
+                  <td class="py-3">Included, with browser profiles and sessions</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Anti-bot &amp; egress</td>
+                  <td class="py-3 pr-4">Your problem, your proxies</td>
+                  <td class="py-3">Managed</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Scheduling &amp; orchestration</td>
+                  <td class="py-3 pr-4">Your cron, your queue</td>
+                  <td class="py-3">CrawlPack machines, operations, repeatable runs</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-white/5">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Accounts, quotas, billing</td>
+                  <td class="py-3 pr-4">You build them</td>
+                  <td class="py-3">Built in (plans, credit passes, usage)</td>
+                </tr>
+                <tr>
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Cost shape</td>
+                  <td class="py-3 pr-4">Compute + the engineering time to keep it up</td>
+                  <td class="py-3">Plan or credits, nothing to operate</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            Operator note: competitor capabilities and pricing change often — re-check each row before this
+            page is published or updated.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">When self-hosting is the right call</h2>
+          <ul class="list-disc space-y-2 pl-5">
+            <li>Your data cannot leave your own network at all.</li>
+            <li>You already run crawler infrastructure and enjoy owning it.</li>
+            <li>Your workload is small, stable and internal — the operational tax is near zero.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">When deepscrape wins</h2>
+          <ul class="list-disc space-y-2 pl-5">
+            <li>Targets fight back: rendering, egress rotation and sessions are the whole product.</li>
+            <li>You need it scheduled, observable and multi-tenant instead of a script someone owns.</li>
+            <li>You want an agent to call it: the same capability is exposed over MCP.</li>
+            <li>You would rather pick a provider per task than commit to one model.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Frequently asked</h2>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">Is deepscrape built on Crawl4AI?</h3>
+          <p>
+            Crawl4AI is one of the crawling backends deepscrape can route through, alongside other providers.
+            Choosing deepscrape means one less piece of infrastructure to run — not a different philosophy
+            about extraction.
+          </p>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">Can I keep my existing extraction prompts?</h3>
+          <p>
+            Yes. Bring your own provider and model; the extraction step is yours to define, and the crawler
+            just guarantees the page content reaches it.
+          </p>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">What does migration involve?</h3>
+          <p>
+            Point your crawls at the API instead of the library: one endpoint takes a list of URLs and returns
+            clean content, so the change is usually confined to the call site.
+          </p>
+
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">Can I self-host with deepscrape's model?</h3>
+          <p>
+            Yes — CrawlPack machines let you deploy and manage your own crawlers from the dashboard while
+            keeping the same API surface.
+          </p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <app-footer></app-footer>
+</div>

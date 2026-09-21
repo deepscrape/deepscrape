@@ -1,3 +1,10 @@
+# [0.9.0-beta.20](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.19...v0.9.0-beta.20) (2026-09-21)
+
+
+### Features
+
+* **search:** stand up the Meilisearch catalog for the easyscrape database ([cb7f83c](https://github.com/deepscrape/deepscrape/commit/cb7f83c5fa1bba0900d078a28de153b128fd2212))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

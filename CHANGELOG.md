@@ -1,3 +1,10 @@
+# [0.9.0-beta.17](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.16...v0.9.0-beta.17) (2026-09-21)
+
+
+### Bug Fixes
+
+* **auth:** return UNAUTHENTICATED instead of INTERNAL from the passkey callables ([dea253b](https://github.com/deepscrape/deepscrape/commit/dea253b5a4d5e6578bed642bb794d6a942ad60a7))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

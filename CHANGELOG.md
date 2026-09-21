@@ -1,3 +1,10 @@
+# [0.9.0-beta.19](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.18...v0.9.0-beta.19) (2026-09-21)
+
+
+### Bug Fixes
+
+* **firestore:** point the injected Firestore at the easyscrape database ([c78c9ac](https://github.com/deepscrape/deepscrape/commit/c78c9acd435efba74139ff19ae047b3a6cc1818b))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

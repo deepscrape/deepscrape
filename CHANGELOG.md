@@ -1,3 +1,10 @@
+# [0.9.0-beta.12](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.11...v0.9.0-beta.12) (2026-09-21)
+
+
+### Bug Fixes
+
+* **auth:** stop enforcing App Check on a client that cannot send it ([732874b](https://github.com/deepscrape/deepscrape/commit/732874ba4c2c58bf72289faf924446e9aa7a9555))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

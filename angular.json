@@ -74,12 +74,7 @@
               ],
               "outputHashing": "all",
               "serviceWorker": "ngsw-config.json",
-              "fileReplacements": [
-                {
-                  "replace": "src/environments/environment.ts",
-                  "with": "src/environments/prod.ts"
-                }
-              ],
+              "fileReplacements": [],
               "ssr": {
                 "entry": "src/main.server.ts"
               }
@@ -106,12 +101,7 @@
                   "maximumError": "20kB"
                 }
               ],
-              "fileReplacements": [
-                {
-                  "replace": "src/environments/environment.ts",
-                  "with": "src/environments/staging.ts"
-                }
-              ],
+              "fileReplacements": [],
               "outputHashing": "all",
               "serviceWorker": "ngsw-config.json"
             }

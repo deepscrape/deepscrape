@@ -69,4 +69,10 @@ const environment = {
 
 const content = `export const environment = ${JSON.stringify(environment, null, 2)};`
 
+// This file is the single source of truth for every build mode. The production and
+// staging configurations used to replace `environment.ts` with the hand-maintained
+// `prod.ts` / `staging.ts`, which silently discarded everything generated here — that is
+// how production shipped an empty FIREBASE_VAPID_KEY ("Push is not configured for this
+// build") while this file held the real key. Keep `fileReplacements` empty in
+// angular.json; the mode is selected by which dotenv file `prbuild*` loads.
 fs.writeFileSync('src/environments/environment.ts', content)

@@ -1,3 +1,10 @@
+# [0.9.0-beta.11](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.10...v0.9.0-beta.11) (2026-09-21)
+
+
+### Bug Fixes
+
+* **build:** stop the production build discarding the generated environment ([1f66f72](https://github.com/deepscrape/deepscrape/commit/1f66f72f8e15dcfdb642d9c701b9a487cf55edcc))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

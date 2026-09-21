@@ -6,11 +6,12 @@
 #   fly secrets set MEILI_MASTER_KEY="$(openssl rand -hex 32)"      # never put the key in this file
 #   fly deploy
 #
-# Sizing (from Meilisearch's own guidance): during indexing the indexer takes at most 2/3 of
-# RAM and half the CPU cores, and "your machine should have enough RAM to hold the full
-# dataset in memory during indexing". 1 GB is a floor for a few hundred thousand documents;
-# go to 2 GB before you go wide. Index size is capped at 2 TiB (recommended) and the task
-# database at 20 GiB.
+# Sizing (measured, see docs/ADR-2026-09-SEARCH-INDEXING.md): one million ~500-byte documents
+# produce a 486 MB index, peak at 661 MiB of RAM while indexing, and settle at 377 MiB - all
+# inside a 2 GB container. The indexer takes at most 2/3 of RAM and half the CPU cores by
+# default, and Meilisearch's guidance is to have enough RAM to hold the dataset during indexing,
+# so 1 GB is comfortable at this scale and the cap below keeps a backfill inside the cgroup.
+# Index size is capped at 2 TiB (recommended; 80 TiB ceiling) and the task database at 20 GiB.
 
 app = "deepscrape-search"
 primary_region = "fra"

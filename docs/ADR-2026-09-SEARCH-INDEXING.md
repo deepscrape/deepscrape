@@ -111,6 +111,38 @@ Searching `"amazn"` (a deliberate typo) with `filter: userId = "user-a"` returne
 document, and the identical query as `user-b` returned **0 hits** — so typo tolerance is on by
 default and the tenant filter isolates correctly.
 
+### Sizing, measured rather than estimated
+
+`deploy/meilisearch/bench-1m.ts` generates and indexes one million synthetic `operations`
+documents (~500 bytes each: id, userId, status, url, a 180-character note, createdAt) inside a
+container limited to **2 GB of RAM** with `MEILI_MAX_INDEXING_MEMORY=1200 Mb`:
+
+| workload | index on disk | ingest | peak RAM | steady RAM | search |
+|---|---|---|---|---|---|
+| 1,000,000 docs @ 501 B | **486 MB** | 316 MB payload, 58 s to index (12,759 docs/s) | **661 MiB** | **377 MiB** | median 48 ms, p95 55 ms (filtered, limit 20) |
+
+Typo tolerance still holds on the full index: `"produt"` returned hits filtered to a single user.
+Peak was measured across a full re-index of all million documents, which a settings change
+triggers; it stayed well inside the 1.2 GB indexing budget and the container was never OOM-killed.
+
+**How many instances this needs: one.** 1M documents is 486 MB against a 2 TiB recommendation and
+0.02% of the 4.29-billion-document limit, and it indexes and serves inside a 1 GB machine. Rules of
+thumb from the measurement, to be re-checked as documents grow:
+
+- Peak indexing RAM runs at roughly **1.4x the final index size**; steady-state RSS about **0.8x**.
+  Size the machine above the peak, then set `MEILI_MAX_INDEXING_MEMORY` to leave the OS room.
+- Disk and RAM scale close to linearly with document count, so 10M documents of this shape is
+  ~5 GB on disk and wants ~8 GB of RAM, and 100M is where sharding starts to be a real
+  conversation rather than a licence one.
+- **Replication is a cost decision, not a capacity one.** Each replica is a full copy: same disk,
+  same RAM, and the sync layer writes to every node. Two nodes for availability, more only for
+  read throughput — and remember the 1000 concurrent search limit per instance.
+- Sharding is **not** on the table at this scale.
+
+Caveats: measured on Windows with Docker Desktop over loopback, so the 48 ms search figure
+includes local HTTP overhead and is pessimistic; and the documents are synthetic, so real
+`operations` shapes with large embedded crawl results will index larger and slower per document.
+
 Not verified: an actual Firestore → Meilisearch sync, because it does not exist yet, and the
 Fly.io deployment itself.
 

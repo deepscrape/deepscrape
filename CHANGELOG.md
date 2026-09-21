@@ -1,3 +1,10 @@
+# [0.9.0-beta.21](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.20...v0.9.0-beta.21) (2026-09-21)
+
+
+### Performance Improvements
+
+* **search:** measure 1M-document sizing instead of estimating it ([d324bc0](https://github.com/deepscrape/deepscrape/commit/d324bc08158730a0a9163f5fb88ef45194af0eef))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

@@ -1,3 +1,10 @@
+# [0.9.0-beta.13](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.12...v0.9.0-beta.13) (2026-09-21)
+
+
+### Features
+
+* **auth:** add the missing recovery path for a lost second factor ([9cf89ef](https://github.com/deepscrape/deepscrape/commit/9cf89efceb8eb5a7f8187ecd834dd78c2780e1ea))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

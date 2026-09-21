@@ -1,8 +1,13 @@
 rules_version = '2';
 
-// Craft rules based on data in your Firestore database
+// Craft rules based on data in your Firestore database.
+//
+// Watch the database id: application data lives in the NAMED database `easyscrape`, so a rule
+// reading `/databases/(default)/...` resolves against a different database and always evaluates
+// to false (or errors). This repo has already lost time to that mismatch — see the comment in
+// functions/scripts/analytics-audit-cli.ts.
 // allow write: if firestore.get(
-//    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
+//    /databases/easyscrape/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
     match /{allPaths=**} {

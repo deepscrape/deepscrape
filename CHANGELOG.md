@@ -1,3 +1,10 @@
+# [0.9.0-beta.16](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.15...v0.9.0-beta.16) (2026-09-21)
+
+
+### Features
+
+* **i18n:** translate the passkey sign-in button ([94f8693](https://github.com/deepscrape/deepscrape/commit/94f86933ff62c092211548b7137bcf9cfb623b6b))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

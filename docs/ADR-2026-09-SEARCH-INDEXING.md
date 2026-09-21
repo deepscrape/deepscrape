@@ -114,6 +114,46 @@ default and the tenant filter isolates correctly.
 Not verified: an actual Firestore → Meilisearch sync, because it does not exist yet, and the
 Fly.io deployment itself.
 
+## Cost: Algolia vs Meilisearch Cloud vs self-hosted on Fly
+
+Published prices, read 2026-09-21. **Verify before relying on them** — all three vendors change
+these without notice, and the two Enterprise tiers are quote-only.
+
+Algolia meters **searches** and **records** separately, and the two details that decide the bill
+are buried in their FAQ: a search-as-you-type implementation "performs a new search request on
+every keystroke", and **every pre-sort replica is a copy of the records and counts again**.
+
+| | Algolia Grow / Grow+ | Meilisearch Cloud | Self-hosted (CE) on Fly |
+|---|---|---|---|
+| Free tier | 10K searches, 50K records | 14-day trial | Unlimited (MIT), you pay infra only |
+| Entry price | Pay as you go, no contract | From **$20/mo**; ~**$30/mo** usage-based (100K docs + 50K searches) or **$23/mo** resource-based (0.5 vCPU / 1 GB) | **~$6.15/mo** (1 GB machine $5.70 + 3 GB volume $0.45) |
+| Search overage | Grow **$0.50** / 1K, Grow+ **$1.75** / 1K | not published | n/a |
+| Record overage | **$0.40** / 1K records/mo (both) | n/a | n/a |
+| Replication | No SKU: implicit infra, but replicas multiply the record bill; 99.99% SLA needs Elevate (annual, quote) | **Enterprise only** | Free in CE by writing the same documents to N nodes yourself |
+| Sharding | No SKU; index limits rise 20 (free) → 50 (Grow/Grow+) → 1000 (Elevate) | **Enterprise only** | Free in CE by splitting tenants across instances and merging results yourself |
+| Index size cap | 1 GB free, 100 GB paid | 2 TiB recommended (80 TiB ceiling) | same as Cloud (it is the same engine) |
+
+Worked comparison at 1M records and 1M searches/month: Algolia Grow+ is about **$2,090/mo**
+(900K record overage ≈ $360, plus 990K searches ≈ $1,730); Algolia Grow keyword-only ≈ **$855/mo**;
+Meilisearch Cloud resource-based is **tens of dollars** on an instance sized for it; self-hosted on
+Fly with 8 GB of RAM is **$42.79/mo** (`shared-cpu-4x` 8 GB) plus a 3 GB volume at **$0.45/mo**,
+and roughly **$12.30/mo** for two 1 GB replicas ($5.70 each plus volumes). The crossover is early:
+Algolia's model is linear in usage, self-hosting is linear in RAM.
+
+**The replication/sharding answer, since it drove this comparison:** Meilisearch's sharding and
+replication are Enterprise in *both* managed and self-hosted form. Self-hosted EE is BUSL and,
+by their own words, "cannot be freely used in production" — it needs a sales conversation. But the
+Enterprise feature buys **coordination, not capability**: in the Community Edition you can get the
+same outcomes by hand — replicate by writing each document to N independent instances behind a
+load balancer (read scaling, N× RAM), and shard by splitting tenants across instances and
+fanning out/merging queries in the BFF (this is what `useNetwork` does for you). You pay in
+engineering and N× hardware instead of a licence, which at this project's scale is the better
+trade. Revisit EE when coordination bugs cost more than the licence.
+
+Fly.io specifics that matter: volumes are **$0.15/GB/mo**, snapshots $0.08/GB/mo (first 10 GB
+free), egress NA↔EU $0.02/GB, and `shared-cpu` 1 GB is $5.70/mo while 8 GB is $42.79/mo. Support
+plans are separate ($29/mo Standard, $199/mo Premium) and are not required.
+
 ## Consequences
 
 - Search is no longer blocked on a missing requirement; it is blocked on the sync layer, which

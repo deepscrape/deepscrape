@@ -1,3 +1,10 @@
+# [0.9.0-beta.14](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.13...v0.9.0-beta.14) (2026-09-21)
+
+
+### Features
+
+* **auth:** make enrolled passkeys do something, and unblock the WebAuthn callables ([7bc3fb3](https://github.com/deepscrape/deepscrape/commit/7bc3fb37c25e6d982a54b4b18dd46abfbca992e3))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

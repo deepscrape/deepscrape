@@ -49,6 +49,7 @@ async function getPasskeyCredentials(userId: string) {
  */
 export const generateWebAuthnRegistrationOptions = onCall(
   {
+    cors: true,
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
@@ -117,6 +118,7 @@ export const generateWebAuthnRegistrationOptions = onCall(
  */
 export const verifyWebAuthnRegistration = onCall(
   {
+    cors: true,
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
@@ -225,6 +227,7 @@ export const verifyWebAuthnRegistration = onCall(
  */
 export const generateWebAuthnAuthenticationOptions = onCall(
   {
+    cors: true,
     secrets: [functionsEnvJson],
     region: "us-central1",
   },
@@ -280,6 +283,7 @@ export const generateWebAuthnAuthenticationOptions = onCall(
  */
 export const verifyWebAuthnAuthentication = onCall(
   {
+    cors: true,
     secrets: [functionsEnvJson],
     region: "us-central1",
   },

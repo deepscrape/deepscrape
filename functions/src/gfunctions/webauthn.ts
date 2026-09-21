@@ -5,6 +5,7 @@
 // write-amplification loop for one authenticated account.
 import { guardedOnCall as onCall } from "../infrastructure/callable-limiter"
 import { Timestamp } from "firebase-admin/firestore"
+import { HttpsError } from "firebase-functions/v2/https"
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -115,7 +116,7 @@ export const generateWebAuthnRegistrationOptions = onCall(
   async (request) => {
     const auth = request.auth
     if (!auth) {
-      throw new Error("Unauthorized")
+      throw new HttpsError("unauthenticated", "Unauthorized")
     }
 
     const userId = auth.uid
@@ -184,7 +185,7 @@ export const verifyWebAuthnRegistration = onCall(
   async (request) => {
     const auth = request.auth
     if (!auth) {
-      throw new Error("Unauthorized")
+      throw new HttpsError("unauthenticated", "Unauthorized")
     }
 
     const userId = auth.uid
@@ -497,7 +498,7 @@ export const getWebAuthnCredentials = onCall(
   async (request) => {
     const auth = request.auth
     if (!auth) {
-      throw new Error("Unauthorized")
+      throw new HttpsError("unauthenticated", "Unauthorized")
     }
 
     try {
@@ -528,7 +529,7 @@ export const removeWebAuthnCredential = onCall(
   async (request) => {
     const auth = request.auth
     if (!auth) {
-      throw new Error("Unauthorized")
+      throw new HttpsError("unauthenticated", "Unauthorized")
     }
 
     const { credentialDocId } = validateCallableData(

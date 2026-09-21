@@ -4,7 +4,7 @@ import { provideRouter, TitleStrategy } from '@angular/router';
 import { routes } from './app.routes';
 import { DomSanitizer, provideClientHydration, withEventReplay, withHttpTransferCacheOptions, withIncrementalHydration } from '@angular/platform-browser';
 import { provideServiceWorker } from '@angular/service-worker';
-import { FirebaseApp, initializeApp, provideFirebaseApp } from '@angular/fire/app';
+import { FirebaseApp, getApp, initializeApp, provideFirebaseApp } from '@angular/fire/app';
 import { connectFirestoreEmulator, getFirestore, provideFirestore } from '@angular/fire/firestore';
 import { connectFunctionsEmulator, getFunctions, provideFunctions } from '@angular/fire/functions';
 import { getStorage, provideStorage } from '@angular/fire/storage';
@@ -103,7 +103,17 @@ export const appConfig: ApplicationConfig = {
     provideAuth(() => getAuth()),
     provideFirestore(() =>
     {
-      const firestore = getFirestore();
+      // The named database the app actually uses. `getFirestore()` with no database id
+      // resolves to `(default)` — a different database, in a different region — and every
+      // consumer of the injected `Firestore` token silently talked to that one instead:
+      // NotificationBellComponent listened on `users/{uid}/alerts` there (never firing —
+      // alert-fanout writes alerts to `easyscrape`) and FirestoreAnalyticsService read
+      // `metrics_*` there (always empty). Services that build their own handle already ask
+      // for 'easyscrape'; this makes the injected one agree. The SDK caches per
+      // (app, database), so it hands back the same instance the services get, which also
+      // means the emulator wiring below applies to the real data path rather than to an
+      // unused one.
+      const firestore = getFirestore(getApp(), 'easyscrape');
       if (environment.emulators && isPlatformBrowser(inject(PLATFORM_ID))) {
         console.log('🔥 Connecting Firestore to Emulator');
         connectFirestoreEmulator(firestore, 'localhost', 5001);

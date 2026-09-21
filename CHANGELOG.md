@@ -1,3 +1,11 @@
+# [0.9.0-beta.18](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.17...v0.9.0-beta.18) (2026-09-21)
+
+
+### Bug Fixes
+
+* **auth:** recover when Identity Toolkit refuses a stale session ([e505a2f](https://github.com/deepscrape/deepscrape/commit/e505a2f3bf4eaa7cc4a1b20bcdfe0aee5f909e83))
+* **push:** give the FCM SDK an app from its own module copy ([a9c7bc3](https://github.com/deepscrape/deepscrape/commit/a9c7bc38b7dc890dad63e09cdabfb1363da4404b))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

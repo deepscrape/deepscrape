@@ -1,6 +1,6 @@
 import { Injectable, inject, NgZone, EnvironmentInjector, runInInjectionContext, Injector, PLATFORM_ID } from '@angular/core'
 // import { AngularFireDatabase, AngularFireList } from '@angular/fire/compat/database'
-import { ActionCodeSettings, Auth, AuthCredential, authState, ConfirmationResult, connectAuthEmulator, getMultiFactorResolver, getRedirectResult, linkWithCredential, linkWithPhoneNumber, linkWithPopup, multiFactor, MultiFactorError, MultiFactorResolver, MultiFactorSession, PhoneAuthProvider, PopupRedirectResolver, reauthenticateWithCredential, RecaptchaVerifier, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithCustomToken, signInWithPopup, TotpMultiFactorGenerator, TotpSecret, updatePassword, updateProfile, User, UserCredential } from '@angular/fire/auth'
+import { ActionCodeSettings, Auth, AuthCredential, AuthProvider, authState, ConfirmationResult, connectAuthEmulator, getMultiFactorResolver, getRedirectResult, linkWithCredential, linkWithPhoneNumber, linkWithPopup, multiFactor, MultiFactorError, MultiFactorResolver, MultiFactorSession, PhoneAuthProvider, PopupRedirectResolver, reauthenticateWithCredential, reauthenticateWithPopup, RecaptchaVerifier, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithCustomToken, signInWithPopup, TotpMultiFactorGenerator, TotpSecret, updatePassword, updateProfile, User, UserCredential } from '@angular/fire/auth'
 import {
   addDoc,
   collection, CollectionReference, connectFirestoreEmulator, deleteDoc, doc, docData, DocumentData, DocumentReference,
@@ -1471,6 +1471,26 @@ export class FirestoreService {
       this._injector,
       async (): Promise<UserCredential> => {
         return await reauthenticateWithCredential(currentUser, credential)
+      },
+    )
+  }
+
+  /**
+   * Re-authenticate with a popup provider.
+   *
+   * Needed for sensitive operations: Identity Toolkit refuses MFA enrolment unless the
+   * session is recent, and it judges that from `auth_time`, which only a real
+   * authentication moves. A forced token refresh does not.
+   *
+   * @param {User} currentUser The signed-in user.
+   * @param {AuthProvider} provider Provider to re-authenticate against.
+   * @return {Promise<UserCredential>} The re-authenticated credential.
+   */
+  public async reauthenticateWithPopup(currentUser: User, provider: AuthProvider): Promise<UserCredential> {
+    return this.runAsyncInInjectionContext(
+      this._injector,
+      async (): Promise<UserCredential> => {
+        return await reauthenticateWithPopup(currentUser, provider)
       },
     )
   }

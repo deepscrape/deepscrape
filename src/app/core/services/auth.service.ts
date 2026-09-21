@@ -24,6 +24,7 @@ import { Subscription } from 'rxjs/internal/Subscription';
 import { Guest, loginHistoryInfo, Users } from '../types';
 import { BehaviorSubject } from 'rxjs/internal/BehaviorSubject';
 import { FirestoreService } from './firestore.service'
+import { retryOnceAfterFreshCredential } from '../functions/sensitive-op.fun'
 import { environment } from 'src/environments/environment';
 import { from } from 'rxjs/internal/observable/from';
 import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
@@ -366,7 +367,7 @@ export class AuthService {
       return throwError(() => new Error('auth/operation-not-supported-in-this-environment'));
     }
     return from(this.fireService.signInWithPopup(provider)).pipe(
-      switchMap((result) => this.emptyBackend(result.user.getIdToken(), provider.providerId, result)), // Use emptyBackend to avoid email enumaration protection 
+      switchMap((result) => this.emptyBackend(provider.providerId, result)), // Use emptyBackend to avoid email enumaration protection 
       catchError((error) => {
         console.error('Google sign-in error:', error?.code);
         return throwError(() => error);
@@ -381,7 +382,7 @@ export class AuthService {
       return throwError(() => new Error('auth/operation-not-supported-in-this-environment'));
     }
     return from(this.fireService.signInWithPopup(provider)).pipe(
-      switchMap((result) => this.emptyBackend(result.user.getIdToken(), provider.providerId, result)),
+      switchMap((result) => this.emptyBackend(provider.providerId, result)),
       catchError((error) => {
         console.error('Facebook sign-in error:', error?.code);
         return throwError(() => error);
@@ -396,7 +397,7 @@ export class AuthService {
       return throwError(() => new Error('auth/operation-not-supported-in-this-environment'));
     }
     return from(this.fireService.signInWithPopup(provider)).pipe(
-      switchMap((result) => this.emptyBackend(result.user.getIdToken(), provider.providerId, result)),
+      switchMap((result) => this.emptyBackend(provider.providerId, result)),
       catchError((error) => {
         console.error('Github sign-in error:', error?.code);
         return throwError(() => error);
@@ -415,7 +416,7 @@ export class AuthService {
   // Sign in with Email and Password
   signInWithEmail(email: string, password: string) {
     return from(this.fireService.signInWithEmailAndPassword(email, password)).pipe(
-      switchMap((result) => this.emptyBackend(result.user.getIdToken(), 'password', result)),
+      switchMap((result) => this.emptyBackend('password', result)),
       catchError((error) => {
         console.error('Email/Password sign-in error:', error?.code);
         return throwError(() => error)
@@ -635,6 +636,59 @@ export class AuthService {
     return multiFactor(currentUser).enrolledFactors;
   }
 
+  /**
+   * Re-authenticate so the session counts as recent again.
+   *
+   * Enrolling or removing a second factor is a sensitive operation: Identity Toolkit checks
+   * `auth_time` and refuses unless the user authenticated within the last few minutes. The
+   * session itself lives far longer than that window, so a user who signed in yesterday —
+   * or an hour ago — is still signed in and still refused. Only a real authentication moves
+   * `auth_time`; `getIdToken(true)` does not.
+   *
+   * Only the popup providers can be refreshed without asking for input. Password and phone
+   * accounts need a credential the user has to type, and a passkey session (custom token, so
+   * no providerData) has no provider to re-authenticate against. Those return false so the
+   * caller reports the failure rather than retrying for nothing.
+   *
+   * @return {Promise<boolean>} Whether the session was refreshed.
+   */
+  private async refreshStaleCredential(): Promise<boolean> {
+    const currentUser = this.auth.currentUser
+    if (!currentUser) {
+      return false
+    }
+
+    const providerId = currentUser.providerData.find((provider) => provider.providerId)?.providerId || ''
+
+    try {
+      if (providerId === GoogleAuthProvider.PROVIDER_ID) {
+        await this.fireService.reauthenticateWithPopup(currentUser, new GoogleAuthProvider())
+        return true
+      }
+
+      if (providerId === GithubAuthProvider.PROVIDER_ID) {
+        await this.fireService.reauthenticateWithPopup(currentUser, new GithubAuthProvider())
+        return true
+      }
+    } catch (error) {
+      console.error('Re-authentication for a sensitive operation failed:', error)
+    }
+
+    return false
+  }
+
+  /**
+   * Run a sensitive operation, re-authenticating once if Identity Toolkit rejects the
+   * session as stale. The decision and the single retry live in `sensitive-op.fun.ts`,
+   * which is unit-testable without constructing this service.
+   *
+   * @param {*} operation The call to attempt.
+   * @return {Promise<T>} The operation result.
+   */
+  private async withFreshCredential<T>(operation: () => Promise<T>): Promise<T> {
+    return retryOnceAfterFreshCredential(operation, () => this.refreshStaleCredential())
+  }
+
   async startTotpEnrollment(): Promise<{
     secret: TotpSecret,
     secretKey: string,
@@ -657,7 +711,7 @@ export class AuthService {
       throw new Error('Authenticator app MFA is not available for this sign-in method. Use email/password, Google, or GitHub as first factor, then enroll MFA.')
     }
 
-    const multiFactorSession = await this.fireService.getMultiFactorSession(currentUser);
+    const multiFactorSession = await this.withFreshCredential(() => this.fireService.getMultiFactorSession(currentUser));
     let secret: TotpSecret;
     try {
       secret = await this.fireService.generateTotpSecret(multiFactorSession);
@@ -690,7 +744,7 @@ export class AuthService {
     }
 
     const assertion = TotpMultiFactorGenerator.assertionForEnrollment(secret, verificationCode);
-    await this.fireService.enrollMultiFactor(currentUser, assertion, displayName.trim() || 'Authenticator app');
+    await this.withFreshCredential(() => this.fireService.enrollMultiFactor(currentUser, assertion, displayName.trim() || 'Authenticator app'));
     await this.refreshUserData();
   }
 
@@ -706,7 +760,7 @@ export class AuthService {
       throw new Error('SMS MFA is not available for the current sign-in method. Sign in with email/password, Google, or GitHub and try again.')
     }
 
-    const multiFactorSession = await this.fireService.getMultiFactorSession(currentUser)
+    const multiFactorSession = await this.withFreshCredential(() => this.fireService.getMultiFactorSession(currentUser))
     return await this.fireService.verifyPhoneNumberForMfa({ phoneNumber, session: multiFactorSession }, appVerifier)
   }
 
@@ -718,7 +772,7 @@ export class AuthService {
 
     const credential = PhoneAuthProvider.credential(verificationId, code)
     const assertion = PhoneMultiFactorGenerator.assertion(credential)
-    await this.fireService.enrollMultiFactor(currentUser, assertion, displayName.trim() || 'SMS / Text message')
+    await this.withFreshCredential(() => this.fireService.enrollMultiFactor(currentUser, assertion, displayName.trim() || 'SMS / Text message'))
     await this.refreshUserData()
   }
 
@@ -728,7 +782,7 @@ export class AuthService {
       throw new Error('No user logged in');
     }
 
-    await this.fireService.unenrollMultiFactor(currentUser, enrollmentUid);
+    await this.withFreshCredential(() => this.fireService.unenrollMultiFactor(currentUser, enrollmentUid));
     await this.refreshUserData();
   }
 
@@ -1084,7 +1138,19 @@ export class AuthService {
       catchError((error) => throwError(() => error.error || 'Server error'))
     );
   }
-  private emptyBackend(idTokenPromise: Promise<string>, providerId: string, userCredential: any): Observable<{
+  /**
+   * Finish a sign-in without telling the backend about it.
+   *
+   * Deliberately does not call `getIdToken()`: the token used to be fetched here for a
+   * backend call that no longer happens, and because the promise was created at the call
+   * site and never consumed, a transient failure made it an unhandled rejection —
+   * `Uncaught (in promise) FirebaseError: auth/network-request-failed` on every sign-in.
+   *
+   * @param {string} providerId Sign-in provider, kept for parity with sendTokenToBackend.
+   * @param {*} userCredential The credential returned by the provider.
+   * @return {Observable<{mergeRequired: boolean, user: User, result: UserCredential, credential?: any, existingUid?: string}>} The sign-in outcome.
+   */
+  private emptyBackend(providerId: string, userCredential: any): Observable<{
     mergeRequired: boolean,
     user: User,
     result: UserCredential,

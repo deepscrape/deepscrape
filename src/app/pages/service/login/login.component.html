@@ -92,12 +92,10 @@
           </div>
         } @else {
         <!-- Passkey sign-in, first because it is both the strongest option and the shortest
-             path: the OS prompt is the whole interaction. ponytail: plain label rather than
-             a new i18n key, matching the precedent in general.component.ts — move it to
-             LOGIN.PASSKEY_BUTTON if the catalogues ever need it. -->
+             path: the OS prompt is the whole interaction. -->
         <button type="button" (click)="loginWithPasskey()"
           class="mb-2 w-full flex items-center justify-center gap-2 rounded bg-white dark:bg-gray-800 px-2 py-2 text-xs xs:text-base md:text-lg font-bold text-gray-800 dark:text-gray-200 shadow transition-all duration-150 hover:shadow-md active:bg-gray-100 dark:active:bg-gray-700 outline-none hover:bg-[#3939393b] hover:text-gray-900 dark:hover:bg-gray-700/30 dark:hover:text-white focus:ring-2 focus:ring-indigo-300 dark:focus:ring-indigo-600">
-          <span>Sign in with a passkey</span>
+          <span>{{ 'LOGIN.PASSKEY_BUTTON' | translate }}</span>
         </button>
 
         <!-- Social Login Buttons -->

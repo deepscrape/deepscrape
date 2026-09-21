@@ -762,7 +762,7 @@ export class LoginComponent  {
     try {
       const { verified, customToken } = await this.webAuthnService.authenticateWithPasskey();
       if (!verified || !customToken) {
-        this.errorMessage = this.webAuthnService.error() || 'Passkey sign-in failed.';
+        this.errorMessage = this.webAuthnService.error() || this.translate.instant('LOGIN.PASSKEY_FAILED');
         return;
       }
 

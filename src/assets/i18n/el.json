@@ -121,6 +121,8 @@
     "WELCOME_MESSAGE": "Καλώς ήρθατε πίσω! Παρακαλώ εισάγετε τα διαπιστευτήριά σας.",
     "GITHUB_BUTTON": "Github",
     "GOOGLE_BUTTON": "Google",
+    "PASSKEY_BUTTON": "Σύνδεση με κλειδί πρόσβασης",
+    "PASSKEY_FAILED": "Η σύνδεση με κλειδί πρόσβασης απέτυχε.",
     "OR_DIVIDER": "ή",
     "IDENTIFIER_LABEL": "Email ή Αριθμός Τηλεφώνου",
     "IDENTIFIER_PLACEHOLDER": "Εισάγετε το Email ή τον Αριθμό Τηλεφώνου σας",

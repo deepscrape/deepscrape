@@ -121,6 +121,8 @@
     "WELCOME_MESSAGE": "Willkommen zurück! Bitte geben Sie Ihre Anmeldedaten ein.",
     "GITHUB_BUTTON": "Github",
     "GOOGLE_BUTTON": "Google",
+    "PASSKEY_BUTTON": "Mit Passkey anmelden",
+    "PASSKEY_FAILED": "Anmeldung mit Passkey fehlgeschlagen.",
     "OR_DIVIDER": "oder",
     "IDENTIFIER_LABEL": "E-Mail oder Telefonnummer",
     "IDENTIFIER_PLACEHOLDER": "E-Mail oder Telefonnummer eingeben",

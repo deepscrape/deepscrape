@@ -121,6 +121,8 @@
     "WELCOME_MESSAGE": "Welcome back! Please enter your credentials.",
     "GITHUB_BUTTON": "Github",
     "GOOGLE_BUTTON": "Google",
+    "PASSKEY_BUTTON": "Sign in with a passkey",
+    "PASSKEY_FAILED": "Passkey sign-in failed.",
     "OR_DIVIDER": "or",
     "IDENTIFIER_LABEL": "Email or Phone Number",
     "IDENTIFIER_PLACEHOLDER": "Enter your Email or Phone Number",

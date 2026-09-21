@@ -1,7 +1,7 @@
 /* eslint-disable max-len */
 import assert from "node:assert/strict"
 import test from "node:test"
-import {enforceCallableRateLimit, guardedOnCall, resolveCallableLimitKey} from "./callable-limiter"
+import {APP_CHECK_ENFORCED, applyAppCheckPolicy, enforceCallableRateLimit, guardedOnCall, resolveCallableLimitKey} from "./callable-limiter"
 
 // Covers the branches reachable without mocking Redis. The counter itself is the same
 // atomic FIXED_WINDOW_INCREMENT Lua script already exercised by
@@ -57,4 +57,38 @@ test("guardedOnCall still passes the request through to the handler", async () =
   // If the wrapper ever swallows the handler call, this fails.
   assert.equal(result, "ok")
   assert.equal(seen, request)
+})
+
+test("applyAppCheckPolicy keeps the server in lockstep with a client that sends no token", () => {
+  // app.config.ts no longer calls provideAppCheck(), so the browser sends no App Check
+  // token, and firebase-functions rejects a MISSING app token with a bare
+  // HttpsError("unauthenticated", "Unauthenticated") whenever enforceAppCheck is true.
+  // Nine callables in gfunctions/sessions.ts declared `true` and were therefore dead for
+  // every real user — session revoke, sign-out, device removal, MFA preferences and both
+  // halves of device verification. 156 tests passed with all of that broken, so pin it.
+  assert.equal(APP_CHECK_ENFORCED, false, "flip this only after provideAppCheck() is restored")
+
+  // A declared `true` must not survive while the client cannot produce a token: that is
+  // precisely the combination that turns a hardening flag into an outage.
+  const declaredTrue = applyAppCheckPolicy({region: "us-central1", enforceAppCheck: true})
+  assert.equal(
+    declaredTrue["enforceAppCheck"],
+    false,
+    "enforceAppCheck: true with a tokenless client makes the callable unreachable",
+  )
+
+  // Every other option is load-bearing for deployment (secrets, region, memory, cors)
+  // and must pass through untouched.
+  assert.equal(declaredTrue["region"], "us-central1")
+  const declaredFalse = applyAppCheckPolicy({secrets: ["a"], memory: "256MiB", enforceAppCheck: false})
+  assert.deepEqual(declaredFalse["secrets"], ["a"])
+  assert.equal(declaredFalse["memory"], "256MiB")
+  assert.equal(declaredFalse["enforceAppCheck"], false)
+
+  // The effective value is always the call site's intent AND the global switch, so the
+  // two halves can only be enabled together.
+  assert.equal(
+    applyAppCheckPolicy({enforceAppCheck: true})["enforceAppCheck"],
+    APP_CHECK_ENFORCED,
+  )
 })

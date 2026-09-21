@@ -128,9 +128,14 @@ export const appConfig: ApplicationConfig = {
     // ponytail: the App Check client here was dead code — the 'APP_CHECK' string token
     // is never injected by anything (contact.component takes AppCheck with
     // { optional: true }, and provideAppCheck was already commented out), yet this block
-    // statically imported the whole App Check SDK into the initial bundle. Server-side
-    // enforcement is untouched: the callables still declare enforceAppCheck: true.
-    // Re-add with provideAppCheck() only when a client actually needs App Check tokens.
+    // statically imported the whole App Check SDK into the initial bundle.
+    //
+    // Removing it left the server enforcing a token the browser never sends, which made
+    // every callable declaring `enforceAppCheck: true` fail with UNAUTHENTICATED (session
+    // revoke, sign-out, device verification, device removal, MFA preferences).
+    // `APP_CHECK_ENFORCED` in functions/src/infrastructure/callable-limiter.ts now gates
+    // that, so this file and that constant are the two halves of one switch: re-add
+    // provideAppCheck() here FIRST, then flip that constant to true.
     provideAnimationsAsync(),
     importProvidersFrom(ReactiveFormsModule),
     {

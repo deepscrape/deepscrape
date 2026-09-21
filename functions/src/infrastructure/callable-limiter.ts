@@ -20,6 +20,50 @@ import {
   callableRateLimitKey,
 } from "../../../src/config/redis-keys"
 
+/**
+ * Whether a wrapped callable requires a valid App Check token.
+ *
+ * MUST move in lockstep with the client. `app.config.ts` no longer calls
+ * `provideAppCheck()` (the App Check client was deleted as dead code), so the browser
+ * sends NO App Check token — and firebase-functions answers a missing token with a bare
+ * `HttpsError("unauthenticated", "Unauthenticated")` whenever a callable declares
+ * `enforceAppCheck: true`:
+ *
+ *   if (tokenStatus.app === "MISSING" && options.enforceAppCheck) throw ...
+ *
+ * So that declaration never hardened the handlers, it disabled them. The nine in
+ * gfunctions/sessions.ts that set it — session revoke (user + admin + bulk), sign-out,
+ * device removal, MFA preferences, and both halves of device verification — returned
+ * `{error:{message:"Unauthenticated",status:"UNAUTHENTICATED"}}` for every real user.
+ * That is the whole reason a revoke button could never work, and why device
+ * verification could prompt but never be completed.
+ *
+ * Enforcement lives here rather than at the call sites so the two halves can only be
+ * flipped together: restore `provideAppCheck()` on the client, then set this to true.
+ * Until then the boundary is the verified ID token plus the `auth.uid === userId`
+ * ownership check every one of those handlers already performs.
+ */
+export const APP_CHECK_ENFORCED = false
+
+/**
+ * Apply the App Check policy to one callable's declared options.
+ *
+ * Kept pure and exported so the invariant is testable without mocking the framework:
+ * a call site may declare `enforceAppCheck: true`, but the effective value is that AND
+ * the global switch. Every other option (`secrets`, `region`, `memory`, `cors`, …)
+ * passes through untouched — they are load-bearing, and dropping one silently changes
+ * how the function is deployed.
+ *
+ * @param {Record<string, unknown>} options - Options as declared at the call site.
+ * @return {Record<string, unknown>} The options the framework will actually see.
+ */
+export const applyAppCheckPolicy = (
+  options: Record<string, unknown>,
+): Record<string, unknown> => ({
+  ...options,
+  enforceAppCheck: APP_CHECK_ENFORCED && Boolean(options["enforceAppCheck"]),
+})
+
 type CallableLike = {
   auth?: {uid?: string} | null
   data?: unknown
@@ -141,7 +185,10 @@ export const guardedOnCall = ((
     return rawOnCall(guarded as never)
   }
 
-  return rawOnCall(options as never, guarded as never)
+  return rawOnCall(
+    applyAppCheckPolicy(options as Record<string, unknown>) as never,
+    guarded as never,
+  )
   // ponytail: the cast is the price of being a transparent drop-in for an overloaded
   // generic. Typing it properly means restating firebase-functions' overloads and
   // re-validating them at ~65 untouched call sites, for no extra safety — tsc still

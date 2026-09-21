@@ -2825,3 +2825,131 @@ export const removeTrustedDevice = onCall(
     }
   },
 )
+
+/**
+ * Cloud Function: remove every enrolled second factor for a user (support recovery).
+ *
+ * Firebase's own MFA guidance is that a user who enrols a single factor and then loses
+ * it is locked out — and nothing here could undo that. `unenrollMultiFactor` runs on the
+ * client and needs a live, recently-re-authenticated session, which is exactly what a
+ * locked-out user does not have, and `enableTotpMfa` is Identity Platform *project*
+ * configuration rather than a per-user reset. This is the missing exit, and it is
+ * deliberately admin-only: it removes a security control from someone else's account.
+ *
+ * Factors are cleared before refresh tokens are revoked. Revoking first would invalidate
+ * the caller's own token when an admin resets their own account, and either order leaves
+ * the target signed out at the next token refresh — which is intended, because a factor
+ * reset is a credential change and existing sessions must not outlive it.
+ *
+ * Removing a factor weakens the account, so it is written to `audit_logs`, to the
+ * target's security timeline, and announced to the owner. That last one is the difference
+ * between a support recovery and a takeover that covers its tracks.
+ */
+export const adminResetUserMfa = onCall(
+  {
+    cors: true,
+    enforceAppCheck: true,
+    secrets: [functionsEnvJson],
+    region: "us-central1",
+  },
+  async (request) => {
+    const { targetUserId, reason } = validateCallableData(z.object({
+      targetUserId: z.string().min(1).max(128),
+      reason: z.string().max(256).optional(),
+    }), request.data)
+    const auth = request.auth
+
+    if (!auth) {
+      throw new HttpsError("unauthenticated", "Unauthorized: You must be authenticated")
+    }
+
+    const normalizedTargetUserId = String(targetUserId || "").trim()
+    if (!normalizedTargetUserId) {
+      throw new HttpsError("invalid-argument", "Missing required field: targetUserId")
+    }
+
+    const actorAccess = await resolveActorSessionAccess(auth)
+    if (!actorAccess.canManageSessions) {
+      throw new HttpsError("permission-denied", "Unauthorized: Elevated role required")
+    }
+
+    try {
+      const targetUser = await adminAuth.getUser(normalizedTargetUserId)
+      const enrolledFactors = targetUser.multiFactor?.enrolledFactors || []
+
+      // Idempotent: a second attempt (the usual retry after a timeout) must not look
+      // like a second reset, and must not produce a second "your 2FA was removed" alert.
+      if (enrolledFactors.length === 0) {
+        return {
+          success: true,
+          targetUserId: normalizedTargetUserId,
+          removedFactors: 0,
+          message: "No enrolled second factor to remove",
+        }
+      }
+
+      // An empty enrolledFactors array is the Admin SDK's "remove every factor".
+      await adminAuth.updateUser(normalizedTargetUserId, {
+        multiFactor: { enrolledFactors: [] },
+      })
+      await adminAuth.revokeRefreshTokens(normalizedTargetUserId)
+
+      await writeSecurityAuditAndTimeline({
+        userId: normalizedTargetUserId,
+        action: "admin_reset_mfa",
+        eventType: "mfa_reset_by_admin",
+        message: "All enrolled second factors were removed by an administrator",
+        metadata: {
+          actorUid: auth.uid,
+          actorRole: actorAccess.role,
+          reason: reason || "admin_initiated_mfa_reset",
+          removedFactors: enrolledFactors.map((factor) => ({
+            factorId: factor.factorId,
+            uid: factor.uid,
+          })),
+        },
+      })
+
+      await db.collection("audit_logs").add({
+        action: "privileged_reset_mfa",
+        admin_uid: auth.uid,
+        target_userId: normalizedTargetUserId,
+        reason: reason || "admin_initiated_mfa_reset",
+        timestamp: Timestamp.now(),
+        isAdmin: actorAccess.role === "admin",
+        actorRole: actorAccess.role,
+      })
+
+      // The push for this goes out through the alert fan-out; a failure to notify must
+      // never fail the reset, which is why this is swallowed.
+      await db.collection("users").doc(normalizedTargetUserId).collection("alerts").add({
+        type: "warning",
+        category: "mfa_disabled",
+        severity: "warning",
+        title: "Two-factor authentication was reset",
+        message: "An administrator removed the second factors on your account so you could sign in again. Re-enable an authenticator app or SMS in Security settings.",
+        createdAt: Timestamp.now(),
+        read: false,
+        metadata: {
+          source: "adminResetUserMfa",
+          actorUid: auth.uid,
+          removedFactors: enrolledFactors.length,
+        },
+      }).catch((error) => {
+        console.warn(`Failed to write MFA reset alert for ${normalizedTargetUserId}:`, error)
+      })
+
+      console.log(`✅ MFA reset for ${normalizedTargetUserId} by ${auth.uid}`)
+
+      return {
+        success: true,
+        targetUserId: normalizedTargetUserId,
+        removedFactors: enrolledFactors.length,
+      }
+    } catch (error) {
+      if (error instanceof HttpsError) throw error
+      console.error("❌ Error resetting user MFA:", error)
+      throw new Error("Failed to reset user MFA")
+    }
+  },
+)

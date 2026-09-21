@@ -143,6 +143,7 @@ export const verifyAndTrustDevice = sessions.verifyAndTrustDevice
 export const isDeviceTrusted = sessions.isDeviceTrusted
 export const getTrustedDevices = sessions.getTrustedDevices
 export const removeTrustedDevice = sessions.removeTrustedDevice
+export const adminResetUserMfa = sessions.adminResetUserMfa
 
 /* WebAuthn / Passkey - Functions */
 export const generateWebAuthnRegistrationOptions = webauthn.generateWebAuthnRegistrationOptions

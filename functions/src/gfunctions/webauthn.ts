@@ -12,6 +12,8 @@ import {
   verifyAuthenticationResponse,
 } from "@simplewebauthn/server"
 import { db, auth as adminAuth } from "../app/config"
+import { redis } from "../app/cacheConfig"
+import { PASSKEY_CHALLENGE_PREFIX, PASSKEY_CHALLENGE_TTL_SECONDS } from "../../../src/config/redis-keys"
 import { env, functionsEnvJson } from "../config/env"
 import { validateCallableData } from "../infrastructure/validate"
 import { z } from "zod"
@@ -41,6 +43,59 @@ async function getPasskeyCredentials(userId: string) {
     ...doc.data(),
     createdAt: doc.data().createdAt?.toDate?.()?.toISOString?.() || doc.data().createdAt,
   }))
+}
+
+/**
+ * Read the challenge the browser signed, out of the assertion's client data.
+ *
+ * An anonymous sign-in cannot be handed a challenge to look up — the caller has not said
+ * who they are — so the value travels back inside `clientDataJSON` and the Redis key is
+ * derived from it. `verifyAuthenticationResponse` would compare it anyway; reading it here
+ * is what lets the right key be found in the first place.
+ *
+ * @param {string} clientDataJSON Base64url client data from the assertion.
+ * @return {string} The challenge the client signed.
+ */
+const readChallengeFromClientData = (clientDataJSON: string): string => {
+  const decoded = JSON.parse(
+    Buffer.from(clientDataJSON, "base64url").toString("utf8")
+  ) as { challenge?: string }
+
+  if (!decoded.challenge) {
+    throw new Error("Malformed WebAuthn client data")
+  }
+
+  return decoded.challenge
+}
+
+/**
+ * Find a stored passkey by its credential id.
+ *
+ * With an owner this is a subcollection lookup. Without one — a sign-in — the credential id
+ * is the only identity the request carries, so it becomes a collection-group query, and the
+ * assertion still has to verify against the public key stored under whichever owner it
+ * resolves to. That is the whole reason `passkey_credentials` has a collection-group index
+ * on `credentialId`.
+ *
+ * @param {string} userId Owner uid, or an empty string for a sign-in.
+ * @param {string} credentialIdB64 Credential id returned by the authenticator.
+ * @return {*} The matching credential documents.
+ */
+const findPasskeyCredential = (userId: string, credentialIdB64: string) => {
+  if (userId) {
+    return db
+      .collection("users")
+      .doc(userId)
+      .collection("passkey_credentials")
+      .where("credentialId", "==", credentialIdB64)
+      .get()
+  }
+
+  return db
+    .collectionGroup("passkey_credentials")
+    .where("credentialId", "==", credentialIdB64)
+    .limit(1)
+    .get()
 }
 
 /**
@@ -237,36 +292,53 @@ export const generateWebAuthnAuthenticationOptions = onCall(
    */
   async (request) => {
     const auth = request.auth
-    if (!auth) {
-      throw new Error("Unauthorized")
-    }
-
-    const userId = auth.uid
+    const userId = auth?.uid
 
     try {
-      const existingCreds = await getPasskeyCredentials(userId)
+      // Signed-in caller: this is a step-up, so the credential list is theirs and the
+      // challenge lives beside it — one doc per user is bounded.
+      if (userId) {
+        const existingCreds = await getPasskeyCredentials(userId)
 
-      const allowCredentials = existingCreds
-        .filter((c: any) => c.credentialId)
-        .map((c: any) => ({
-          id: c.credentialId,
-          transports: ["internal" as const],
-        }))
+        const allowCredentials = existingCreds
+          .filter((c: any) => c.credentialId)
+          .map((c: any) => ({
+            id: c.credentialId,
+            transports: ["internal" as const],
+          }))
 
-      const opts = {
-        rpID: RP_ID,
-        allowCredentials,
-        userVerification: "required" as const,
+        const opts = {
+          rpID: RP_ID,
+          allowCredentials,
+          userVerification: "required" as const,
+        }
+
+        const options = await generateAuthenticationOptions(opts)
+
+        // Store the challenge temporarily
+        await db.collection("users").doc(userId).collection("webauthn_challenges").doc("current").set({
+          challenge: options.challenge,
+          createdAt: Timestamp.now(),
+          type: "authentication",
+        })
+
+        return { success: true, options }
       }
 
-      const options = await generateAuthenticationOptions(opts)
-
-      // Store the challenge temporarily
-      await db.collection("users").doc(userId).collection("webauthn_challenges").doc("current").set({
-        challenge: options.challenge,
-        createdAt: Timestamp.now(),
-        type: "authentication",
+      // Signed-out caller: a sign-in. Nothing identifies the user yet, so allowCredentials
+      // stays empty and the authenticator picks a discoverable credential, and the
+      // challenge goes to Redis because it has to expire on its own.
+      const options = await generateAuthenticationOptions({
+        rpID: RP_ID,
+        allowCredentials: [],
+        userVerification: "required" as const,
       })
+
+      await redis.setex(
+        `${PASSKEY_CHALLENGE_PREFIX}${options.challenge}`,
+        PASSKEY_CHALLENGE_TTL_SECONDS,
+        JSON.stringify({ createdAt: new Date().toISOString() }),
+      )
 
       return { success: true, options }
     } catch (error) {
@@ -293,11 +365,7 @@ export const verifyWebAuthnAuthentication = onCall(
    */
   async (request) => {
     const auth = request.auth
-    if (!auth) {
-      throw new Error("Unauthorized")
-    }
-
-    const userId = auth.uid
+    const userId = auth?.uid
     const { credential } = validateCallableData(
       z.object({
         credential: z.object({
@@ -317,23 +385,32 @@ export const verifyWebAuthnAuthentication = onCall(
     )
 
     try {
-      // Retrieve the stored challenge
-      const challengeDoc = await db
-        .collection("users")
-        .doc(userId)
-        .collection("webauthn_challenges")
-        .doc("current")
-        .get()
+      // Either way the challenge is one we issued, and consuming it is what keeps the
+      // ceremony single-use: the doc is deleted, the Redis key is read and dropped.
+      let expectedChallenge: string
+      if (userId) {
+        const challengeDoc = await db
+          .collection("users")
+          .doc(userId)
+          .collection("webauthn_challenges")
+          .doc("current")
+          .get()
 
-      if (!challengeDoc.exists) {
-        throw new Error("No pending authentication challenge found")
+        if (!challengeDoc.exists) {
+          throw new Error("No pending authentication challenge found")
+        }
+
+        expectedChallenge = challengeDoc.data()!.challenge
+        await challengeDoc.ref.delete()
+      } else {
+        expectedChallenge = readChallengeFromClientData(credential.response.clientDataJSON)
+        const challengeKey = `${PASSKEY_CHALLENGE_PREFIX}${expectedChallenge}`
+        const pending = await redis.get(challengeKey)
+        if (!pending) {
+          throw new Error("Passkey challenge not found or already used. Please try again.")
+        }
+        await redis.del(challengeKey)
       }
-
-      const challengeData = challengeDoc.data()!
-      const expectedChallenge = challengeData.challenge
-
-      // Clean up the challenge
-      await challengeDoc.ref.delete()
 
       // Find the stored credential by the credential ID sent back from the client
       const credentialIdRaw = credential.rawId || credential.id
@@ -341,12 +418,9 @@ export const verifyWebAuthnAuthentication = onCall(
         typeof credentialIdRaw === "string" ? credentialIdRaw : new Uint8Array(credentialIdRaw)
       ).toString("base64url")
 
-      const credSnapshot = await db
-        .collection("users")
-        .doc(userId)
-        .collection("passkey_credentials")
-        .where("credentialId", "==", credentialIdB64)
-        .get()
+      // A step-up is scoped to the caller; a sign-in has no caller at all, so the lookup
+      // widens to the whole collection group (see findPasskeyCredential).
+      const credSnapshot = await findPasskeyCredential(userId || "", credentialIdB64)
 
       if (credSnapshot.empty) {
         throw new Error("Passkey credential not found. It may have been removed.")
@@ -354,6 +428,11 @@ export const verifyWebAuthnAuthentication = onCall(
 
       const credDoc = credSnapshot.docs[0]
       const storedCred = credDoc.data() as any
+      const ownerUserId = userId || credDoc.ref.parent.parent?.id || ""
+
+      if (!ownerUserId) {
+        throw new Error("Passkey credential is not owned by a user")
+      }
 
       const verification = await verifyAuthenticationResponse({
         response: credential as any,
@@ -378,12 +457,20 @@ export const verifyWebAuthnAuthentication = onCall(
         lastUsedAt: Timestamp.now(),
       })
 
-      console.log(`✅ Passkey authentication verified for user ${userId}`)
+      // A passkey is not a Firebase provider, so a sign-in has to be exchanged for a custom
+      // token. This deliberately raises no second-factor prompt: Google's own documentation
+      // says "your passkey bypasses the second authentication step, since this verifies that
+      // you own the device", and userVerification is "required" here — the credential
+      // already proves possession plus a device unlock.
+      const customToken = userId ? "" : await adminAuth.createCustomToken(ownerUserId)
+
+      console.log(`✅ Passkey authentication verified for user ${ownerUserId}`)
 
       return {
         success: true,
         credentialId: credDoc.id,
         newCounter: verification.authenticationInfo.newCounter,
+        customToken,
       }
     } catch (error) {
       console.error("❌ Error verifying WebAuthn authentication:", error)

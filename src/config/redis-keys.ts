@@ -171,6 +171,24 @@ export const MEMBERSHIPS_CACHE_TTL_SECONDS = 60
 /** TTL for a verification code, matching the Firestore `expiresAt` it shadows. */
 export const VERIFICATION_TTL_SECONDS = 10 * 60
 
+/**
+ * A discoverable-credential challenge for a passkey *sign-in*, keyed by the challenge
+ * itself because the caller is anonymous and there is no uid to key it to.
+ *
+ * Why Redis and not Firestore: the challenge must expire on its own. The signed-in
+ * ceremony stores one challenge doc per user (`users/{uid}/webauthn_challenges/current`),
+ * which is bounded by the user count; a collection keyed by random challenges would grow
+ * without bound — the exact failure `redis-keys.ts` exists to prevent.
+ */
+export const PASSKEY_CHALLENGE_PREFIX = 'passkey:challenge:'
+
+/**
+ * TTL for that challenge. Long enough to scan a QR code or reach for a security key,
+ * short enough that a captured challenge is not replayable later. Matches
+ * VERIFICATION_TTL_SECONDS' order of magnitude rather than the session TTLs above.
+ */
+export const PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60
+
 export const TRUSTED_DEVICE_TTL_SECONDS = 90 * 24 * 60 * 60
 
 /** Verification-code request budget per user. */

@@ -180,7 +180,7 @@ export class WebAuthnService {
    * Authenticate using an existing passkey.
    * Returns true if verified.
    */
-  async authenticateWithPasskey(): Promise<boolean> {
+  async authenticateWithPasskey(): Promise<{ verified: boolean; customToken: string }> {
     this.isAuthenticating.set(true)
     this.error.set('')
 
@@ -224,10 +224,12 @@ export class WebAuthnService {
       // Step 5: Verify on the server
       const result = await this.firestore.callFunction<
         { credential: any },
-        { success: boolean; credentialId: string; newCounter: number }
+        { success: boolean; credentialId: string; newCounter: number; customToken?: string }
       >('verifyWebAuthnAuthentication', { credential: serializedCredential })
 
-      return result.success
+      // The token is empty for a step-up (the caller is already signed in) and set for a
+      // sign-in, which is the only case that has a session to create.
+      return { verified: result.success, customToken: result.customToken || '' }
     } catch (error: any) {
       console.error('Failed to authenticate with passkey:', error)
       const msg = error?.message || ''
@@ -236,7 +238,7 @@ export class WebAuthnService {
       } else {
         this.error.set(msg || 'Failed to authenticate with passkey.')
       }
-      return false
+      return { verified: false, customToken: '' }
     } finally {
       this.isAuthenticating.set(false)
     }

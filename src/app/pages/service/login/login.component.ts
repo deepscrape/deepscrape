@@ -59,7 +59,7 @@ import { HttpClient } from '@angular/common/http';
 
 import { I18nService } from 'src/app/core/i18n';
 import { getBrowser, getErrorMessage, resolveSafeReturnUrl } from 'src/app/core/functions';
-import { AnalyticsService, AuthService, DeviceVerificationService, FirestoreService, GuestTrackingService, SnackbarService, ThemeService, WindowToken } from 'src/app/core/services';
+import { AnalyticsService, AuthService, DeviceVerificationService, FirestoreService, GuestTrackingService, SnackbarService, ThemeService, WebAuthnService, WindowToken } from 'src/app/core/services';
 import { SnackBarType } from 'src/app/core/components';
 import { DEFAULT_PROFILE_URL } from 'src/app/core/variables';
 import { NAVIGATOR } from 'src/app/core/providers';
@@ -104,6 +104,7 @@ export class LoginComponent  {
   private themePicker = inject(ThemeService)
   private guestTrackingService = inject(GuestTrackingService)
   private deviceVerificationService = inject(DeviceVerificationService)
+  private webAuthnService = inject(WebAuthnService)
   protected isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$; 
 
   // Component properties
@@ -739,6 +740,41 @@ export class LoginComponent  {
    * @description Initiates the Google login process.
    * Uses Firebase's GoogleAuthProvider to sign in with a popup.
    */
+  /**
+   * @description Signs in with an enrolled passkey.
+   *
+   * Firebase has no passkey provider, so the server verifies the assertion and returns a
+   * custom token — that exchange is what turns a WebAuthn assertion into a session. The
+   * re-entry guard is here rather than on the button because a second click while a prompt
+   * is open would start a second ceremony.
+   */
+  public async loginWithPasskey(): Promise<void> {
+    if (this.loginInProgress) return;
+
+    if (!isPlatformBrowser(this.platformId)) {
+      console.warn('Passkey sign-in not available during SSR');
+      return;
+    }
+
+    this.loginInProgress = true;
+    this.errorMessage = '';
+
+    try {
+      const { verified, customToken } = await this.webAuthnService.authenticateWithPasskey();
+      if (!verified || !customToken) {
+        this.errorMessage = this.webAuthnService.error() || 'Passkey sign-in failed.';
+        return;
+      }
+
+      const response = await this.firestoreService.signInWithCustomToken(customToken);
+      await this.handleSocialLoginSuccess(response?.user || null, 'passkey');
+    } catch (error) {
+      this.handleError(error, 'login:passkey', 'passkey');
+    } finally {
+      this.loginInProgress = false;
+    }
+  }
+
   public async loginWithGoogle(): Promise<void> {
     if (this.loginInProgress) return;
     

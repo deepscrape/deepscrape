@@ -1,6 +1,6 @@
 import { Injectable, inject, NgZone, EnvironmentInjector, runInInjectionContext, Injector, PLATFORM_ID } from '@angular/core'
 // import { AngularFireDatabase, AngularFireList } from '@angular/fire/compat/database'
-import { ActionCodeSettings, Auth, AuthCredential, authState, ConfirmationResult, connectAuthEmulator, getMultiFactorResolver, getRedirectResult, linkWithCredential, linkWithPhoneNumber, linkWithPopup, multiFactor, MultiFactorError, MultiFactorResolver, MultiFactorSession, PhoneAuthProvider, PopupRedirectResolver, reauthenticateWithCredential, RecaptchaVerifier, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup, TotpMultiFactorGenerator, TotpSecret, updatePassword, updateProfile, User, UserCredential } from '@angular/fire/auth'
+import { ActionCodeSettings, Auth, AuthCredential, authState, ConfirmationResult, connectAuthEmulator, getMultiFactorResolver, getRedirectResult, linkWithCredential, linkWithPhoneNumber, linkWithPopup, multiFactor, MultiFactorError, MultiFactorResolver, MultiFactorSession, PhoneAuthProvider, PopupRedirectResolver, reauthenticateWithCredential, RecaptchaVerifier, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithCustomToken, signInWithPopup, TotpMultiFactorGenerator, TotpSecret, updatePassword, updateProfile, User, UserCredential } from '@angular/fire/auth'
 import {
   addDoc,
   collection, CollectionReference, connectFirestoreEmulator, deleteDoc, doc, docData, DocumentData, DocumentReference,
@@ -1442,6 +1442,19 @@ export class FirestoreService {
         return await signInWithPopup(this.afAuth, provider, resolver)
       },
     )
+  }
+
+  /**
+   * Exchange a server-minted custom token for a Firebase session.
+   *
+   * This is how a passkey signs in: WebAuthn is not a Firebase provider, so the server
+   * verifies the assertion in `verifyWebAuthnAuthentication` and mints the token.
+   *
+   * @param {string} token Custom token from `adminAuth.createCustomToken`.
+   * @return {Promise<UserCredential>} The signed-in credential.
+   */
+  public signInWithCustomToken(token: string): Promise<UserCredential> {
+    return signInWithCustomToken(this.afAuth, token)
   }
 
   public async signInWithEmailAndPassword(email: string, password: string): Promise<UserCredential> {

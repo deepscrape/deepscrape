@@ -61,6 +61,7 @@ export class HighRiskActionService {
       return true
     }
 
-    return this.webAuthnService.authenticateWithPasskey()
+    const { verified } = await this.webAuthnService.authenticateWithPasskey()
+    return verified
   }
 }

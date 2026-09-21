@@ -1,3 +1,10 @@
+# [0.9.0-beta.15](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.14...v0.9.0-beta.15) (2026-09-21)
+
+
+### Features
+
+* **auth:** sign in with a passkey ([570ceef](https://github.com/deepscrape/deepscrape/commit/570ceef53bcdc425265114b84005fa4442fbaaf4))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

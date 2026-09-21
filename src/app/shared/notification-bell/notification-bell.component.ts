@@ -3,7 +3,6 @@ import { isPlatformBrowser } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { MatIcon } from '@angular/material/icon';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Auth, user } from '@angular/fire/auth';
 import { Firestore, collection, limit, onSnapshot, orderBy, query } from '@angular/fire/firestore';
 import { RippleDirective } from 'src/app/core/directives';
 import { AuthService } from 'src/app/core/services/auth.service';
@@ -47,7 +46,6 @@ export class NotificationBellComponent {
   readonly center = inject(NotificationCenterService);
   readonly kindMeta = KIND_META;
 
-  private readonly auth = inject(Auth);
   private readonly firestore = inject(Firestore);
   private readonly authService = inject(AuthService);
   private readonly platformId = inject(PLATFORM_ID);
@@ -76,7 +74,13 @@ export class NotificationBellComponent {
     // Server-written alerts (MFA changes, security notices, new-location logins) live in
     // users/{uid}/alerts. Subscribed here rather than inside NotificationCenterService so
     // the read cost lands only where the bell is mounted and only for a signed-in user.
-    user(this.auth).pipe(takeUntilDestroyed(this.destroyed)).subscribe((account) => {
+    //
+    // `user(auth)` is deliberately NOT used: it emits as soon as the session is restored,
+    // which is before AuthService finishes the round trips that assign `isAdmin` — and the
+    // admin listener below is gated on that flag, so it never attached and the incident
+    // feed stayed empty for that session. `user$` is next'd *after* `isAdmin` is set and
+    // replays its latest value to a late subscriber, so the gate always sees settled state.
+    this.authService.user$.pipe(takeUntilDestroyed(this.destroyed)).subscribe((account) => {
       this.signedIn.set(!!account);
       this.alertsUnsubscribe?.();
       this.alertsUnsubscribe = null;

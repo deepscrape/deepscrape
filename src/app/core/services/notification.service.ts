@@ -6,6 +6,8 @@ import { environment } from 'src/environments/environment';
 // `firebase/messaging` is reached through a dynamic import (see loadMessaging), so the
 // FCM SDK is not part of the initial bundle — it is only needed after the user opts in.
 type MessagingModule = typeof import('firebase/messaging');
+// The app SDK is loaded the same way, and for a specific reason: see resolveMessagingApp.
+type AppModule = typeof import('firebase/app');
 
 /**
  * Web-push (Firebase Cloud Messaging) opt-in for the current user.
@@ -58,6 +60,8 @@ export class NotificationService {
   private readonly foregroundState = signal<ForegroundPush | null>(null);
   private unsubscribeMessages: (() => void) | null = null;
   private messagingModule: Promise<MessagingModule> | null = null;
+  private appModule: Promise<AppModule> | null = null;
+  private messagingApp: Promise<Awaited<ReturnType<AppModule['initializeApp']>>> | null = null;
 
   /** Current push state; drive the toggle's label/disabled state from this. */
   readonly status = this.state.asReadonly();
@@ -170,7 +174,7 @@ export class NotificationService {
 
     try {
       const { getMessaging, getToken, deleteToken } = await this.loadMessaging();
-      const messaging = getMessaging();
+      const messaging = getMessaging(await this.resolveMessagingApp());
       const token = await getToken(messaging, {
         vapidKey,
         serviceWorkerRegistration: await this.getRegistration(),
@@ -241,9 +245,40 @@ export class NotificationService {
     return this.messagingModule;
   }
 
+  /** Cached dynamic import of the app SDK, resolved inside this module's graph. */
+  private loadApp(): Promise<AppModule> {
+    this.appModule ||= import('firebase/app');
+    return this.appModule;
+  }
+
+  /**
+   * Resolve a Firebase app the FCM SDK will actually accept.
+   *
+   * `getMessaging()` with no argument looks up the *default* app in its own module registry,
+   * and this build ships two copies of `@firebase/app`: one in the initial bundle, where
+   * `provideFirebaseApp` registers the default app, and one pulled in with the lazily imported
+   * FCM chunk. The lookup therefore finds nothing and throws `app/no-app` — after the
+   * permission prompt has already been answered, which is why the browser reports that
+   * notifications are on while the device is never registered and no push arrives.
+   *
+   * Resolving the app here pairs it with the copy messaging loaded: if `firebase/app` resolves
+   * to the same copy the initial bundle already initialised, `getApp()` returns that one;
+   * otherwise the app is created in this copy. Either way app and SDK agree.
+   *
+   * @return {Promise<FirebaseApp>} An app from the same module instance as the FCM SDK.
+   */
+  private resolveMessagingApp(): Promise<Awaited<ReturnType<AppModule['initializeApp']>>> {
+    this.messagingApp ||= (async () => {
+      const { getApp, getApps, initializeApp } = await this.loadApp();
+      return getApps().length ? getApp() : initializeApp(environment.firebaseConfig);
+    })();
+
+    return this.messagingApp;
+  }
+
   private async requestToken(): Promise<string | null> {
     const { getMessaging, getToken } = await this.loadMessaging();
-    return getToken(getMessaging(), {
+    return getToken(getMessaging(await this.resolveMessagingApp()), {
       vapidKey,
       serviceWorkerRegistration: await this.getRegistration(),
     });
@@ -277,8 +312,8 @@ export class NotificationService {
     // Fire-and-forget: the module is already cached from the opt-in path, and a
     // failure to attach the handler must not block the caller.
     void this.loadMessaging()
-      .then(({ getMessaging, onMessage }) => {
-        this.unsubscribeMessages = onMessage(getMessaging(), (payload) => {
+      .then(async ({ getMessaging, onMessage }) => {
+        this.unsubscribeMessages = onMessage(getMessaging(await this.resolveMessagingApp()), (payload) => {
           const notification = payload.notification || {};
           this.foregroundState.set({
             title: notification.title || 'deepscrape',

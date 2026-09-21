@@ -1,0 +1,64 @@
+# Meilisearch on Fly.io — self-hosted search for the `easyscrape` Firestore database.
+#
+# Deploy:
+#   fly launch --no-deploy --copy-config --name deepscrape-search   # or: fly apps create deepscrape-search
+#   fly volumes create meili_data --size 3 --region fra             # pick the region with your users
+#   fly secrets set MEILI_MASTER_KEY="$(openssl rand -hex 32)"      # never put the key in this file
+#   fly deploy
+#
+# Sizing (from Meilisearch's own guidance): during indexing the indexer takes at most 2/3 of
+# RAM and half the CPU cores, and "your machine should have enough RAM to hold the full
+# dataset in memory during indexing". 1 GB is a floor for a few hundred thousand documents;
+# go to 2 GB before you go wide. Index size is capped at 2 TiB (recommended) and the task
+# database at 20 GiB.
+
+app = "deepscrape-search"
+primary_region = "fra"
+
+[build]
+  image = "getmeili/meilisearch:v1.53.2"
+
+[env]
+  MEILI_ENV = "production"
+  MEILI_HTTP_ADDR = "0.0.0.0:7700"
+  MEILI_DB_PATH = "/meili_data/data.ms"
+  MEILI_DUMP_DIR = "/meili_data/dumps"
+  MEILI_SNAPSHOT_DIR = "/meili_data/snapshots"
+  # Keep indexing inside the machine's memory budget instead of letting the indexer
+  # take the default 2/3, which is what causes OOM kills during a large backfill.
+  MEILI_MAX_INDEXING_MEMORY = "768 Mb"
+  # The indexer otherwise uses half the cores; on a shared-cpu-1x that is one thread.
+  MEILI_MAX_INDEXING_THREADS = "2"
+  MEILI_NO_ANALYTICS = "true"
+
+# The data must outlive the machine: indexes, task queue and dumps all live here.
+[mounts]
+  source = "meili_data"
+  destination = "/meili_data"
+
+[http_service]
+  internal_port = 7700
+  force_https = true
+  # Search must not cold-start: a stopped machine means a multi-second first query.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    # Meilisearch handles at most 1000 concurrent search requests before it starts
+    # returning 503 too_many_search_requests with a Retry-After header.
+    hard_limit = 1000
+    soft_limit = 250
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[checks.health]
+  type = "http"
+  port = 7700
+  path = "/health"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"

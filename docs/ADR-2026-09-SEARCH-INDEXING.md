@@ -46,21 +46,82 @@ on `libnet-d76db`. It was asked to be re-pointed at the `easyscrape` database an
 
 ## Decision
 
-- **Do not install or re-point extension instances.** The mutable-configuration surface is the
+Search will be built on **Meilisearch, self-hosted on Fly.io**, fed from `easyscrape` by our own
+Cloud Function triggers. This supersedes the "if search becomes a requirement" placeholder below.
+
+The four findings above stand, so these parts of the original decision are kept:
+
+- **Do not install or re-point Algolia extension instances.** The configuration surface is the
   wrong shape for "index many collections", and the platform has a shutdown date.
-- **Do not add Firestore indexes speculatively.** Add them when a specific query needs them.
-- **If search becomes a requirement**, index `easyscrape` → Algolia from our own Firestore
-  triggers in `functions/src/gfunctions/`: one function per collection (or one fan-out function
-  writing to per-collection indexes), Cloud Functions `onDocumentWritten` with
-  `database: "easyscrape"`, reusing the alert-fanout pattern. That works with the named database,
-  has no expiry, and lives in code review.
+- **Do not add speculative Firestore indexes.** Add them when a specific query needs them.
+
+## Index catalog
+
+Two indexes to start. `deploy/meilisearch/setup.ts` is the executable form of this table.
+
+| index | source | primary key | filterable |
+|---|---|---|---|
+| `crawlpack` | `users/{uid}/crawlpack` | `id` | `userId` |
+| `operations` | `users/{uid}/operations` | `id` | `userId` |
+
+Why these two: `crawlpack` is the product's core object, and `operations` already has a search
+bar that filters only the loaded page client-side — that is the feature this makes real.
+
+Firestore subcollections do not exist in Meilisearch, so the sync layer flattens the path and
+writes an explicit `userId` on every document. Tenant isolation is a filter on that field, and
+in production it must come from a **tenant token** issued server-side, never from a key shipped
+to the browser. `filterableAttributes` has to contain every field a tenant filter uses.
+
+Admin-scoped indexes (`users`, `audit_logs`, `apikeys`, `guests`) are deliberately absent: they
+hold PII, so they need the admin-only key path before they are worth having.
+
+## Scale and distribution — what the docs actually say (v1.53.2)
+
+Three levels, in the order they should be reached for:
+
+1. **Vertical — Community Edition (MIT), which is what Fly gives you.** During indexing the
+   indexer takes at most 2/3 of RAM and half the CPU cores (`MEILI_MAX_INDEXING_MEMORY`,
+   `MEILI_MAX_INDEXING_THREADS`), and the stated sizing rule is *"your machine should have
+   enough RAM to hold the full dataset in memory during indexing"*. Exceeding it gets the
+   process OOM-killed, which is the single most common self-hosting failure.
+2. **Replication and sharding exist natively — but they are the only Enterprise-exclusive
+   feature**, under a BUSL licence that *"cannot be freely used in production"*; self-hosting EE
+   in production means contacting sales. The topology is a *network*: a `leader` coordinates
+   writes and topology changes, non-leaders reject writes with `not_leader`, and any instance can
+   serve searches (`useNetwork`, default `true`) which fan out and merge. Each shard is queried
+   exactly once even when replicated, so replicas never duplicate results. Requires EE v1.37+
+   and a master key on every instance; a master key is also a prerequisite for the network.
+3. **Meilisearch Cloud** — their recommended path, with sharding/replication on Enterprise plans.
+
+Hard limits that matter for `easyscrape` (from the "known limitations" page): 2 TiB recommended
+index size (80 TiB ceiling), 20 GiB task database, 65,536 attributes per index, 4.29 billion
+documents per index, primary key ≤511 bytes, a single `filterableAttributes` value ≤468 bytes,
+1000 concurrent searches before 503 + `Retry-After`, 1000 results per search by default, and
+**a maximum of 10 query words** — anything beyond the tenth is ignored.
+
+Consequence: **one Fly machine with a volume is the correct starting point.** Do not design for
+sharding; it costs a licence conversation. Reach for it only when a single index outgrows one
+machine's RAM, and prefer splitting by index (for example per-tenant indexes) over paying for EE.
+
+## Verified locally
+
+`docker run -p 127.0.0.1:7700:7700 getmeili/meilisearch:latest` → **1.53.2**, then
+`bun deploy/meilisearch/setup.ts` applied the catalog; re-running it is a no-op and exits 0.
+Searching `"amazn"` (a deliberate typo) with `filter: userId = "user-a"` returned the sample
+document, and the identical query as `user-b` returned **0 hits** — so typo tolerance is on by
+default and the tenant filter isolates correctly.
+
+Not verified: an actual Firestore → Meilisearch sync, because it does not exist yet, and the
+Fly.io deployment itself.
 
 ## Consequences
 
-- Search remains unimplemented. That is deliberate: the gap is a missing requirement, not a
-  missing extension.
-- The misconfigured extension instance keeps running until someone removes it from the console.
-  It is not referenced anywhere in this repository.
+- Search is no longer blocked on a missing requirement; it is blocked on the sync layer, which
+  is the next piece of work: `onDocumentWritten` triggers with `database: "easyscrape"` that
+  flatten each source path to the index above, reusing the `alert-fanout.ts` pattern.
+- The misconfigured Algolia extension instance still runs until someone removes it from the
+  console. It is referenced nowhere in this repository.
+- No Firestore indexes were added for this. Search does not run on Firestore.
 
 ## Bug found while auditing this
 

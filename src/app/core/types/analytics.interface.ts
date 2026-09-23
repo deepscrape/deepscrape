@@ -35,6 +35,8 @@ export interface DashboardSummary {
   consentDeclinedToday?: number
   /** Requests the BFF served today, consent-blind. A level, not visitors. */
   requestsToday?: number
+  /** Bots counted among the newest day's guests — a crawler wave is not a traffic spike. */
+  botsToday?: number
   
   // Conversion metrics
   guestConversions: number
@@ -96,6 +98,8 @@ export interface MetricsDaily {
   byOS: { [os: string]: number }
   byProvider: { [providerId: string]: number }
   byTimezone: { [timezone: string]: number }
+  /** Bots among the day's new guests — undefined before bot tagging shipped. */
+  bots?: number
   
   // Computed analytics
   topCountries?: CountryMetric[]     // Top 10

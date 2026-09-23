@@ -38,6 +38,9 @@ export interface DashboardSummary {
     consentGrantedToday?: number
     consentDeclinedToday?: number
     requestsToday?: number
+    // Bots among the newest day's guests. Kept beside the counts above so a
+    // crawler wave is not read as growth.
+    botsToday?: number
 
     // Conversion metrics
     guestConversions: number
@@ -100,6 +103,10 @@ export interface MetricsDaily {
     byOS: { [os: string]: number }
     byProvider: { [providerId: string]: number }
     byTimezone: { [timezone: string]: number }
+
+    // Bots among the day's new guests, written by the daily rollup. Absent on
+    // days rolled up before bot tagging shipped.
+    bots?: number
 
     // Computed analytics
     topCountries: CountryMetric[] // Top 10

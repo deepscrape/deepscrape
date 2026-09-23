@@ -491,6 +491,33 @@
                       </div>
                     </div>
                   </div>
+                  <!-- Pipeline freshness. One number that answers "are these tiles alive?" —
+                       the failure this whole session kept hitting was a silent stall. -->
+                  <div class="flex flex-wrap items-center justify-between py-2 border-l-4 border-amber-600 dark:border-amber-500 pl-3 bg-amber-50/50 dark:bg-amber-950/20 rounded-r-lg">
+                    <span class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <lucide-angular [img]="icons['gauge']" class="w-4 h-4 text-amber-600 dark:text-amber-400 fill-none" aria-label="Pipeline freshness"></lucide-angular>
+                      Pipeline updated (seconds ago)
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-slate-900 dark:text-slate-50">{{ summaryAgeSeconds === null ? '—' : summaryAgeSeconds }}</span>
+                      <div class="w-20 h-2 bg-amber-200 dark:bg-amber-900 rounded-full overflow-hidden">
+                        <div [style.width.%]="summaryAgeSeconds === null ? 0 : Math.min((summaryAgeSeconds / 120) * 100, 100)" class="h-2 bg-amber-600 dark:bg-amber-400"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Bots among the newest day's guests: a crawler wave is not traffic -->
+                  <div class="flex flex-wrap items-center justify-between py-2 border-l-4 border-slate-600 dark:border-slate-400 pl-3 bg-slate-50/50 dark:bg-slate-950/20 rounded-r-lg">
+                    <span class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <lucide-angular [img]="icons['bot']" class="w-4 h-4 text-slate-600 dark:text-slate-400 fill-none" aria-label="Bots in the newest day"></lucide-angular>
+                      Bots (newest day)
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-slate-900 dark:text-slate-50">{{ botsToday | number }}</span>
+                      <div class="w-20 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                        <div [style.width.%]="Math.min(botsToday, 100)" class="h-2 bg-slate-600 dark:bg-slate-400"></div>
+                      </div>
+                    </div>
+                  </div>
                   <!-- Retention Rate -->
                   <div class="flex flex-wrap items-center justify-between py-2 border-l-4 border-violet-600 dark:border-violet-500 pl-3 bg-violet-50/50 dark:bg-violet-950/20 rounded-r-lg">
                     <span class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">

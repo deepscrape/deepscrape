@@ -215,6 +215,9 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
     consentGrantedToday = 0;
     consentDeclinedToday = 0;
     requestsToday = 0;
+    botsToday = 0;
+    /** Seconds since the per-minute job last wrote the summary; null until the first snapshot. */
+    summaryAgeSeconds: number | null = null;
     totalLogins = 0;
     conversionRate = 0;
     guestConversionRate = 0;
@@ -900,6 +903,11 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
                 this.consentGrantedToday = summary.consentGrantedToday ?? this.consentGrantedToday;
                 this.consentDeclinedToday = summary.consentDeclinedToday ?? this.consentDeclinedToday;
                 this.requestsToday = summary.requestsToday ?? this.requestsToday;
+                this.botsToday = summary.botsToday ?? this.botsToday;
+                // Computed per snapshot rather than published, so freshness costs no write.
+                this.summaryAgeSeconds = summary.lastUpdated
+                    ? Math.max(0, Math.round((Date.now() - summary.lastUpdated.toMillis()) / 1000))
+                    : null;
                 this.totalLogins = summary.totalLogins ?? this.totalLogins;
 
                 // Flash real-time indicator

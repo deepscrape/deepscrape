@@ -704,6 +704,10 @@ export const backfillDashboardSummary = onSchedule({
       activeGuests: latestDaily?.activeGuests || 0,
       totalUsers: totalUsers,
       activeUsers: latestDaily?.activeUsers || 0,
+      // Bots among the newest day's guests, from the document already read above — no new
+      // read. Without it a crawler wave reads as a traffic spike; the 09-17 wave (79 "new
+      // guests", scanner wordlist paths, datacenter ASNs) is exactly that mistake.
+      botsToday: latestDaily?.bots || 0,
       totalLogins: totalLogins,
       guestConversions: guestConversions,
       conversionRate: conversionRate,

@@ -138,6 +138,32 @@ export const CLIENT_EVENT_LIST_MAX = 5000
 export const CLIENT_EVENT_PROP_MAX = 20
 
 // ---------------------------------------------------------------------------
+// Consent-free traffic level
+// ---------------------------------------------------------------------------
+
+/**
+ * One counter per UTC day, incremented by the BFF for every request it serves.
+ *
+ * Everything else in this file is written behind the ePrivacy gate, so a visitor who
+ * declines or ignores the banner is invisible — this is the only number that includes
+ * them. It reads nothing from the device (no cookie, no fingerprint, no id), which is
+ * what keeps it outside Art. 5(3); see `bff/traffic-counter.ts`.
+ */
+export const TRAFFIC_DAILY_PREFIX = 'traffic:served:'
+
+/** Eight days: yesterday plus the seven the analytics-health median compares against. */
+export const TRAFFIC_TTL_SECONDS = 8 * 24 * 60 * 60
+
+/**
+ * Key for one UTC day's counter. Shared by the BFF (writer) and `computeActiveUsersNow`
+ * (reader) so the two cannot disagree about the date format or the prefix.
+ *
+ * @param {string} date `YYYY-MM-DD`, UTC.
+ * @return {string} The counter key.
+ */
+export const trafficDailyKey = (date: string): string => `${TRAFFIC_DAILY_PREFIX}${date}`
+
+// ---------------------------------------------------------------------------
 // Verification codes, trusted devices, abuse budgets
 // ---------------------------------------------------------------------------
 

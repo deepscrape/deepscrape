@@ -24,6 +24,7 @@ import {
   ONLINE_GUESTS_KEY,
   ONLINE_USERS_KEY,
   PRESENCE_WINDOWS_MS,
+  trafficDailyKey,
 } from "../../../src/config/redis-keys"
 import { PRESENCE_WINDOW_COUNTS } from "../../../src/config/redis-scripts"
 import { parseUA } from "../infrastructure/ua-parser"
@@ -1563,6 +1564,16 @@ export const computeActiveUsersNow = onSchedule(
       const activeGuestsLast5m = counts.guests5m
       const activeGuestsLast30m = counts.guests30m
 
+      // Consent-free traffic level, written by the BFF counter. Guarded like the presence
+      // read above: a Redis hiccup must not take the whole per-minute write down with it.
+      let requestsToday = 0
+      try {
+        const served = await redis.get(trafficDailyKey(new Date().toISOString().split("T")[0]))
+        requestsToday = Number(served) || 0
+      } catch (error) {
+        console.warn("Traffic level: Redis read failed:", error)
+      }
+
       await db.doc("metrics_summary/dashboard").set({
         // Authenticated users
         activeUsersPerMinute,
@@ -1579,6 +1590,10 @@ export const computeActiveUsersNow = onSchedule(
         // showed whatever the heartbeat last wrote instead of going blank or to zero.
         activeUsersNow: activeUsersLast5m,
         activeGuestsNow: activeGuestsLast5m,
+        // Requests the BFF served today, including the visitors the consent gate is
+        // required to skip — the only traffic number here that does not depend on consent.
+        // A level, not a visitor count.
+        requestsToday,
         // Combined
         onlineNow: activeUsersPerMinute + activeGuestsPerMinute,
         onlineLast5m: activeUsersLast5m + activeGuestsLast5m,

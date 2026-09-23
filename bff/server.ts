@@ -7,6 +7,7 @@ import { guestTrackerPlugin } from './guest-tracker'
 import { limitFunction } from './limiter'
 import { oauthRoutes } from './oauth'
 import { security } from './security'
+import { trafficCounterPlugin } from './traffic-counter'
 
 /**
  * Bun + Elysia replacement for the `deepscrape` Express HTTPS function.
@@ -86,6 +87,9 @@ const app = new Elysia({ aot: true })
   .use(security)
   // After security: the function issues CSRF cookies, then tracks the guest.
   .use(guestTrackerPlugin)
+  // Consent-free level counting. Reads nothing `guestTracker` reads and needs no
+  // ordering: it exists for the visitors the gate above is required to skip.
+  .use(trafficCounterPlugin())
   .use(eventRoutes)
   .use(oauthRoutes)
   .use(api)

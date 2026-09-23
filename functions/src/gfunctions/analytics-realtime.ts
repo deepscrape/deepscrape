@@ -1572,6 +1572,13 @@ export const computeActiveUsersNow = onSchedule(
         activeGuestsPerMinute,
         activeGuestsLast5m,
         activeGuestsLast30m,
+        // The two names the dashboard actually reads for its "now" tiles, with the window
+        // its type documents (`DashboardSummary.activeUsersNow`: "last 5 minutes"). This job
+        // is the only per-minute writer of this document since the heartbeat's copy was
+        // removed, so these two were fossils `{merge: true}` never overwrote: the tiles
+        // showed whatever the heartbeat last wrote instead of going blank or to zero.
+        activeUsersNow: activeUsersLast5m,
+        activeGuestsNow: activeGuestsLast5m,
         // Combined
         onlineNow: activeUsersPerMinute + activeGuestsPerMinute,
         onlineLast5m: activeUsersLast5m + activeGuestsLast5m,

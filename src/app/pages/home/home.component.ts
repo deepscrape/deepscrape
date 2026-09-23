@@ -5,7 +5,7 @@ import { AsyncPipe, NgClass } from '@angular/common';
 import { DOCUMENT } from '@angular/common';
 import { themeStorageKey, ThemeToggleComponent, AnimatedBgComponent, LangPickerComponent } from 'src/app/shared';
 import { FeaturesComponent, HeroComponent, LandingAgentComponent, LandingArchitectureComponent, LandingCodeDemoComponent, LandingPricingComponent, LandingSocialProofComponent, LandingUseCasesComponent, LandingFaqComponent } from 'src/app/layout/landpage';
-import { LocalStorage, ThemeService, WindowToken, ScrollService } from 'src/app/core/services';
+import { AuthService, LocalStorage, ThemeService, WindowToken, ScrollService } from 'src/app/core/services';
 import { AppFooterComponent } from 'src/app/layout/footer';
 import { Observable } from 'rxjs';
 
@@ -41,6 +41,8 @@ export class HomeComponent implements OnInit {
   private scrollService = inject(ScrollService);
   private document = inject(DOCUMENT);
   isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$;
+  /** Signed-in user, or null for guests — the header hides the dashboard link for them. */
+  readonly user$ = inject(AuthService).user$;
   isScrolled = false;
   footerColor: string = '';
   // Removed 'lang' property as I18nService does not have it.

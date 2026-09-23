@@ -924,6 +924,10 @@ async function computeRangeMetric(rangeId: string, days: number) {
     totalLogins: number
     guestConversions: number
     conversionRate: number
+    /** Unique visitors active that day, straight off the daily rollup. */
+    activeGuests: number
+    /** Human page views that day (`clientEvents.page_view`). */
+    pageViews: number
   }> = []
 
   loginHistorySnap.docs.forEach((doc) => {
@@ -1125,6 +1129,10 @@ async function computeRangeMetric(rangeId: string, days: number) {
         byIP[ip] = (byIP[ip] || 0) + count
       })
 
+      // Client events land as literal dotted keys, so this reads the same
+      // flattened map the range total below uses.
+      const dayEvents = collectBreakdown(dataRecord, "clientEvents")
+
       dailyBreakdown.push({
         date: date,
         newGuests: finalNewGuests,
@@ -1132,6 +1140,8 @@ async function computeRangeMetric(rangeId: string, days: number) {
         totalLogins: finalTotalLogins,
         guestConversions: finalConversions,
         conversionRate: finalNewGuests > 0 ? Math.round((finalConversions / finalNewGuests) * 100) : 0,
+        activeGuests: Number(data.activeGuests || 0),
+        pageViews: Number(dayEvents["page_view"] || 0),
       })
     } else {
       // Fill missing days with zeros
@@ -1142,6 +1152,8 @@ async function computeRangeMetric(rangeId: string, days: number) {
         totalLogins: sourceTotalLogins,
         guestConversions: sourceConversions,
         conversionRate: sourceNewGuests > 0 ? Math.round((sourceConversions / sourceNewGuests) * 100) : 0,
+        activeGuests: 0,
+        pageViews: 0,
       })
 
       totalGuests += sourceNewGuests

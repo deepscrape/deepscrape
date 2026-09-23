@@ -60,6 +60,10 @@ export interface AnalyticsDailyBreakdown {
   byThreat?: Record<string, number>
   /** Bot traffic for the day (excluded from `funnel`). */
   bots?: number
+  /** Human page views in the bucket (`clientEvents.page_view`). */
+  pageViews?: number
+  /** Unique visitors active in the bucket. */
+  activeGuests?: number
   /** Bot-free funnel counters: `funnel.<event name>`. */
   funnel?: Record<string, number>
   byBotKind?: Record<string, number>
@@ -365,6 +369,12 @@ export class AnalyticsRangeService {
         totalLogins: Number(row.totalLogins || 0),
         guestConversions: this.toGuestConversions(row.guestConversions),
         conversionRate: Number(row.conversionRate || 0),
+        activeGuests: Number(row.activeGuests || row.newGuests || 0),
+        // `metrics_daily` stores client-event counters as flat dotted keys, so the
+        // flattened read is required here — `row.clientEvents` is always undefined.
+        pageViews: Number(this.extractDimension(
+          row as unknown as Record<string, unknown>, 'clientEvents',
+        )['page_view'] || 0),
       })),
     }
   }
@@ -519,6 +529,11 @@ export class AnalyticsRangeService {
           totalLogins: Number(row.totalLogins || 0),
           guestConversions: rowGuestConversions,
           conversionRate: newGuests > 0 ? Math.round((rowGuestConversions / newGuests) * 100) : 0,
+          activeGuests: Number(row.activeGuests || newGuests || 0),
+          // Same flat dotted keys as the daily rollup — see buildCustomDateRangeMetrics.
+          pageViews: Number(this.extractDimension(
+            row as unknown as Record<string, unknown>, 'clientEvents',
+          )['page_view'] || 0),
         }
         if (unit === 'minute') {
           point.minute = minute
@@ -588,6 +603,9 @@ export class AnalyticsRangeService {
             newUsers: Number(row.newUsers || 0),
             guestConversions: Number(row.guestConversions || 0),
             conversionRate: Number(row.conversionRate || 0),
+            // Nested on the precomputed range doc (an array element, not a flat key).
+            activeGuests: Number(row.activeGuests || row.newGuests || 0),
+            pageViews: Number(row.pageViews || 0),
             byOS: this.asNumberMap(row.byOS),
             byCountry: this.asNumberMap(row.byCountry),
             byBrowser: this.asNumberMap(row.byBrowser),

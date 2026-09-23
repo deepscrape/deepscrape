@@ -35,9 +35,13 @@ interface DailyBreakdownItem {
     date: string;
     totalLogins?: number;
     newGuests?: number;
+    /** Unique visitors active in the bucket (falls back to new guests). */
+    activeGuests?: number;
     newUsers?: number;
     guestConversions?: number;
     conversionRate?: number;
+    /** Human page views in the bucket. */
+    pageViews?: number;
     byOS?: Record<string, number>;
     byCountry?: Record<string, number>;
     byBrowser?: Record<string, number>;
@@ -1106,6 +1110,8 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
         });
         const loginData = dailyData.map((day: DailyBreakdownItem) => day.totalLogins || 0);
         const newGuestsData = dailyData.map((day: DailyBreakdownItem) => day.newGuests || 0);
+        const activeGuestsData = dailyData.map((day: DailyBreakdownItem) => day.activeGuests || 0);
+        const pageViewsData = dailyData.map((day: DailyBreakdownItem) => day.pageViews || 0);
         const newUsersData = dailyData.map((day: DailyBreakdownItem) => day.newUsers || 0);
 
         // Update Line Chart - Login Trend
@@ -1320,17 +1326,28 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
             }],
         };
 
-        // Guest Activity Over Time
+        // Unique visitors vs page views. Both series come off the bucket rows the
+        // tiles already read, so the chart itself adds no Firestore reads.
         this.guestActivityChartData = {
             labels: labels,
-            datasets: [{
-                label: this.translate.instant('ADMIN_ANALYTICS.DS_NEW_GUESTS'),
-                data: newGuestsData,
-                borderColor: '#10B981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                fill: true,
-                tension: 0.4
-            }]
+            datasets: [
+                {
+                    label: this.translate.instant('ADMIN_ANALYTICS.DS_UNIQUE_VISITORS'),
+                    data: activeGuestsData,
+                    borderColor: '#10B981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: this.translate.instant('ADMIN_ANALYTICS.DS_PAGE_VIEWS'),
+                    data: pageViewsData,
+                    borderColor: '#0EA5E9',
+                    backgroundColor: 'rgba(14, 165, 233, 0.08)',
+                    fill: false,
+                    tension: 0.4
+                },
+            ]
         };
 
         // Generate recent activity data

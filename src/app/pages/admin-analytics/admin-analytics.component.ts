@@ -3,6 +3,8 @@ import { CommonModule, DecimalPipe, NgClass } from '@angular/common';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { BaseChartDirective } from 'ng2-charts';
 import { ChartConfiguration, ChartData } from 'chart.js';
+// chart.js v4 has an empty registry until something registers it — see that file's header.
+import '../../core/chart-registration';
 import { FirestoreService, FirestoreAnalyticsService } from '../../core/services';
 import { AnalyticsPeriod, AnalyticsRangeService, RetentionCohort } from '../../core/services/analytics-range.service';
 import {

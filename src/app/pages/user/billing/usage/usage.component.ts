@@ -7,6 +7,8 @@ import { TranslateModule, TranslateService } from '@ngx-translate/core'
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component'
 import { ChartConfiguration, ChartData } from 'chart.js'
 import { BaseChartDirective } from 'ng2-charts'
+// chart.js v4 has an empty registry until something registers it — see the file's header.
+import 'src/app/core/chart-registration'
 import { fadeInUp, smoothfadeAnimation } from 'src/app/animations'
 import { BillingService } from 'src/app/core/services'
 import {

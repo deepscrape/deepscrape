@@ -1,9 +1,20 @@
-import { afterNextRender, ChangeDetectionStrategy, Component, inject, PLATFORM_ID, signal } from '@angular/core';
+import {
+  afterNextRender,
+  ChangeDetectionStrategy,
+  Component,
+  effect,
+  ElementRef,
+  inject,
+  PLATFORM_ID,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { RouterLink } from '@angular/router';
 import { CookieService } from 'ngx-cookie-service';
 import { TranslateModule } from '@ngx-translate/core';
+import { COOKIE_INVENTORY } from './cookie-inventory';
 
 /**
  * Consent box: one binary gate the server reads, plus two categories that act on real cookies.
@@ -23,6 +34,8 @@ import { TranslateModule } from '@ngx-translate/core';
   selector: 'app-cookie-consent',
   imports: [TranslateModule, RouterLink],
   templateUrl: './cookie-consent.component.html',
+  // `::backdrop` has no Tailwind variant in v3, so the scrim is one CSS rule.
+  styles: ['dialog::backdrop { background: rgb(2 6 23 / 0.65); }'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CookieConsentComponent {
@@ -49,12 +62,26 @@ export class CookieConsentComponent {
   private readonly http = inject(HttpClient);
   private readonly platformId = inject(PLATFORM_ID);
 
+  /** Native modal, so the page behind it is inert until a choice is made. */
+  private readonly sheet = viewChild<ElementRef<HTMLDialogElement>>('sheet');
+
   protected readonly visible = signal(false);
   protected readonly expanded = signal(false);
 
   /** Default off: consent is given, never assumed. */
   protected readonly analytics = signal(false);
   protected readonly functional = signal(false);
+
+  /**
+   * The cookies each switch actually owns, straight from the published inventory so
+   * the banner cannot claim a different set than the policy does. Names and retention
+   * only — the purposes are prose and stay in the policy.
+   */
+  protected readonly cookiesByCategory = {
+    analytics: COOKIE_INVENTORY.filter((cookie) => cookie.category === 'analytics'),
+    functional: COOKIE_INVENTORY.filter((cookie) => cookie.category === 'functional'),
+    necessary: COOKIE_INVENTORY.filter((cookie) => cookie.category === 'necessary'),
+  } as const;
 
   /** Driven by `@for` so the three rows cannot drift apart in the markup. */
   protected readonly categories = [
@@ -71,6 +98,21 @@ export class CookieConsentComponent {
       // invitation to ask again on every page view.
       this.visible.set(!this.cookies.check(CookieConsentComponent.CONSENT_COOKIE));
     });
+
+    // `showModal`, not `show`: the modal state is what makes the rest of the page
+    // inert and traps focus in here. Nothing closes it — Esc is cancelled below and
+    // a `<dialog>` ignores backdrop clicks — so the only way out is a decision.
+    effect(() => {
+      const dialog = this.sheet()?.nativeElement;
+      if (dialog && this.visible() && !dialog.open) {
+        dialog.showModal();
+      }
+    });
+  }
+
+  /** Esc must not be an unrecorded exit: closing without a choice would leave no answer. */
+  protected blockDismiss(event: Event): void {
+    event.preventDefault();
   }
 
   protected isOn(key: 'analytics' | 'functional'): boolean {

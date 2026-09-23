@@ -1,9 +1,11 @@
 @if (visible()) {
-  <div
-    role="dialog"
-    aria-modal="false"
+  <!-- Native modal: the page behind it is inert and focus is trapped inside, so the only
+       way out is one of the buttons below. Esc is cancelled in `blockDismiss`. -->
+  <dialog
+    #sheet
     aria-labelledby="cookie-consent-title"
-    class="glass animate-ds-fade-up motion-reduce:animate-none fixed bottom-4 right-4 z-[60] flex w-[calc(100vw-2rem)] max-w-md flex-col rounded-2xl">
+    (cancel)="blockDismiss($event)"
+    class="glass animate-ds-fade-up motion-reduce:animate-none m-auto max-h-[85vh] w-[calc(100vw-2rem)] max-w-lg overflow-y-auto rounded-2xl border-0 p-0 text-left">
     <div class="flex flex-col gap-2 px-5 pt-5">
       <h2
         id="cookie-consent-title"
@@ -36,6 +38,14 @@
             {{ 'COOKIE_CONSENT.ALWAYS_ON' | translate }}
           </span>
         </div>
+        <ul class="flex flex-wrap gap-x-3 gap-y-0.5 pb-1">
+          @for (cookie of cookiesByCategory.necessary; track cookie.name) {
+            <li class="text-[11px] text-gray-500 dark:text-gray-400">
+              <code class="font-mono text-[11px] text-gray-700 dark:text-gray-200">{{ cookie.name }}</code>
+              · {{ cookie.duration }}
+            </li>
+          }
+        </ul>
 
         @for (category of categories; track category.key) {
           <div class="flex items-start justify-between gap-4 py-2">
@@ -46,6 +56,14 @@
               <p class="mt-0.5 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
                 {{ category.descKey | translate }}
               </p>
+              <ul class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                @for (cookie of cookiesByCategory[category.key]; track cookie.name) {
+                  <li class="text-[11px] text-gray-500 dark:text-gray-400">
+                    <code class="font-mono text-[11px] text-gray-700 dark:text-gray-200">{{ cookie.name }}</code>
+                    · {{ cookie.duration }}
+                  </li>
+                }
+              </ul>
             </div>
             <button
               type="button"
@@ -101,6 +119,6 @@
         {{ (expanded() ? 'COOKIE_CONSENT.HIDE' : 'COOKIE_CONSENT.MANAGE') | translate }}
       </button>
     </div>
-  </div>
+  </dialog>
 }
 

@@ -4327,12 +4327,20 @@ export const checkStripeCatalogHealth = onSchedule(
 
     // ponytail: third place that walks the catalog. Extract a shared enumerator when a
     // fourth appears - the two existing callers want different fields off it.
+    //
+    // Only sellable prices: a zero-amount tier (free, trial, Enterprise PAYG) has no price
+    // in any account, so asking Stripe about it reported 9 phantom failures out of 23 and
+    // buried the real ones. `validateStripeCatalog` dodges this by filtering on an id;
+    // amount is the honest test here, because a sellable price that lost its id is exactly
+    // what this check exists to catch.
     const entries = [
       ...billingPlanCatalog.flatMap((plan) =>
-        (Object.keys(plan.prices) as BillingInterval[]).map((interval) => ({
-          key: lookupKeyForPlan(plan.id, interval),
-          fallbackId: plan.prices[interval].stripePriceId,
-        })),
+        (Object.keys(plan.prices) as BillingInterval[])
+          .filter((interval) => plan.prices[interval].amount > 0)
+          .map((interval) => ({
+            key: lookupKeyForPlan(plan.id, interval),
+            fallbackId: plan.prices[interval].stripePriceId,
+          })),
       ),
       ...creditPackCatalog.map((pack) => ({
         key: lookupKeyForCredits(pack.credits),

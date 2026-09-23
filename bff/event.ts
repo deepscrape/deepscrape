@@ -2,6 +2,7 @@ import { Elysia } from 'elysia'
 import { guestFingerprintHandler, analyticsEventHandler, batchAnalyticsEventHandler } from '../functions/src/gfunctions/analytics'
 import { heartbeat } from '../functions/src/handlers/home_handler'
 import { bridgeHandler } from './bridge'
+import { countConsentDecision } from './consent'
 import { adminAuth } from './firebase'
 import { limitEvent } from './limiter'
 
@@ -49,3 +50,6 @@ export const eventRoutes = new Elysia({ name: 'event' })
   .post('/event/analytics/event', bridgeHandler(analyticsEventHandler))
   .post('/event/analytics/batch', bridgeHandler(batchAnalyticsEventHandler))
   .post('/event/heartbeat', bridgeHandler(heartbeat))
+  // Consent decisions. Not a bridge handler: this is our own aggregate counter, and it
+  // deliberately reads no cookie and calls no upstream service.
+  .post('/event/consent', countConsentDecision)

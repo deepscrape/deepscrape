@@ -21,6 +21,20 @@
         This text is a starting point and should be reviewed by qualified legal counsel.
       </p>
 
+    <!-- Withdrawal, GDPR Art. 7(3): as easy to withdraw as to give. -->
+    <div class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-300/60 bg-cyan-50/80 p-4 dark:border-cyan-500/30 dark:bg-cyan-500/10">
+      <p class="text-sm text-cyan-900 dark:text-cyan-100">
+        <strong>Cookie choices.</strong> Changing or withdrawing your consent removes the analytics
+        identifiers stored in this browser and asks you again on the next page.
+      </p>
+      <button
+        type="button"
+        (click)="changeChoices()"
+        class="rounded-lg border border-cyan-600 px-3 py-1.5 text-sm font-semibold text-cyan-700 transition-colors hover:bg-cyan-600 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 dark:border-cyan-400 dark:text-cyan-300 dark:hover:bg-cyan-500 dark:hover:text-white">
+        Change cookie choices
+      </button>
+    </div>
+
     <div class="prose prose-gray mt-10 space-y-8 text-[15px] leading-7 text-gray-600 dark:text-gray-300">
       <section>
         <h2 class="text-xl font-semibold text-gray-900 dark:text-white">1. Who we are</h2>

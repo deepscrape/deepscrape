@@ -31,6 +31,14 @@ export interface DashboardSummary {
     activeUsersNow?: number
     onlineNow?: number
 
+    // Consent decisions reported by the banner today, and the consent-blind
+    // request level.
+    // Mirrored in `src/app/core/types/analytics.interface.ts` — the analytics
+    // contract spec fails if the two copies drift.
+    consentGrantedToday?: number
+    consentDeclinedToday?: number
+    requestsToday?: number
+
     // Conversion metrics
     guestConversions: number
     conversionRate: number // (conversions / totalGuests) * 100

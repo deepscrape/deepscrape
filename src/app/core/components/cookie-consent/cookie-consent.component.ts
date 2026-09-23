@@ -1,5 +1,6 @@
 import { afterNextRender, ChangeDetectionStrategy, Component, inject, PLATFORM_ID, signal } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import { RouterLink } from '@angular/router';
 import { CookieService } from 'ngx-cookie-service';
 import { TranslateModule } from '@ngx-translate/core';
@@ -45,6 +46,7 @@ export class CookieConsentComponent {
   private static readonly FUNCTIONAL_COOKIES = ['device_id'];
 
   private readonly cookies = inject(CookieService);
+  private readonly http = inject(HttpClient);
   private readonly platformId = inject(PLATFORM_ID);
 
   protected readonly visible = signal(false);
@@ -107,6 +109,14 @@ export class CookieConsentComponent {
    * the next page load rather than mid-session.
    */
   private commit(): void {
+    // Report the decision while it is still knowable. Aggregate only — the server keeps a
+    // daily count, never an identifier — and it is the one number that survives the gate
+    // this box is about to close. A lost count must never block the choice, hence the
+    // swallowed error.
+    this.http
+      .post('/event/consent', { decision: this.analytics() ? 'granted' : 'denied' })
+      .subscribe({ error: () => undefined });
+
     if (!this.analytics()) {
       this.drop(CookieConsentComponent.ANALYTICS_COOKIES);
     }

@@ -21,7 +21,8 @@
         "*.env",
         "*.env.dev",
         "*.env.keys",
-        "*.deploy-secrets.json"
+        "*.deploy-secrets.json",
+        "serviceAccount.json"
       ],
       "predeploy": [
         "npm --prefix \"$RESOURCE_DIR\" run build",

@@ -210,6 +210,11 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
     activeUsersNow = 0;
     activeGuestsNow = 0;
     onlineNow = 0;
+    // Consent decisions (aggregate) and the consent-blind request level, published by
+    // `computeActiveUsersNow`. These are the only tiles a visitor who declined appears in.
+    consentGrantedToday = 0;
+    consentDeclinedToday = 0;
+    requestsToday = 0;
     totalLogins = 0;
     conversionRate = 0;
     guestConversionRate = 0;
@@ -824,6 +829,9 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
         this.activeUsersNow = dashboardSummary.activeUsersNow || 0;
         this.activeGuestsNow = dashboardSummary.activeGuestsNow || 0;
         this.onlineNow = dashboardSummary.onlineNow || (this.activeUsersNow + this.activeGuestsNow);
+        this.consentGrantedToday = dashboardSummary.consentGrantedToday || 0;
+        this.consentDeclinedToday = dashboardSummary.consentDeclinedToday || 0;
+        this.requestsToday = dashboardSummary.requestsToday || 0;
         this.totalLogins = dashboardSummary.totalLogins || 0;
         this.conversionRate = dashboardSummary.conversionRate || 0;
         
@@ -889,6 +897,9 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
                 this.activeUsersNow = summary.activeUsersNow ?? this.activeUsersNow;
                 this.activeGuestsNow = summary.activeGuestsNow ?? this.activeGuestsNow;
                 this.onlineNow = summary.onlineNow ?? (this.activeUsersNow + this.activeGuestsNow);
+                this.consentGrantedToday = summary.consentGrantedToday ?? this.consentGrantedToday;
+                this.consentDeclinedToday = summary.consentDeclinedToday ?? this.consentDeclinedToday;
+                this.requestsToday = summary.requestsToday ?? this.requestsToday;
                 this.totalLogins = summary.totalLogins ?? this.totalLogins;
 
                 // Flash real-time indicator

@@ -24,6 +24,7 @@ import {
   ONLINE_GUESTS_KEY,
   ONLINE_USERS_KEY,
   PRESENCE_WINDOWS_MS,
+  consentDecisionKey,
   trafficDailyKey,
 } from "../../../src/config/redis-keys"
 import { PRESENCE_WINDOW_COUNTS } from "../../../src/config/redis-scripts"
@@ -1566,10 +1567,21 @@ export const computeActiveUsersNow = onSchedule(
 
       // Consent-free traffic level, written by the BFF counter. Guarded like the presence
       // read above: a Redis hiccup must not take the whole per-minute write down with it.
+      const utcDay = new Date().toISOString().split("T")[0]
       let requestsToday = 0
+      let consentGrantedToday = 0
+      let consentDeclinedToday = 0
       try {
-        const served = await redis.get(trafficDailyKey(new Date().toISOString().split("T")[0]))
+        // One pipeline, three reads: the consent-blind request level and today's two
+        // consent decisions. Aggregate only — no visitor is identifiable from any of them.
+        const [served, granted, declined] = (await redis.pipeline()
+          .get(trafficDailyKey(utcDay))
+          .get(consentDecisionKey(utcDay, "granted"))
+          .get(consentDecisionKey(utcDay, "denied"))
+          .exec()) as [unknown, unknown, unknown]
         requestsToday = Number(served) || 0
+        consentGrantedToday = Number(granted) || 0
+        consentDeclinedToday = Number(declined) || 0
       } catch (error) {
         console.warn("Traffic level: Redis read failed:", error)
       }
@@ -1594,6 +1606,10 @@ export const computeActiveUsersNow = onSchedule(
         // required to skip — the only traffic number here that does not depend on consent.
         // A level, not a visitor count.
         requestsToday,
+        // Consent decisions reported by the banner: aggregate counts of decisions, not of
+        // people, and the only place a refusal is ever visible.
+        consentGrantedToday,
+        consentDeclinedToday,
         // Combined
         onlineNow: activeUsersPerMinute + activeGuestsPerMinute,
         onlineLast5m: activeUsersLast5m + activeGuestsLast5m,

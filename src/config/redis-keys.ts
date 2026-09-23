@@ -164,6 +164,34 @@ export const TRAFFIC_TTL_SECONDS = 8 * 24 * 60 * 60
 export const trafficDailyKey = (date: string): string => `${TRAFFIC_DAILY_PREFIX}${date}`
 
 // ---------------------------------------------------------------------------
+// Consent decisions (aggregate)
+// ---------------------------------------------------------------------------
+
+/**
+ * One counter per UTC day and verdict, incremented when the banner records a choice.
+ *
+ * This is the only place a refusal is ever countable: every other counter sits behind the
+ * gate that refusals are required to skip. It is aggregate by construction — no cookie
+ * value, no IP, no uid — so it can be built without the visitor's consent; see
+ * `bff/consent.ts`.
+ */
+export const CONSENT_DECISION_PREFIX = 'consent:decision:'
+
+/** 90 days: a decision trend is worth more history than the traffic level, and it is aggregate. */
+export const CONSENT_DECISION_TTL_SECONDS = 90 * 24 * 60 * 60
+
+/**
+ * Key for one day's decisions by verdict. Shared by the BFF (writer) and
+ * `computeActiveUsersNow` (reader).
+ *
+ * @param {string} date `YYYY-MM-DD`, UTC.
+ * @param {string} verdict `granted` or `denied`.
+ * @return {string} The counter key.
+ */
+export const consentDecisionKey = (date: string, verdict: string): string =>
+  `${CONSENT_DECISION_PREFIX}${date}:${verdict}`
+
+// ---------------------------------------------------------------------------
 // Verification codes, trusted devices, abuse budgets
 // ---------------------------------------------------------------------------
 

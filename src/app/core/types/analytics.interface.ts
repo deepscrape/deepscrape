@@ -26,6 +26,15 @@ export interface DashboardSummary {
   activeGuestsNow?: number
   activeUsersNow?: number
   onlineNow?: number
+
+  /**
+   * Consent decisions reported by the banner today. Aggregate counts of decisions,
+   * not of people, and the only place a refusal is ever visible.
+   */
+  consentGrantedToday?: number
+  consentDeclinedToday?: number
+  /** Requests the BFF served today, consent-blind. A level, not visitors. */
+  requestsToday?: number
   
   // Conversion metrics
   guestConversions: number

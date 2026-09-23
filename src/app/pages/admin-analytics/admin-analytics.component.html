@@ -450,6 +450,47 @@
                       </div>
                     </div>
                   </div>
+                  <!-- Consent decisions and the consent-blind request level (today).
+                       Declines are only countable because the banner reports its own choice;
+                       every other counter here sits behind the gate a refusal skips. -->
+                  <div class="flex flex-wrap items-center justify-between py-2 border-l-4 border-rose-600 dark:border-rose-500 pl-3 bg-rose-50/50 dark:bg-rose-950/20 rounded-r-lg">
+                    <span class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <lucide-angular [img]="icons['shield']" class="w-4 h-4 text-rose-600 dark:text-rose-400 fill-none" aria-label="Declined consent today"></lucide-angular>
+                      Declined consent (today)
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-slate-900 dark:text-slate-50">{{ consentDeclinedToday | number }}</span>
+                      <div class="w-20 h-2 bg-rose-200 dark:bg-rose-900 rounded-full overflow-hidden">
+                        <div [style.width.%]="Math.min((consentDeclinedToday / (consentGrantedToday + consentDeclinedToday || 1)) * 100, 100)" class="h-2 bg-rose-600 dark:bg-rose-400"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap items-center justify-between py-2 border-l-4 border-emerald-600 dark:border-emerald-500 pl-3 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-r-lg">
+                    <span class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <lucide-angular [img]="icons['shieldcheck']" class="w-4 h-4 text-emerald-600 dark:text-emerald-400 fill-none" aria-label="Granted consent today"></lucide-angular>
+                      Granted consent (today)
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-slate-900 dark:text-slate-50">{{ consentGrantedToday | number }}</span>
+                      <div class="w-20 h-2 bg-emerald-200 dark:bg-emerald-900 rounded-full overflow-hidden">
+                        <div [style.width.%]="Math.min((consentGrantedToday / (consentGrantedToday + consentDeclinedToday || 1)) * 100, 100)" class="h-2 bg-emerald-600 dark:bg-emerald-400"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- A request level, not visitors: it counts served requests (4xx excluded) and
+                       includes everyone the consent gate is required to skip. -->
+                  <div class="flex flex-wrap items-center justify-between py-2 border-l-4 border-slate-600 dark:border-slate-400 pl-3 bg-slate-50/50 dark:bg-slate-950/20 rounded-r-lg">
+                    <span class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <lucide-angular [img]="icons['gauge']" class="w-4 h-4 text-slate-600 dark:text-slate-400 fill-none" aria-label="Requests served today"></lucide-angular>
+                      Requests served (today)
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-slate-900 dark:text-slate-50">{{ requestsToday | number }}</span>
+                      <div class="w-20 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                        <div [style.width.%]="Math.min(requestsToday / 5, 100)" class="h-2 bg-slate-600 dark:bg-slate-400"></div>
+                      </div>
+                    </div>
+                  </div>
                   <!-- Retention Rate -->
                   <div class="flex flex-wrap items-center justify-between py-2 border-l-4 border-violet-600 dark:border-violet-500 pl-3 bg-violet-50/50 dark:bg-violet-950/20 rounded-r-lg">
                     <span class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">

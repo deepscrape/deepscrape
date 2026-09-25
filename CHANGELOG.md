@@ -1,3 +1,24 @@
+# [0.9.0-beta.22](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.21...v0.9.0-beta.22) (2026-09-25)
+
+
+### Bug Fixes
+
+* **analytics:** publish the realtime tiles the dashboard actually reads ([ffb0db4](https://github.com/deepscrape/deepscrape/commit/ffb0db43b322ffe6f1d252cb9afaf0648570a188))
+* **billing:** stop reporting free tiers as missing Stripe prices ([4b85cc4](https://github.com/deepscrape/deepscrape/commit/4b85cc422a262ef1ef825fe5deb26f3acd00ca22))
+* **charts:** import the registration from both chart pages ([6d13546](https://github.com/deepscrape/deepscrape/commit/6d135464a647676a981984fbfbed3b1afb172187))
+* **charts:** register chart.js for the lazy chart pages ([0ff754d](https://github.com/deepscrape/deepscrape/commit/0ff754d48283f3280b7545966c00d4d055395aca))
+* **notifications:** attach the admin incident feed once auth settles ([157f6fa](https://github.com/deepscrape/deepscrape/commit/157f6fa2bf19b04b654b6354e9fdb8b661e4259f))
+* **ui:** hide the landing header's dashboard link from guests ([21ebd75](https://github.com/deepscrape/deepscrape/commit/21ebd756933ba1b6117ed0ccb8335504f85bb4f1))
+
+
+### Features
+
+* **analytics:** count traffic without consent, and without touching the device ([92322b9](https://github.com/deepscrape/deepscrape/commit/92322b9053802476ab7ed114e2e855dd23c2841a))
+* **analytics:** plot unique visitors against page views per bucket ([c8db965](https://github.com/deepscrape/deepscrape/commit/c8db96501188559acd53463b9e20bb16e669fba8))
+* **analytics:** publish bot volume and pipeline freshness for admins ([5c8807e](https://github.com/deepscrape/deepscrape/commit/5c8807e51c834fb06aa6ffc2367a53c6c515c8a9))
+* **privacy:** count consent decisions, publish them, and allow withdrawal ([3c70b03](https://github.com/deepscrape/deepscrape/commit/3c70b0339b2b84630d685c83c42a42591d8a070f))
+* **privacy:** publish the cookie list and make the consent banner blocking ([b46ebd3](https://github.com/deepscrape/deepscrape/commit/b46ebd38e2d54ea566dc02ecfc0e617c6e54b203))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

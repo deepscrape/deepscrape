@@ -10,7 +10,8 @@ import {
 import { NgClass } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
-import { myIcons, RevealDirective } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
+import { RevealDirective } from 'src/app/shared/reveal/reveal.directive';
 
 interface UseCase {
   icon: string;

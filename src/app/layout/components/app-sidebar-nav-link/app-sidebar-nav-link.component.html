@@ -11,7 +11,7 @@
       : ' ') + (link.active ? 'active' : '')
   "
   routerLinkActive="active"
-  [routerLink]="link.url ? [link.url] : null"
+  [routerLink]="linkUrl()"
   (click)="closeSideBar()"
   class="group flex h-14 w-full cursor-pointer flex-row items-center justify-between rounded-lg p-2 text-base text-gray-900 hover:bg-gray-300/50 dark:text-white dark:hover:bg-gray5/30"
   >

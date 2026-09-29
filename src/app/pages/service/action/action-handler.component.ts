@@ -3,6 +3,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { Auth, verifyPasswordResetCode, confirmPasswordReset, applyActionCode } from '@angular/fire/auth';
 import { TranslateService } from '@ngx-translate/core';
 import { ThemeService, FirestoreService, AuthService, WindowToken } from 'src/app/core/services';
+import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
 import { checkPasswordStrength, getErrorMessage, isStrongPassword } from 'src/app/core/functions';
 import { Observable } from 'rxjs';
 import { CommonModule } from '@angular/common';
@@ -38,6 +39,8 @@ export class ActionHandlerComponent implements OnInit {
   errorMessage = '';
   successMessage = '';
   protected isDarkMode$: Observable<boolean>;
+  /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
+  protected readonly apexUrl: string = ORIGINS.marketing;
   emailVerificationMode: boolean = false;
   verificationSuccess: boolean = false;
   constructor(
@@ -162,7 +165,17 @@ export class ActionHandlerComponent implements OnInit {
     const redirectUrl = this.resolveRedirectUrl();
     timer(2000)
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => this.router.navigateByUrl(redirectUrl));
+      .subscribe(() => {
+        // An absolute URL must not go through the router: navigateByUrl treats it as an
+        // in-app path, fails to match, and the user lands nowhere with no error. Reachable
+        // whenever a continueUrl points at another origin, which is the norm once the app
+        // and the marketing site are separate origins. Hand it to the browser instead.
+        if (/^https?:\/\//i.test(redirectUrl)) {
+          this.window.location.assign(redirectUrl);
+          return;
+        }
+        this.router.navigateByUrl(redirectUrl);
+      });
   }
 
   /** Resolve the redirect URL after email verification */

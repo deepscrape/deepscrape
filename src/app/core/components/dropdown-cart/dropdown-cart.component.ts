@@ -1,5 +1,5 @@
 import { AsyncPipe, DatePipe, JsonPipe, KeyValuePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, EventEmitter, inject, Input, Output } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, inject, Input, Output } from '@angular/core';
 import { Outsideclick } from '../../directives';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule } from '@ngx-translate/core';
@@ -30,6 +30,7 @@ export class DropdownCartComponent {
 
   private cartService = inject(CartService)
   private btnService = inject(ToggleBtnService)
+  private cdr = inject(ChangeDetectorRef)
 
   private btnSubs: Subscription
 
@@ -66,6 +67,8 @@ export class DropdownCartComponent {
   ngOnInit() {
     this.btnSubs = this.btnService.menuOpen$.subscribe((open) => {
       this.showCartMenu = open
+      // OnPush: written from a service stream, not a template event.
+      this.cdr.markForCheck()
     })
   }
 

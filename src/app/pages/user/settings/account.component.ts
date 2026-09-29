@@ -11,7 +11,7 @@ import { RippleDirective } from 'src/app/core/directives';
 import { RouteService } from 'src/app/core/services';
 import { GlobalTabs } from 'src/app/core/types';
 import { ACCOUNT_DATA_TABS } from 'src/app/core/variables';
-import { myIcons } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
 
 @Component({
   selector: 'app-account-settings',

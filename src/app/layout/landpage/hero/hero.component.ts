@@ -14,7 +14,7 @@ import { NgClass } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { ScrollService } from 'src/app/core/services';
-import { myIcons } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
 
 @Component({
   selector: 'app-hero',

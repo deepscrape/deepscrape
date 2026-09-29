@@ -1,4 +1,4 @@
-import { Component, ChangeDetectionStrategy, OnInit, DestroyRef, inject } from '@angular/core';
+import { Component, ChangeDetectionStrategy, ChangeDetectorRef, OnInit, DestroyRef, inject } from '@angular/core';
 import { NgClass } from '@angular/common';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
@@ -7,7 +7,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
 import { RadioToggleComponent } from 'src/app/core/components/radiotoggle/radiotoggle.component';
 import { AnalyticsService } from 'src/app/core/services';
-import { myIcons, RevealDirective } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
+import { RevealDirective } from 'src/app/shared/reveal/reveal.directive';
 
 interface PricingTier {
   tier: string;
@@ -36,6 +37,7 @@ export class LandingPricingComponent implements OnInit {
   isYearly = false;
   private destroyRef = inject(DestroyRef);
   private analytics = inject(AnalyticsService);
+  private cdr = inject(ChangeDetectorRef);
 
   ngOnInit(): void {
     // Exposure signal no server fact can produce: without it the funnel cannot tell
@@ -46,6 +48,8 @@ export class LandingPricingComponent implements OnInit {
 
     this.billingControl.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(val => {
       this.isYearly = val;
+      // OnPush: valueChanges fires outside the toggle's own template event.
+      this.cdr.markForCheck();
     });
   }
 

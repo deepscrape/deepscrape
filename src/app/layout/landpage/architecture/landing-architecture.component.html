@@ -117,6 +117,69 @@
       </div>
     </div>
 
+    <!-- Two engines, one platform — webrain (agents) vs Crawl4AI (playground + machines) -->
+    <div appReveal class="mb-16">
+      <div class="text-center mb-8">
+        <span class="glass-pill inline-flex items-center px-3 py-1 text-xs font-semibold text-cyan-700 dark:text-cyan-300 rounded-full mb-4">
+          {{ 'ARCH.ENG_PILL' | translate }}
+        </span>
+        <h3 class="text-2xl font-display font-bold text-gray-900 dark:text-white">
+          {{ 'ARCH.ENG_TITLE1' | translate }}
+          <span class="bg-gradient-to-r from-cyan-600 to-rose-500 dark:from-cyan-400 dark:to-rose-400 bg-clip-text text-transparent">{{ 'ARCH.ENG_TITLE2' | translate }}</span>
+        </h3>
+        <p class="text-base text-gray-600 dark:text-gray-400 max-w-3xl mx-auto mt-4 leading-relaxed">
+          {{ 'ARCH.ENG_SUB' | translate }}
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- webrain — Rust, MCP-native, powers agents -->
+        <div class="glass rounded-2xl p-6 relative overflow-hidden border-white/5 dark:border-white/10">
+          <div class="absolute top-0 right-0 w-32 h-32 bg-cyan-200/30 dark:bg-cyan-500/15 rounded-full blur-2xl -mr-10 -mt-10"></div>
+          <div class="relative z-10">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-11 h-11 glass rounded-xl flex items-center justify-center">
+                <lucide-angular [img]="icons['cpu']" class="h-5 w-5 text-cyan-600 dark:text-cyan-400 fill-none"></lucide-angular>
+              </div>
+              <span class="font-mono text-[10px] tracking-[0.2em] uppercase text-cyan-600 dark:text-cyan-400">{{ 'ARCH.ENG_1_TAG' | translate }}</span>
+            </div>
+            <h4 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ 'ARCH.ENG_1_T' | translate }}</h4>
+            <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{{ 'ARCH.ENG_1_D' | translate }}</p>
+          </div>
+        </div>
+
+        <!-- Crawl4AI — Python package, powers playground + CrawlPack machines -->
+        <div class="glass rounded-2xl p-6 relative overflow-hidden border-white/5 dark:border-white/10">
+          <div class="absolute top-0 right-0 w-32 h-32 bg-rose-200/30 dark:bg-rose-500/15 rounded-full blur-2xl -mr-10 -mt-10"></div>
+          <div class="relative z-10">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-11 h-11 glass rounded-xl flex items-center justify-center">
+                <lucide-angular [img]="icons['layers']" class="h-5 w-5 text-rose-500 dark:text-rose-400 fill-none"></lucide-angular>
+              </div>
+              <span class="font-mono text-[10px] tracking-[0.2em] uppercase text-rose-500 dark:text-rose-400">{{ 'ARCH.ENG_2_TAG' | translate }}</span>
+            </div>
+            <h4 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ 'ARCH.ENG_2_T' | translate }}</h4>
+            <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{{ 'ARCH.ENG_2_D' | translate }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Runtime primitives every run inherits -->
+      <div class="glass rounded-2xl p-6 border-white/5 dark:border-white/10">
+        <p class="text-center text-xs font-semibold tracking-[0.25em] uppercase text-gray-500 dark:text-gray-500 mb-5 font-mono">
+          {{ 'ARCH.ENG_RT_HEAD' | translate }}
+        </p>
+        <div class="flex flex-wrap items-center justify-center gap-2.5">
+          @for (prim of runtimePrimitives; track prim.key) {
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-white/5 rounded-full border border-gray-200/80 dark:border-white/10">
+              <lucide-angular [img]="icons[prim.icon]" class="h-3.5 w-3.5 text-cyan-500 dark:text-cyan-400 fill-none"></lucide-angular>
+              {{ prim.key | translate }}
+            </span>
+          }
+        </div>
+      </div>
+    </div>
+
     <!-- Pricing comparison: Self-Hosted vs deepscrape (from actual codebase data) -->
     <div class="mb-16">
       <div class="text-center mb-8">

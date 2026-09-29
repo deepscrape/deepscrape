@@ -30,6 +30,7 @@ export class AdminWorkspaceComponent implements AfterViewInit {
     { label: 'ADMIN_WORKSPACE.TAB_CONFIG', route: '/admin/config', icon: 'settings' },
     { label: 'ADMIN_WORKSPACE.TAB_ANALYTICS', route: '/admin/analytics', icon: 'gauge' },
     { label: 'ADMIN_WORKSPACE.TAB_BILLING', route: '/admin/billing-observability', icon: 'piggy-bank' },
+    { label: 'ADMIN_WORKSPACE.TAB_USERS', route: '/admin/users', icon: 'user-distribution' },
     { label: 'ADMIN_WORKSPACE.TAB_MIGRATION', route: '/admin/migration', icon: 'repeat' },
     { label: 'ADMIN_WORKSPACE.TAB_RUNS', route: '/admin/migration/runs', icon: 'recent-activity' },
     { label: 'ADMIN_WORKSPACE.TAB_BACKUPS', route: '/admin/migration/backups', icon: 'database' },

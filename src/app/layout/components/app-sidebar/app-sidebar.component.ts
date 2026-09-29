@@ -1,13 +1,14 @@
 import { NgClass } from '@angular/common';
-import { Component, DestroyRef, EventEmitter, Input, OnInit, Output, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, OnInit, Output, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AppSidebarNavComponent } from '../app-sidebar-nav/app-sidebar-nav.component';
 import { LoadingService } from 'src/app/core/services';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { asideBarAnimation } from 'src/app/animations';
-import { Outsideclick } from 'src/app/core/directives';
+import { Outsideclick } from 'src/app/core/directives/outsideclick.directive';
 
 @Component({
+    changeDetection: ChangeDetectionStrategy.OnPush,
     selector: 'app-sidebar',
     imports: [NgClass, AppSidebarNavComponent, MatProgressSpinner, Outsideclick],
     templateUrl: './app-sidebar.component.html',
@@ -23,7 +24,7 @@ export class AppSidebarComponent implements OnInit {
   @Input() resizeScreen: boolean
 
   @Output() backDropPressed: EventEmitter<boolean> = new EventEmitter<boolean>()
-  isLoading = false;
+  isLoading = signal(false);
 
   constructor(private loadingService: LoadingService) {
 
@@ -34,7 +35,7 @@ export class AppSidebarComponent implements OnInit {
     this.loadingService.loadingSubject$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((isLoading) => {
-        this.isLoading = isLoading;
+        this.isLoading.set(isLoading);
       });
   }
 

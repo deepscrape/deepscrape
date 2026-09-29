@@ -1,8 +1,9 @@
-import { Component, Input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input } from '@angular/core';
 import { AbstractControl, FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatIcon } from '@angular/material/icon';
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.OnPush,
   selector: 'app-radio-button',
   imports: [ReactiveFormsModule],
   templateUrl: './radio-button.component.html',

@@ -1449,13 +1449,68 @@
     </a>
     {{ 'SETTINGS_SECURITY.DANGER_CONTACT_SUFFIX' | translate }}
   </div>
-  <button
-    type="button"
-    [title]="('SETTINGS_SECURITY.DELETE_ACCOUNT' | translate)"
-    appRipple
-    rippleColor="light"
-    (click)="('')"
-    class="z-10 mt-6 inline-flex h-9 select-none items-center justify-center self-start rounded-full bg-red-600 px-4 font-sans font-semibold text-white shadow-sm transition duration-200 ease-in-out hover:bg-red-700 dark:bg-red-500 dark:text-white">
-    {{ 'SETTINGS_SECURITY.DELETE_ACCOUNT' | translate }}
-  </button>
+  @if (accountDeletionError()) {
+    <p class="z-10 mt-4 rounded-lg bg-white/70 p-3 text-sm text-red-700 dark:bg-gray7/60 dark:text-red-300">
+      {{ accountDeletionError() }}
+    </p>
+  }
+
+  @if (accountDeletionStep() === 'idle') {
+    <button
+      type="button"
+      [title]="('SETTINGS_SECURITY.DELETE_ACCOUNT' | translate)"
+      appRipple
+      rippleColor="light"
+      [disabled]="accountDeletionBusy()"
+      (click)="requestAccountDeletion()"
+      class="z-10 mt-6 inline-flex h-9 select-none items-center justify-center self-start rounded-full bg-red-600 px-4 font-sans font-semibold text-white shadow-sm transition duration-200 ease-in-out hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-red-500 dark:text-white">
+      {{ (accountDeletionBusy() ? 'SETTINGS_SECURITY.DANGER_SENDING' : 'SETTINGS_SECURITY.DELETE_ACCOUNT') | translate }}
+    </button>
+  } @else {
+    <!-- Second step. The account is not locked and nothing is erased until the code from
+         the mailbox is confirmed, so this screen is safe to back out of. -->
+    <div class="z-10 mt-6 max-w-xl space-y-3">
+      <p class="text-sm text-gray-700 dark:text-gray-300">
+        {{ 'SETTINGS_SECURITY.DANGER_CODE_SENT' | translate: { email: accountDeletionEmail() } }}
+      </p>
+
+      <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300" for="accountDeletionCode">
+        {{ 'SETTINGS_SECURITY.DANGER_CODE_LABEL' | translate }}
+      </label>
+      <input
+        id="accountDeletionCode"
+        type="text"
+        inputmode="numeric"
+        autocomplete="one-time-code"
+        maxlength="6"
+        [formControl]="accountDeletionCode"
+        class="block w-44 rounded-lg border border-gray-300 bg-white px-3 py-2 text-center font-mono text-lg tracking-[0.4em] text-gray-800 focus:border-red-500 focus:outline-none dark:border-gray5/60 dark:bg-gray6 dark:text-gray-100" />
+      @if (accountDeletionCode.invalid && accountDeletionCode.touched) {
+        <p class="text-xs text-red-700 dark:text-red-300">
+          {{ 'SETTINGS_SECURITY.DANGER_CODE_INVALID' | translate }}
+        </p>
+      }
+
+      <div class="flex flex-wrap gap-2 pt-1">
+        <button
+          type="button"
+          appRipple
+          rippleColor="light"
+          [disabled]="accountDeletionBusy()"
+          (click)="confirmAccountDeletion()"
+          class="inline-flex h-9 select-none items-center justify-center rounded-full bg-red-600 px-4 font-sans font-semibold text-white shadow-sm transition duration-200 ease-in-out hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-red-500 dark:text-white">
+          {{ (accountDeletionBusy() ? 'SETTINGS_SECURITY.DANGER_WORKING' : 'SETTINGS_SECURITY.DANGER_CONFIRM') | translate }}
+        </button>
+        <button
+          type="button"
+          appRipple
+          rippleColor="dark"
+          [disabled]="accountDeletionBusy()"
+          (click)="cancelAccountDeletionRequest()"
+          class="inline-flex h-9 select-none items-center justify-center rounded-full border border-gray-400/60 px-4 font-sans font-semibold text-gray-700 transition duration-200 ease-in-out hover:bg-gray-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray5/60 dark:text-gray-200">
+          {{ 'SETTINGS_SECURITY.DANGER_CANCEL_REQUEST' | translate }}
+        </button>
+      </div>
+    </div>
+  }
 </section>

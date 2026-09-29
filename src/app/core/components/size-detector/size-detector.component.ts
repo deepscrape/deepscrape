@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, DestroyRef, ElementRef, HostListener, Inject, OnInit, PLATFORM_ID, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, Inject, OnInit, PLATFORM_ID, inject } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { AuthService, ScreenResizeService, WindowToken } from 'src/app/core/services';
 import { SCREEN_SIZE } from 'src/app/core/enum';
@@ -9,6 +9,7 @@ import { Subject, of } from 'rxjs';
 import { debounceTime, switchMap } from 'rxjs/operators';
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.OnPush,
   selector: 'app-size-detector',
   imports: [],
   templateUrl: './size-detector.component.html',

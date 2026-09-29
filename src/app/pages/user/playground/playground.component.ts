@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, HostBinding, inject, OnInit, ViewChild, ElementRef, AfterViewInit, DestroyRef } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, HostBinding, inject, OnInit, ViewChild, ElementRef, AfterViewInit, DestroyRef } from '@angular/core';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CommonModule, NgClass } from '@angular/common';
 import { AppCrawlComponent, AppLLMScrapeComponent, DomainSeederComponent } from 'src/app/core/components';
@@ -27,7 +27,8 @@ export class PlaygroundComponent implements OnInit, AfterViewInit {
 
   constructor(
     private route: ActivatedRoute,
-    private router: Router
+    private router: Router,
+    private cdr: ChangeDetectorRef
   ) {
   }
   ngOnInit(): void {
@@ -44,6 +45,8 @@ export class PlaygroundComponent implements OnInit, AfterViewInit {
           default:
             this.currentMode = 'llm-scrape';
         }
+        // OnPush: the query-param write is async, so the view needs telling.
+        this.cdr.markForCheck()
       }
     });
   }

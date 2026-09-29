@@ -5,7 +5,7 @@ import { expandCollapseAnimation } from 'src/app/animations';
 import { MarkdownModule } from 'ngx-markdown';
 import { MatIconModule } from '@angular/material/icon'; // Import MatIconModule
 import { LucideAngularModule } from 'lucide-angular';
-import { myIcons } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
 import { PdfSrcPipe } from '../../pipes';
 import { TranslateModule } from '@ngx-translate/core';
 

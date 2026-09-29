@@ -3,7 +3,8 @@ import { Component, ChangeDetectionStrategy } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
 import { WithGradientBorderComponent } from 'src/app/core/components/with-gradient-border/with-gradient-border.component';
-import { myIcons, RevealDirective } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
+import { RevealDirective } from 'src/app/shared/reveal/reveal.directive';
 
 @Component({
   selector: 'app-features',

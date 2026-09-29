@@ -23,8 +23,8 @@
         </svg>
       </button>
       <a
-        [routerLink]="['/']"
-        routerLinkActive="active"
+        [href]="apexUrl"
+        aria-label="deepscrape home"
         class="flex items-center justify-between space-x-2">
         <h1
           class="top-0 z-[3] -mt-4 mb-0 flex h-16 items-center bg-inherit font-['Google_Sans_Display',Roboto,Arial,sans-serif] text-[2.75rem] font-normal leading-[3.25rem] tracking-[0] dark:bg-inherit">
@@ -63,7 +63,7 @@
             light: '#fff',
           }"></app-theme-toggle>
       </div>
-      @if (user) {
+      @if (user(); as u) {
         <div class="relative shrink-0">
           <!-- Profile Image Menu Button -->
           <button
@@ -78,12 +78,12 @@
               loading="eager"
               ng-img="true"
               decoding="sync"
-              [srcset]="user | provider: user.providerId : 'photoURL'"
-              [name]="user | provider: user.providerId : 'displayName'"
+              [srcset]="u | provider: u.providerId : 'photoURL'"
+              [name]="u | provider: u.providerId : 'displayName'"
               alt="user photo" />
           </button>
           <!-- DropDown Profile Menu -->
-        @if (showProfileMenu) {
+        @if (showProfileMenu()) {
           <div
             @enableProfileMenu
             appOutsideClick
@@ -93,13 +93,13 @@
               <div
                 class="truncate text-sm font-medium text-gray-900 dark:text-gray-300"
                 role="none">
-                @if (userLoading) {
+                @if (userLoading()) {
                   <div class="py-0.5">
                     <div class="loading-line-mid"></div>
                   </div>
                 }
                 <div>
-                  <p>{{ user | provider: user.providerId : 'displayName' }}</p>
+                  <p>{{ u | provider: u.providerId : 'displayName' }}</p>
                 </div>
               </div>
             </div>
@@ -114,13 +114,13 @@
               <div
                 class="truncate text-sm font-medium text-gray-900 dark:text-gray-300"
                 role="none">
-                @if (userLoading) {
+                @if (userLoading()) {
                   <div class="py-0.5">
                     <div class="loading-line-mid"></div>
                   </div>
                 }
                 <div>
-                  <p>{{ user | provider: user.providerId : 'email' }}</p>
+                  <p>{{ u | provider: u.providerId : 'email' }}</p>
                 </div>
               </div>
             </div>
@@ -131,15 +131,15 @@
                 class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
                 {{ 'SHELL.WORKSPACE' | translate }}
               </p>
-              @if (orgLoading) {
+              @if (orgLoading()) {
                 <div class="space-y-2" aria-hidden="true">
                   <div class="loading-key h-9"></div>
                   <div class="loading-key h-9 w-11/12"></div>
                 </div>
-              } @else if (organizations.length) {
+              } @else if (organizations().length) {
                 <app-dropdown
                   [control]="workspaceControl"
-                  [options]="workspaceDropdownOptions"
+                  [options]="workspaceDropdownOptions()"
                   [dropDownName]="'SHELL.WORKSPACE'"
                   [padding]="'py-2.5 pl-3 pr-3'"
                   [enableMenuAnimation]="true"
@@ -150,7 +150,7 @@
                 </div>
               }
             </div>
-            @if (invitations.length) {
+            @if (invitations().length) {
               <div
                 class="px-4 py-3 border-t border-gray-100 dark:border-gray-600/30"
                 role="none">
@@ -159,7 +159,7 @@
                   {{ 'SHELL.PENDING_INV' | translate }}
                 </p>
                 <div class="space-y-2">
-                  @for (invite of invitations; track invite.id) {
+                  @for (invite of invitations(); track invite.id) {
                     <div
                       class="rounded-md border border-gray-200 p-2 dark:border-gray-600/30">
                       <div class="text-xs text-gray-500 dark:text-gray-400">
@@ -168,7 +168,7 @@
                       <button
                         type="button"
                         class="mt-1 rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        [disabled]="inviteActionLoading"
+                        [disabled]="inviteActionLoading()"
                         (click)="acceptInvitation(invite.id)">
                         {{ 'SHELL.ACCEPT' | translate }}
                       </button>
@@ -182,7 +182,7 @@
                 <a
                   role="dashboard"
                   alt="dashboard"
-                  (click)="closeProfileMenu($event, user.uid)"
+                  (click)="closeProfileMenu($event, u.uid)"
                   routerLinkActive="Active"
                   routerLink="/dashboard"
                   class="flex flex-row items-center gap-2 justify-start text-center py-2 cursor-pointer px-4 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-300/[.08] dark:hover:text-white">
@@ -199,7 +199,7 @@
                   class="flex flex-row items-center gap-2 justify-start text-center py-2 cursor-pointer px-4 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-300/[.08] dark:hover:text-white"
                   role="billing"
                   alt="billing"
-                  (click)="closeProfileMenu($event, user.uid)"
+                  (click)="closeProfileMenu($event, u.uid)"
                   routerLinkActive="Active"
                   routerLink="/billing">
                   <div class="mt-1">
@@ -215,7 +215,7 @@
                   class="flex flex-row items-center gap-2 justify-start text-center py-2 cursor-pointer px-4 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-300/[.08] dark:hover:text-white"
                   role="chatai"
                   alt="chatai"
-                  (click)="closeProfileMenu($event, user.uid)"
+                  (click)="closeProfileMenu($event, u.uid)"
                   routerLinkActive="Active"
                   routerLink="/chatai">
                   <div class="mt-1"><mat-icon>auto_awesome</mat-icon></div>
@@ -227,7 +227,7 @@
                   class="flex flex-row items-center gap-2 justify-start text-center py-2 cursor-pointer px-4 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-300/[.08] dark:hover:text-white"
                   role="settings"
                   alt="settings"
-                  (click)="closeProfileMenu($event, user.uid)"
+                  (click)="closeProfileMenu($event, u.uid)"
                   routerLinkActive="Active"
                   routerLink="/settings">
                   <div class="mt-1">
@@ -247,7 +247,7 @@
                   <div class="mt-1"><mat-icon>logout</mat-icon></div>
                   <div class="flex w-fit items-start justify-start gap-3">
                     Sign out
-                    @if (loading) {
+                    @if (loading()) {
                       <!-- Loading spinner -->
                       <mat-spinner
                         [diameter]="20"
@@ -280,7 +280,7 @@
               [srcset]="''"
               alt="user photo" />
           </button>
-        @if (showProfileMenu) {
+        @if (showProfileMenu()) {
           <div
             @enableProfileMenu
             appOutsideClick
@@ -356,7 +356,7 @@
                   <div class="mt-1"><mat-icon>logout</mat-icon></div>
                   <div class="flex w-fit items-start justify-start gap-3">
                     Sign out
-                    @if (loading) {
+                    @if (loading()) {
                       <!-- Loading spinner -->
                       <mat-spinner
                         [diameter]="20"
@@ -379,21 +379,21 @@
 <!-- Inner Section
   -->
 <div
-  [ngClass]="{ 'flex flex-row': !closeAsideBar && !viewSmallDevices }"
+  [ngClass]="{ 'flex flex-row': !closeAsideBar() && !viewSmallDevices() }"
   class="relative mt-20 h-full w-full min-w-0 flex-grow gap-2 overflow-x-clip rounded-lg px-4 py-2 pt-0 lg:max-h-full lg:px-20 3xl:px-32">
   <app-sidebar
     class="shrink-0"
-    [barClosed]="closeAsideBar"
-    [resizeScreen]="viewSmallDevices"
+    [barClosed]="closeAsideBar()"
+    [resizeScreen]="viewSmallDevices()"
     (backDropPressed)="onCloseAsideBar($event)"></app-sidebar>
   <div class="min-w-0 flex-1 overflow-x-clip">
     <router-outlet
-      [@routeAnimation]="currentRouteAnimation"
+      [@routeAnimation]="currentRouteAnimation()"
       #outlet="outlet"></router-outlet>
   </div>
 </div>
-@if (!compIsLoading) {
-  <app-footer [color]="footerColor"></app-footer>
+@if (!compIsLoading()) {
+  <app-footer [color]="footerColor()"></app-footer>
 
   <!-- <div  class="hidden">{{footerColor}}</div> -->
 } @else {

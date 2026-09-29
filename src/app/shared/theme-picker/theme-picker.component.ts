@@ -1,10 +1,12 @@
 import { isPlatformBrowser } from '@angular/common';
 import { Component, Inject, OnDestroy, PLATFORM_ID, WritableSignal, inject, input, signal, DOCUMENT } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
-import { RippleDirective } from 'src/app/core/directives';
+import { RippleDirective } from 'src/app/core/directives/ripple.directive';
 import { AppTheme } from 'src/app/core/enum';
-import { browserProvider, BrowserToken, LocalStorage, STORAGE_PROVIDERS, windowProvider, WindowToken } from 'src/app/core/services';
-import { ThemeService } from 'src/app/core/services';
+import { browserProvider, BrowserToken } from 'src/app/core/services/browser.service';
+import { LocalStorage, STORAGE_PROVIDERS } from 'src/app/core/services/storage.service';
+import { windowProvider, WindowToken } from 'src/app/core/services/window.service';
+import { ThemeService } from 'src/app/core/services/theme.service';
 
 export const themeStorageKey = 'app-theme-dark';
 

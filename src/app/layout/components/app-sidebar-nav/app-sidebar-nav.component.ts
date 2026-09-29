@@ -1,7 +1,8 @@
-import { NgClass, NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectorRef, Component, EventEmitter, Output, TemplateRef, ViewChild } from '@angular/core';
+import { isPlatformBrowser, NgClass, NgTemplateOutlet } from '@angular/common';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, inject, Output, PLATFORM_ID, TemplateRef, ViewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { navigation } from 'src/app/_nav';
+import { adminNavigation, navigation } from 'src/app/_nav';
+import { hostClassOf } from 'src/app/core/guards/host-routing.policy';
 import { AppSidebarNavItemComponent } from '../app-sidebar-nav-item/app-sidebar-nav-item.component';
 import { LoadingService } from 'src/app/core/services';
 import { MatIcon } from '@angular/material/icon';
@@ -9,6 +10,7 @@ import { timer } from 'rxjs/internal/observable/timer';
 import { AuthService } from 'src/app/core/services/auth.service';
 
 @Component({
+  changeDetection: ChangeDetectionStrategy.OnPush,
   selector: 'app-sidebar-nav',
   imports: [AppSidebarNavItemComponent, NgTemplateOutlet, MatIcon, NgClass],
   templateUrl: './app-sidebar-nav.component.html',
@@ -17,7 +19,11 @@ import { AuthService } from 'src/app/core/services/auth.service';
 export class AppSidebarNavComponent {
 
   @ViewChild('sidebarNavTemplate') sidebarNavTemplate: TemplateRef<any>
-  private navigation = navigation
+  // ponytail: `window` is absent while the server renders `/dashboard` and `/admin`,
+  // so the host probe is platform-guarded and falls back to the app nav.
+  private readonly isConsoleHost = isPlatformBrowser(inject(PLATFORM_ID)) &&
+    hostClassOf(window.location.hostname) === 'console'
+  private navigation: any[] = this.isConsoleHost ? adminNavigation : navigation
   protected isAdmin = false
 
   constructor(private loadingService: LoadingService, private authService: AuthService, private cdr: ChangeDetectorRef) {
@@ -39,15 +45,13 @@ export class AppSidebarNavComponent {
   }
 
   protected get filteredNavigation() {
-    // Only show 'Admin' tab and its children if user is admin
-    return this.navigation
-      .map(item => {
-        if (item.name === 'Admin') {
-          return this.isAdmin ? item : null;
-        }
-        return item;
-      })
-      .filter(item => !!item);
+    // The console is admin-only (its routes sit behind `adminGuard`), so its nav needs
+    // no gating. On the app origin the single 'Console' cross-link is hidden from
+    // non-admins; it stays a relative link and the host guard forwards `/admin`.
+    if (this.isConsoleHost) {
+      return this.navigation
+    }
+    return this.navigation.filter(item => item.name !== 'Console' || this.isAdmin)
   }
 
   public isDivider(item: any) {

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, inject, ViewChild, AfterViewInit, OnDestroy, DestroyRef, signal } from '@angular/core'
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, inject, ViewChild, AfterViewInit, OnDestroy, DestroyRef, signal } from '@angular/core'
 import { FormArray, FormBuilder, FormGroup, ReactiveFormsModule, Validators, FormControl, FormsModule } from '@angular/forms'
 import { CrawlOperation, CrawlResult, CrawlStatus, CrawlStreamBatch, CrawlTask, Preset, SeederRequest, SeederResult, Users } from '../../types'
 import { LocalStorage, SeedingService, ScreenResizeService, WindowToken, CrawlAPIService, SnackbarService, OperationStatusService, AuthService } from '../../services'
@@ -37,6 +37,7 @@ export class DomainSeederComponent implements AfterViewInit, OnDestroy {
   private localStorage = inject(LocalStorage)
   private destroyRef = inject(DestroyRef)
   private screenResizeService = inject(ScreenResizeService)
+  private cdr = inject(ChangeDetectorRef)
   private user: Users & { currProviderData: UserInfo | null } | null = null
   private destroy$ = new Subject<void>()
 
@@ -440,6 +441,8 @@ export class DomainSeederComponent implements AfterViewInit, OnDestroy {
           }
           // add data to the dom as they coming to the frontend
           this.addCrawlResult(taskResult)
+          // OnPush: progress arrives from the streaming response.
+          this.cdr.markForCheck()
         },
         complete: () => {
           // reset the processing status
@@ -451,6 +454,7 @@ export class DomainSeederComponent implements AfterViewInit, OnDestroy {
           this.enableForm()
 
           this.latestTaskId.set(null)
+          this.cdr.markForCheck()
         },
         error: (error: any) => {
 
@@ -466,6 +470,7 @@ export class DomainSeederComponent implements AfterViewInit, OnDestroy {
 
           // show snackbar Error
           this.showSnackbar(this.errorMessage || "", SnackBarType.error, '', 5000)
+          this.cdr.markForCheck()
         }
       })
 

@@ -1,8 +1,9 @@
 
-import { Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { bounceAnim } from 'src/app/animations';
 
 @Component({
+    changeDetection: ChangeDetectionStrategy.OnPush,
     selector: 'app-loading-dots',
     imports: [],
     templateUrl: './loading-dots.component.html',

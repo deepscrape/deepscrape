@@ -1,5 +1,5 @@
 
-import { ChangeDetectorRef, Component, EventEmitter, inject, Input, Output } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, inject, Input, Output } from '@angular/core';
 import { LocalStorage, WindowToken } from '../../services';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule } from '@ngx-translate/core';
@@ -8,6 +8,7 @@ import { RippleDirective } from '../../directives';
 
 
 @Component({
+    changeDetection: ChangeDetectionStrategy.OnPush,
     selector: 'app-consent-modal',
     imports: [MatIcon, RippleDirective, TranslateModule],
     templateUrl: './consent-modal.component.html',

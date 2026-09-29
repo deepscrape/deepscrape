@@ -10,28 +10,25 @@
 
   <main class="relative z-10 flex-1 w-full mx-auto max-w-3xl px-4 sm:px-6 py-10 sm:py-14">
     <div class="glass rounded-2xl p-5 sm:p-10 border border-white/5 dark:border-white/10 shadow-xl">
-      <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">Privacy Policy</p>
-      <h1 class="text-3xl sm:text-4xl font-display font-bold tracking-tight text-gray-900 dark:text-white">Privacy Policy</h1>
-      <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Last updated: September 7, 2026</p>
+      <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">{{ 'LEGAL.PRIVACY_KICKER' | translate }}</p>
+      <h1 class="text-3xl sm:text-4xl font-display font-bold tracking-tight text-gray-900 dark:text-white">{{ 'LEGAL.PRIVACY_TITLE' | translate }}</h1>
+      <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ 'LEGAL.PRIVACY_UPDATED' | translate }}</p>
+      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ 'LEGAL.AUTHORITATIVE_NOTE' | translate }}</p>
 
       <p class="mt-6 rounded-xl border border-amber-300/60 bg-amber-50/80 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-        <strong>About this document:</strong> deepscrape is published under the <em>deepscrape</em> brand.
-        The legal entity, registered address and any designated contact for privacy matters are shown as
-        clearly marked placeholders below and must be completed by the operator before publication.
-        This text is a starting point and should be reviewed by qualified legal counsel.
+        <strong>{{ 'LEGAL.PRIVACY_ABOUT_TITLE' | translate }}</strong> {{ 'LEGAL.PRIVACY_ABOUT_BODY' | translate }}
       </p>
 
     <!-- Withdrawal, GDPR Art. 7(3): as easy to withdraw as to give. -->
     <div class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-300/60 bg-cyan-50/80 p-4 dark:border-cyan-500/30 dark:bg-cyan-500/10">
       <p class="text-sm text-cyan-900 dark:text-cyan-100">
-        <strong>Cookie choices.</strong> Changing or withdrawing your consent removes the analytics
-        identifiers stored in this browser and asks you again on the next page.
+        <strong>{{ 'LEGAL.CHANGE_CHOICES_TITLE' | translate }}</strong> {{ 'LEGAL.CHANGE_CHOICES_BODY' | translate }}
       </p>
       <button
         type="button"
         (click)="changeChoices()"
         class="rounded-lg border border-cyan-600 px-3 py-1.5 text-sm font-semibold text-cyan-700 transition-colors hover:bg-cyan-600 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 dark:border-cyan-400 dark:text-cyan-300 dark:hover:bg-cyan-500 dark:hover:text-white">
-        Change cookie choices
+        {{ 'LEGAL.CHANGE_CHOICES_BUTTON' | translate }}
       </button>
     </div>
 
@@ -142,9 +139,73 @@
           If you accept, we set a cookie named <code>gid</code> for one year and store a record containing a
           one-way hash of your IP address, browser, operating system and device type. We use it to count
           unique visitors and to understand how the Service is used. If you decline, or do not answer, no
-          analytics cookie is set and no such record is created. You can change your mind at any time by
-          clearing this site&rsquo;s cookies in your browser settings; the banner will ask again and a
-          decline stops further analytics records from being created.
+          analytics cookie is set and no such record is created. You can change your mind at any time below;
+          a decline stops further analytics records from being created and clears the analytics cookies this
+          browser already holds.
+        </p>
+
+        <!-- Published inventory. Rendered from COOKIE_INVENTORY so this list, the banner and
+             the code cannot drift apart. -->
+        <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">Cookies we set</h3>
+        @for (group of cookieGroups; track group.category) {
+          <div class="mt-3">
+            <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ group.title }}</p>
+            <div class="mt-1 overflow-x-auto">
+              <table class="w-full text-left text-sm text-gray-600 dark:text-gray-300">
+                <thead>
+                  <tr class="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500 dark:border-white/10 dark:text-gray-400">
+                    <th class="py-1.5 pr-4 font-medium">Cookie</th>
+                    <th class="py-1.5 pr-4 font-medium">Retention</th>
+                    <th class="py-1.5 font-medium">Purpose</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (cookie of group.cookies; track cookie.name) {
+                    <tr class="border-b border-gray-100 align-top dark:border-white/5">
+                      <td class="py-2 pr-4 font-mono text-xs whitespace-nowrap text-gray-900 dark:text-white">{{ cookie.name }}</td>
+                      <td class="py-2 pr-4 whitespace-nowrap">{{ cookie.duration }}</td>
+                      <td class="py-2">{{ cookie.purpose }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+
+        <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">Why this list is short</h3>
+        <p class="mt-1">
+          A site like cloudflare.com publishes around a hundred and fifty cookies across those four
+          categories, because it runs a marketing stack beside its product: OneTrust for consent, Adobe
+          Experience Cloud and Amplitude for analytics, LogRocket for session replay, Bizible and Salesloft
+          for lead tracking, and DoubleClick, Casale, Tremor, LiveRamp and the social networks for
+          advertising. Every one of those is a separate processor, a separate retention rule, a separate
+          disclosure and a separate thing to delete on request.
+        </p>
+        <p class="mt-2">
+          We hold none of them, and the reason is structural rather than cosmetic:
+        </p>
+        <ul class="mt-2 list-disc space-y-1 pl-5">
+          <li>
+            <strong>Measurement is built in, not bought.</strong> Page views and unique visitors are counted
+            from our own event stream into first-party rollups, so there is no third-party analytics vendor
+            to disclose and nothing to send outside the EU/EEA hosting region we already use.
+          </li>
+          <li>
+            <strong>No advertising stack.</strong> We do not run retargeting, cross-site profiling or ad
+            exchanges, so there is no cookie whose purpose is to follow you to other websites. This is also
+            why no cookie here falls into a &ldquo;targeting&rdquo; category.
+          </li>
+          <li>
+            <strong>Every cookie has an owner and an exit.</strong> The banner lists each one with its
+            retention, the categories that own it can be switched off, and switching them off deletes the
+            cookies rather than merely stopping new writes.
+          </li>
+        </ul>
+        <p class="mt-2">
+          The trade-off is honest: we know less about how visitors browse the marketing pages than those
+          stacks would tell us. We accept that to keep the cookie list to eight entries and every one of them
+          first-party.
         </p>
       </section>
 

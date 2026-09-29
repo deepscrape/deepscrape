@@ -57,14 +57,17 @@
             ></lucide-angular>
           </button>
 
-          @if (openIndex() === i) {
-            <div class="px-6 pb-5 motion-safe:animate-fade-in">
-              <div class="h-px bg-gradient-to-r from-cyan-500/30 to-rose-500/30 dark:from-cyan-400/20 dark:to-rose-400/20 mb-4"></div>
-              <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                {{ faq.answer | translate }}
-              </p>
-            </div>
-          }
+          <!--
+            Rendered always, toggled via [hidden] instead of @if: the answers must exist in the
+            prerendered/SSR HTML so crawlers (and FAQPage structured data) can see them. @if left
+            every collapsed answer out of the document entirely.
+          -->
+          <div class="px-6 pb-5 motion-safe:animate-fade-in" [hidden]="openIndex() !== i">
+            <div class="h-px bg-gradient-to-r from-cyan-500/30 to-rose-500/30 dark:from-cyan-400/20 dark:to-rose-400/20 mb-4"></div>
+            <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+              {{ faq.answer | translate }}
+            </p>
+          </div>
         </div>
       }
     </div>

@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal, WritableSignal, inject, ChangeDetectionStrategy } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, WritableSignal, inject, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 
 import { CartPack, CrawlPack, CrawlPackConfigs, Headers, Users } from 'src/app/core/types';
@@ -25,7 +25,7 @@ import { RemoveToolbarDirective, RippleDirective } from 'src/app/core/directives
 import { switchMap } from 'rxjs/internal/operators/switchMap';
 import { catchError, concatMap, finalize, map, startWith, Subject, takeUntil, throwError } from 'rxjs';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
-import { themeStorageKey } from 'src/app/shared';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 import { UserInfo } from '@angular/fire/auth';
 
 @Component({
@@ -46,6 +46,7 @@ export class CrawlerPackComponent implements OnInit, OnDestroy {
     private user: Users & { currProviderData: UserInfo | null } | null = null
     private localStorage = inject(LocalStorage)
     private translate = inject(TranslateService)
+    private cdr = inject(ChangeDetectorRef)
     readonly clipboardButton = ClipboardbuttonComponent
     previousPacks: any[] = [];
     packTitleControl: FormControl<string>
@@ -178,6 +179,9 @@ export class CrawlerPackComponent implements OnInit, OnDestroy {
             finalize(() => {
                 if (this.user?.uid)
                     this.crawlPackages$ = from(this.fireService.loadPreviousPacks(this.user.uid))
+                // OnPush: loadingCartItems is cleared on both the error and complete paths,
+                // and finalize is the one place that sees both.
+                this.cdr.markForCheck()
             })
         ).subscribe({
             next: (done: boolean) => {

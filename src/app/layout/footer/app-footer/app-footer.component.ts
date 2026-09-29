@@ -11,7 +11,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
 import { RouterLink } from '@angular/router';
 import { LocalStorage, WindowToken } from 'src/app/core/services';
-import { myIcons, themeStorageKey } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,

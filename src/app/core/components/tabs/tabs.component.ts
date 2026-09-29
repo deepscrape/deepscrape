@@ -8,7 +8,7 @@ import { CrawlLinkTab, LinkTabs, ScrollDimensions } from '../../types';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule } from '@ngx-translate/core';
 import { NavigationEnd, NavigationStart, Router, RouterLink } from '@angular/router';
-import { themeStorageKey } from 'src/app/shared';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 @Component({
   selector: 'app-tabs',
   imports: [RippleDirective, NgClass, NgStyle, MatIcon, RouterLink, TouchEventsDirective, TranslateModule],

@@ -12,7 +12,7 @@ import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { Loading } from 'src/app/core/types';
 import { getErrorMessage } from 'src/app/core/functions';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { OtpInputComponent } from 'src/app/shared';
+import { OtpInputComponent } from 'src/app/shared/otp-input/otp-input.component';
 import { resolveSafeReturnUrl } from 'src/app/core/functions';
 
 @Component({

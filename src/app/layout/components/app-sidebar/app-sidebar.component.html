@@ -17,7 +17,7 @@
   <div
     class="sticky z-20 grow mt-2 block p-2 h-full bg-gray-100 dark:bg-gray-900 sm:mr-0 sm:h-auto xs:mr-0 xs:h-auto "
     [ngClass]="barClosed ? 'p-0' : ''">
-    @if (isLoading) {
+    @if (isLoading()) {
       <div
         class="h-full flex-col flex justify-center items-center">
         <div>
@@ -25,7 +25,7 @@
         </div>
       </div>
     }
-    <app-sidebar-nav [hidden]="isLoading"></app-sidebar-nav>
+    <app-sidebar-nav [hidden]="isLoading()"></app-sidebar-nav>
   </div>
 </aside>
 

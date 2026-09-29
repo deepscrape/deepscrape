@@ -26,7 +26,7 @@ describe('PlaygroundComponent', () => {
     navigateSpy.calls.reset();
 
     component = TestBed.runInInjectionContext(
-      () => new PlaygroundComponent(routeStub, routerStub)
+      () => new PlaygroundComponent(routeStub, routerStub, { markForCheck: () => {} } as any)
     );
   });
 

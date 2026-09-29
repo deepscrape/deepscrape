@@ -9,12 +9,13 @@ import { Firestore, doc, setDoc } from '@angular/fire/firestore';
 import { Users, Loading } from 'src/app/core/types';
 import { checkPasswordStrength, getErrorMessage } from 'src/app/core/functions';
 import { FirestoreService, SnackbarService, AuthService, ThemeService, WindowToken, AnalyticsService } from 'src/app/core/services';
+import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
 import { DEFAULT_PROFILE_URL } from 'src/app/core/variables';
 import { createPasswordStrengthValidator } from 'src/app/core/directives';
 import { SnackBarType } from 'src/app/core/components';
 import { Observable, Subscription } from 'rxjs';
 import { CookieService } from 'ngx-cookie-service'; // Import CookieService
-import { AnimatedBgComponent } from 'src/app/shared';
+import { AnimatedBgComponent } from 'src/app/shared/animated-bg/animated-bg.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { I18nService } from 'src/app/core/i18n';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -69,6 +70,8 @@ export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
     errorMessage = '';
     private themePicker = inject(ThemeService);
     protected isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$;
+    /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
+    protected readonly apexUrl: string = ORIGINS.marketing;
     private destroyRef = inject(DestroyRef);
     private langChangeSubscription: Subscription;
     public currentAuthMethod: 'email' | 'phone' | null = null;

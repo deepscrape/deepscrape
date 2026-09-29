@@ -18,7 +18,7 @@ import { MACHNINE_STATE } from 'src/app/core/enum';
 import { FormControlPipe } from 'src/app/core/pipes';
 import { DeploymentService, FirestoreService, LocalStorage, MachineStoreService, ScrollService, SnackbarService } from 'src/app/core/services';
 import { FlyMachine, MachineResponse } from 'src/app/core/types';
-import { themeStorageKey } from 'src/app/shared';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 
 @Component({
     selector: 'app-machines',

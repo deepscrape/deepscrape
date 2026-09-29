@@ -4,7 +4,7 @@ import {
 } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
-import { RevealDirective } from 'src/app/shared';
+import { RevealDirective } from 'src/app/shared/reveal/reveal.directive';
 
 interface Testimonial {
   initials: string;

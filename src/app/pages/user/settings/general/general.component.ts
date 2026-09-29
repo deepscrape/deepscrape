@@ -4,7 +4,9 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
 import { RadioToggleComponent } from 'src/app/core/components';
-import { myIcons, LangPickerComponent, ThemeToggleComponent } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
+import { LangPickerComponent } from 'src/app/shared/lang-picker/lang-picker.component';
+import { ThemeToggleComponent } from 'src/app/shared/theme-picker/theme-picker.component';
 import { NotificationService, type PushState } from '../../../../core/services/notification.service';
 
 @Component({

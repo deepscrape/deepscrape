@@ -20,6 +20,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule, JsonPipe, isPlatformBrowser } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
+import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
 import { Observable, Subject, takeUntil } from 'rxjs';
 import { firstValueFrom } from 'rxjs';
 
@@ -108,6 +109,8 @@ export class LoginComponent  {
   protected isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$; 
 
   // Component properties
+  /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
+  protected readonly apexUrl: string = ORIGINS.marketing;
   /** Manages the loading state for various authentication methods. */
   protected loading: Loading;
   /** Reactive form group for handling login input fields (identifier and password). */

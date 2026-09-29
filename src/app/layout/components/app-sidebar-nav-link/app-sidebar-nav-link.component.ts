@@ -1,14 +1,16 @@
 import { NgClass } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, inject, Input, Output } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, EventEmitter, inject, Input, Output } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { Subscription } from 'rxjs/internal/Subscription';
-import { RemoveClassDirective, RippleDirective } from 'src/app/core/directives';
+import { RemoveClassDirective } from 'src/app/core/directives/removeclass.directive';
+import { RippleDirective } from 'src/app/core/directives/ripple.directive';
 import { cleanAndParseJSON } from 'src/app/core/functions';
 import { AuthService, LocalStorage, ScreenResizeService } from 'src/app/core/services';
 import { Session } from 'src/app/core/types';
-import { themeStorageKey } from 'src/app/shared';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 import { AppUserLayoutComponent } from '../../full';
+import { orgScopedUrl } from 'src/app/core/guards/host-routing.policy';
 
 @Component({
   selector: 'app-sidebar-nav-link',
@@ -22,6 +24,18 @@ export class AppSidebarNavLinkComponent {
   private authService = inject(AuthService)
   @Input() link: any
   private localStorage: Storage = inject(LocalStorage)
+
+  /**
+   * The nav url moved under the active org, so a click lands on the canonical `/{orgId}/…`
+   * instead of bouncing through the legacy route.
+   *
+   * `/admin/**` and `/service/**` are left alone — neither is org-scoped, so the console's own
+   * nav and the auth surface keep working. With no active org this is a no-op, and the bare
+   * routes still resolve.
+   */
+  protected readonly linkUrl = computed(() =>
+    this.link?.url ? orgScopedUrl(this.link.url, this.userLayout?.selectedOrgId() ?? null) : null
+  )
 
   private routeSub: Subscription
 

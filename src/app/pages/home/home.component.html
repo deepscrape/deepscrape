@@ -43,13 +43,22 @@
     </nav>
 
     <div class="flex items-center gap-3">
-      <!-- Dashboard entry: signed-in users only — a guest would only bounce off the guard. -->
+      <!-- Signed-in users get their dashboard; guests get the sign-in entry in the same
+           slot with the same styling. `/service/login` stays relative — the edge 301 and
+           the host guard both forward it to the app origin, where the session is created. -->
       @if (user$ | async) {
         <a
           [routerLink]="['/dashboard']"
           routerLinkActive="active"
           class="hidden sm:inline-flex text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-cyan-600 dark:hover:text-cyan-400 py-2 px-4 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-all duration-200">
           {{ 'HOME.DASHBOARD' | translate }}
+        </a>
+      } @else {
+        <a
+          [routerLink]="['/service/login']"
+          routerLinkActive="active"
+          class="hidden sm:inline-flex text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-cyan-600 dark:hover:text-cyan-400 py-2 px-4 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-all duration-200">
+          {{ 'LOGIN.SIGN_IN_BUTTON' | translate }}
         </a>
       }
 

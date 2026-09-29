@@ -1,5 +1,5 @@
 import { AsyncPipe, CurrencyPipe, NgClass } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, inject } from '@angular/core';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -47,6 +47,7 @@ export class PlansComponent {
   private window: Window = inject(WindowToken)
   private readonly destroyRef = inject(DestroyRef)
   private readonly translate = inject(TranslateService)
+  private readonly cdr = inject(ChangeDetectorRef)
   planView: PlanPeriod
   planPeriods: Array<PlanPeriod> = []
 
@@ -102,18 +103,22 @@ export class PlansComponent {
       if (planInterval && this.periodByInterval[planInterval]) {
         this.currentPrice = this.periodByInterval[planInterval]
       }
+      // OnPush: billing state arrives from the service stream.
+      this.cdr.markForCheck()
     })
 
     this.route.queryParamMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
       const shouldShowOffer = params.get('offer') === '1'
       if (!shouldShowOffer) {
         this.offerBadgeMessage = null
+        this.cdr.markForCheck()
         return
       }
 
       this.offerBadgeMessage = params.get('offerMessage') || this.translate.instant('BILLING_PLANS.OFFER_MESSAGE')
       this.window.setTimeout(() => {
         this.offerBadgeMessage = null
+        this.cdr.markForCheck()
       }, 6500)
     })
 
@@ -136,6 +141,8 @@ export class PlansComponent {
     this.authService.user$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((user) => {
       this.platformAdminBypassActive = this.authService.isAdmin
       this.isBillingRestricted = !this.platformAdminBypassActive && this.isRestrictedRole(user?.role)
+      // OnPush: role gating arrives from the auth stream.
+      this.cdr.markForCheck()
     })
 
     this.planPeriods = [

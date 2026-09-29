@@ -6,8 +6,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { Auth, sendPasswordResetEmail } from '@angular/fire/auth';
 import { getErrorMessage } from 'src/app/core/functions';
+import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
 import { FirestoreService, ThemeService } from 'src/app/core/services';
-import { AnimatedBgComponent } from 'src/app/shared';
+import { AnimatedBgComponent } from 'src/app/shared/animated-bg/animated-bg.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { I18nService } from 'src/app/core/i18n';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -34,6 +35,8 @@ export class ResetPasswordComponent implements OnInit {
     private destroyRef = inject(DestroyRef)
     private themePicker = inject(ThemeService)
     protected isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$;
+    /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
+    protected readonly apexUrl: string = ORIGINS.marketing;
     private langChangeSubscription: Subscription;
 
     constructor(

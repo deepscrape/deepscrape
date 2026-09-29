@@ -4,10 +4,23 @@ import { MatProgressSpinner } from '@angular/material/progress-spinner'
 import { HttpClient } from '@angular/common/http'
 import { LoadingBarRouterModule } from '@ngx-loading-bar/router'
 import { Subscription } from 'rxjs/internal/Subscription'
-import { LoggerService, SnackbarService, SvgIconService, HeartbeatService, AnalyticsService, AuthService } from './core/services'
+// Direct imports (not the './core/services' barrel): the barrel re-exports ~44 root
+// services, and pulling it into the root chunk retains unrelated modules such as
+// firestore.service (Firestore + Storage SDK) in the eager bundle.
+import { LoggerService } from './core/services/logger.service'
+import { SnackbarService } from './core/services/snackbar.service'
+import { SvgIconService } from './core/services/svgicon.service'
+import { HeartbeatService } from './core/services/heartbeat.service'
+import { AnalyticsService } from './core/services/analytics.service'
+import { AuthService } from './core/services/auth.service'
 import { CookieConsentComponent } from './core/components/cookie-consent/cookie-consent.component';
-import { SessionTimeoutService, DeviceVerificationService } from './core/services'
-import { AnimatedBgComponent, LangPickerComponent, ThemeToggleComponent } from './shared'
+import { SessionTimeoutService } from './core/services/session-timeout.service'
+import { DeviceVerificationService } from './core/services/device-verification.service'
+// Direct imports (not the './shared' barrel): the barrel also re-exports
+// notification-bell, which injects Auth + Firestore into the eager root chunk.
+import { AnimatedBgComponent } from './shared/animated-bg/animated-bg.component'
+import { LangPickerComponent } from './shared/lang-picker/lang-picker.component'
+import { ThemeToggleComponent } from './shared/theme-picker/theme-picker.component'
 import { SizeDetectorComponent } from './core/components/size-detector/size-detector.component'
 import { SnackbarComponent, SnackBarType } from './core/components/snackbar/snackbar.component'
 import { LoadingBarHttpClientModule } from '@ngx-loading-bar/http-client'
@@ -168,14 +181,29 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     this.theme.setDefaultTheme()
 
     const isBrowser = isPlatformBrowser(this.platformId)
+
+    // ponytail: `requestIdleCallback` with a 2s ceiling, so this still happens promptly
+    // when the browser is busy. Measured on the live landing: LCP 3.42s vs
+    // DomContentLoaded 3.17s — 250ms apart — i.e. the first view waits on main-thread
+    // work no pixel depends on. Both callers below are fire-and-forget.
+    const afterFirstPaint = (work: () => void): void => {
+      const idle = (globalThis as {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void
+      }).requestIdleCallback
+      if (idle) {
+        idle(work, { timeout: 2000 })
+      } else {
+        setTimeout(work, 1)
+      }
+    }
+
     if (isBrowser) {
-      this.http.get('/csrf-token', { withCredentials: true })
+      afterFirstPaint(() => this.http.get('/csrf-token', { withCredentials: true })
         .pipe(
           takeUntilDestroyed(this.destroyRef),
           catchError(() => of(null)),
         )
-        .subscribe()
-
+        .subscribe())
     }
 
     // Make a request to the status endpoint to trigger guestTracker.
@@ -189,7 +217,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       this.heartbeatService.start(this.token)
 
       // Send custom analytics event to backend
-      forkJoin([
+      afterFirstPaint(() => forkJoin([
         this.analyticsService.sendStatus(),
       ])
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -200,7 +228,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         error: (error) => {
           console.error('Error checking API status or sending analytics event:', error)
         }
-      })
+      }))
       
     
     }

@@ -43,26 +43,29 @@ describe('AppSidebarNavComponent', () => {
     expect(loadingServiceMock.stopLoading).toHaveBeenCalled();
   }));
 
-  it('should hide admin navigation when user is not admin', () => {
+  // The app origin no longer carries the admin tree — it lives in `adminNavigation`
+  // for the console origin. The only admin-gated item here is the single 'Console'
+  // cross-link, which is what `filteredNavigation` actually filters on.
+  it('should hide the Console cross-link when user is not admin', () => {
     Object.defineProperty(authServiceMock, 'isAdmin', { value: false, configurable: true });
 
     const fx = TestBed.createComponent(AppSidebarNavComponent);
     const comp = fx.componentInstance;
     fx.detectChanges();
 
-    const hasAdmin = (comp as any).filteredNavigation.some((item: any) => item?.name === 'Admin');
-    expect(hasAdmin).toBe(false);
+    const hasConsole = (comp as any).filteredNavigation.some((item: any) => item?.name === 'Console');
+    expect(hasConsole).toBe(false);
   });
 
-  it('should show admin navigation when user is admin', () => {
+  it('should show the Console cross-link when user is admin', () => {
     Object.defineProperty(authServiceMock, 'isAdmin', { value: true, configurable: true });
 
     const fx = TestBed.createComponent(AppSidebarNavComponent);
     const comp = fx.componentInstance;
     fx.detectChanges();
 
-    const hasAdmin = (comp as any).filteredNavigation.some((item: any) => item?.name === 'Admin');
-    expect(hasAdmin).toBe(true);
+    const hasConsole = (comp as any).filteredNavigation.some((item: any) => item?.name === 'Console');
+    expect(hasConsole).toBe(true);
   });
 
   it('should identify divider and title items correctly', () => {

@@ -1,8 +1,9 @@
 import { NgClass, NgTemplateOutlet } from '@angular/common';
-import { Component, Input, TemplateRef } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input, TemplateRef } from '@angular/core';
 import { sidebarItemAnimation } from 'src/app/animations';
 
 @Component({
+    changeDetection: ChangeDetectionStrategy.OnPush,
     selector: 'app-sidebar-nav-dropdown',
     imports: [NgClass, NgTemplateOutlet],
     templateUrl: './app-sidebar-nav-dropdown.component.html',

@@ -1,5 +1,5 @@
 
-import { ChangeDetectionStrategy, Component } from '@angular/core'
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component } from '@angular/core'
 import { ActivatedRoute, Router, RouterLink } from '@angular/router'
 import { TranslateModule } from '@ngx-translate/core'
 import { BillingService } from 'src/app/core/services'
@@ -19,6 +19,7 @@ export class BillingSuccessComponent {
     private readonly route: ActivatedRoute,
     private readonly router: Router,
     private readonly billingService: BillingService,
+    private readonly cdr: ChangeDetectorRef,
   ) {
     this.returnUrl = this.route.snapshot.queryParamMap.get('returnUrl')
 
@@ -36,6 +37,8 @@ export class BillingSuccessComponent {
         }
 
         this.isVerifiedSession = true
+        // OnPush: the write happens after the first check, so the view needs telling.
+        this.cdr.markForCheck()
       })
       .catch(() => {
         void this.router.navigate(['/billing/plans'])

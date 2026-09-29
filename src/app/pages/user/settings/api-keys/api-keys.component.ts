@@ -10,7 +10,7 @@ import { ApiKeyService, AuthService, HighRiskActionService, LocalStorage } from 
 import { Outsideclick, RippleDirective, TooltipDirective } from 'src/app/core/directives';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { themeStorageKey } from 'src/app/shared';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 import { FormControlPipe } from 'src/app/core/pipes';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
 import { Router } from '@angular/router'

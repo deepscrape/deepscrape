@@ -1,19 +1,35 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CookieService } from 'ngx-cookie-service';
+import { TranslateModule } from '@ngx-translate/core';
 import { AppFooterComponent } from '../../layout/footer';
 import { LandingSubheaderComponent } from '../../shared/landing-subheader/landing-subheader.component';
 import { WindowToken } from '../../core/services/window.service';
+import { COOKIE_INVENTORY } from '../../core/components/cookie-consent/cookie-inventory';
 
 @Component({
   selector: 'app-privacy',
-  imports: [RouterLink, AppFooterComponent, LandingSubheaderComponent],
+  imports: [RouterLink, AppFooterComponent, LandingSubheaderComponent, TranslateModule],
   templateUrl: './privacy.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class PrivacyComponent {
   private readonly cookies = inject(CookieService);
   private readonly window = inject(WindowToken);
+
+  /**
+   * The published inventory, grouped for the policy table. Titles stay in English
+   * with the rest of the policy body until a translator lands them; the cookie names
+   * and retention are facts and do not translate.
+   */
+  protected readonly cookieGroups = [
+    { category: 'necessary', title: 'Strictly necessary' },
+    { category: 'analytics', title: 'Analytics' },
+    { category: 'functional', title: 'Functional' },
+  ].map((group) => ({
+    ...group,
+    cookies: COOKIE_INVENTORY.filter((cookie) => cookie.category === group.category),
+  }));
 
   /**
    * Withdrawal, GDPR Art. 7(3): withdrawing has to be as easy as giving, and until this

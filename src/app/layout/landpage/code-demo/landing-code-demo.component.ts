@@ -5,7 +5,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { TranslateModule } from '@ngx-translate/core';
 import { interval, Subscription } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { myIcons, RevealDirective } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
+import { RevealDirective } from 'src/app/shared/reveal/reveal.directive';
 
 /**
  * Interactive "crawl in 60 seconds" demo for the marketing landing page.

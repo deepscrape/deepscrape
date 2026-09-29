@@ -8,7 +8,7 @@ import { AppFooterComponent } from '../../footer'
 import { RouterLink } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
 import { LocalStorage, WindowToken } from 'src/app/core/services';
-import { themeStorageKey } from 'src/app/shared';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 import { LandingSubheaderComponent } from 'src/app/shared/landing-subheader/landing-subheader.component';
 
 @Component({

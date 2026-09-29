@@ -24,12 +24,14 @@ import {
   getSessionRiskTone,
 } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
-import { AuthService, AnalyticsService, DeviceVerificationService, FirestoreService, HighRiskActionService, LocalStorage, MfaSecurityMethod, SnackbarService, WebAuthnService } from 'src/app/core/services';
+import { AuthService, AccountLifecycleService, AnalyticsService, DeviceVerificationService, FirestoreService, HighRiskActionService, LocalStorage, MfaSecurityMethod, SnackbarService, WebAuthnService } from 'src/app/core/services';
 import { Loading, loginHistoryEvent, loginHistoryInfo, Users, SessionDisplayInfo } from 'src/app/core/types';
 import { TrustedDevice } from 'src/app/core/services/device-verification.service';
 import { WebAuthnCredential } from 'src/app/core/services/webauthn.service';
 import { DEFAULT_PROFILE_URL } from 'src/app/core/variables';
-import { myIcons, OtpInputComponent, themeStorageKey } from 'src/app/shared';
+import { myIcons } from 'src/app/shared/lucideicons';
+import { OtpInputComponent } from 'src/app/shared/otp-input/otp-input.component';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 type SecurityTimelineEvent = loginHistoryEvent & {
@@ -73,6 +75,7 @@ export class SecurityTabComponent {
   private destroyRef = inject(DestroyRef)
 
   private authService = inject(AuthService)
+  private accountLifecycle = inject(AccountLifecycleService)
   private firestoreService = inject(FirestoreService)
   private highRiskActionService = inject(HighRiskActionService)
   private snackbarService = inject(SnackbarService)
@@ -158,6 +161,25 @@ export class SecurityTabComponent {
   readonly mfaLinkError = signal('')
 
 
+  // ── Account closure (danger zone) ──────────────────────────────────────────
+  // Two explicit steps, and neither of them erases: the server mails a code, then locks
+  // the account and schedules erasure. Closing an account by mistake stays recoverable
+  // for the grace window, which is the only reason a mis-click here is survivable.
+  readonly accountDeletionCode = new FormControl('', {
+    nonNullable: true,
+    validators: [Validators.required, Validators.pattern(/^\d{6}$/)],
+  })
+  readonly accountDeletionReason = new FormControl('', {
+    nonNullable: true,
+    validators: [Validators.maxLength(280)],
+  })
+  readonly accountDeletionStep = signal<'idle' | 'code'>('idle')
+  readonly accountDeletionBusy = signal(false)
+  readonly accountDeletionError = signal('')
+  /** Masked destination the code was sent to. */
+  readonly accountDeletionEmail = signal('')
+  readonly accountDeletionExpiresAt = signal('')
+
   public get email() {
     return this.securityForm.get('email')
   }
@@ -187,6 +209,132 @@ export class SecurityTabComponent {
         this.pendingEnrichmentRefreshTimer = null
       }
     })
+  }
+
+  // ── Account closure ────────────────────────────────────────────────────────
+
+  /**
+   * Ask the server to mail a deletion confirmation code.
+   *
+   * Step-up first, through the same device-trust and passkey gate this codebase already
+   * uses for irreversible actions. A stolen session alone must not be able to start
+   * closing someone's account — and the mailed code is the second factor that a hijacked
+   * session cannot forge, because it lands in the mailbox rather than the browser.
+   */
+  async requestAccountDeletion(): Promise<void> {
+    if (this.accountDeletionBusy()) {
+      return
+    }
+
+    this.accountDeletionError.set('')
+
+    const verified = await this.highRiskActionService.ensureVerified('account_deletion')
+    if (!verified) {
+      return
+    }
+
+    this.accountDeletionBusy.set(true)
+    this.cdr.markForCheck()
+
+    try {
+      const result = await this.accountLifecycle.requestDeletion(
+        this.accountDeletionReason.value.trim() || undefined,
+      )
+      this.accountDeletionEmail.set(result.email)
+      this.accountDeletionExpiresAt.set(result.expiresAt)
+      this.accountDeletionStep.set('code')
+      this.showSnackbar(
+        this.translate.instant('SETTINGS_SECURITY.DANGER_CODE_SENT', { email: result.email }),
+        SnackBarType.success,
+        '',
+        5000,
+      )
+    } catch (error) {
+      this.accountDeletionError.set(this.deletionErrorMessage(error))
+    } finally {
+      this.accountDeletionBusy.set(false)
+      this.cdr.markForCheck()
+    }
+  }
+
+  /**
+   * Confirm with the emailed code. This locks the account; nothing is erased yet.
+   */
+  async confirmAccountDeletion(): Promise<void> {
+    if (this.accountDeletionBusy()) {
+      return
+    }
+
+    if (this.accountDeletionCode.invalid) {
+      this.accountDeletionCode.markAsTouched()
+      this.cdr.markForCheck()
+      return
+    }
+
+    this.accountDeletionError.set('')
+    this.accountDeletionBusy.set(true)
+    this.cdr.markForCheck()
+
+    try {
+      const result = await this.accountLifecycle.confirmDeletion(
+        this.accountDeletionCode.value.trim(),
+        this.accountDeletionReason.value.trim() || undefined,
+      )
+
+      this.accountDeletionStep.set('idle')
+      this.accountDeletionCode.reset('')
+      this.showSnackbar(
+        this.translate.instant('SETTINGS_SECURITY.DANGER_SCHEDULED', {
+          date: result.purgeAfter.slice(0, 10),
+        }),
+        SnackBarType.success,
+        '',
+        8000,
+      )
+
+      // The server has already disabled the Auth record and revoked every refresh token,
+      // so the local session is the only thing still holding a usable-looking token.
+      // Ending it here keeps the UI honest instead of showing a signed-in shell that
+      // 401s on every request.
+      await this.authService.logout()
+    } catch (error) {
+      this.accountDeletionError.set(this.deletionErrorMessage(error))
+      this.accountDeletionBusy.set(false)
+      this.cdr.markForCheck()
+    }
+  }
+
+  /**
+   * Discard a pending request. Only valid before confirmation — after that the account
+   * is locked and restoration is a support action.
+   */
+  async cancelAccountDeletionRequest(): Promise<void> {
+    if (this.accountDeletionBusy()) {
+      return
+    }
+
+    this.accountDeletionError.set('')
+    this.accountDeletionBusy.set(true)
+    this.cdr.markForCheck()
+
+    try {
+      await this.accountLifecycle.cancelDeletion()
+      this.accountDeletionStep.set('idle')
+      this.accountDeletionCode.reset('')
+      this.accountDeletionEmail.set('')
+      this.accountDeletionExpiresAt.set('')
+    } catch (error) {
+      this.accountDeletionError.set(this.deletionErrorMessage(error))
+    } finally {
+      this.accountDeletionBusy.set(false)
+      this.cdr.markForCheck()
+    }
+  }
+
+  private deletionErrorMessage(error: unknown): string {
+    return error instanceof Error && error.message
+      ? error.message
+      : this.translate.instant('SETTINGS_SECURITY.DANGER_ERR')
   }
 
 

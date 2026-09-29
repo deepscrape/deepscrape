@@ -35,10 +35,6 @@
           {{ (summary.totalPaid / 100) | currency:summary.currency }}
         </p>
       </div>
-      <div class="rounded-2xl bg-gray-50 dark:bg-gray-800/50 p-4 shadow-sm">
-        <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{{ 'BILLING_TRANSACTIONS.METERED_UNITS' | translate }}</p>
-        <p class="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1">{{ summary.totalMeteredUnits }}</p>
-      </div>
     </div>
   }
 

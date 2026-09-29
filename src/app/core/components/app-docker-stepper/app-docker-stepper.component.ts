@@ -1,5 +1,5 @@
 import { JsonPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, model } from '@angular/core'
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, inject, model } from '@angular/core'
 import { AbstractControl, FormArray, FormBuilder, FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms'
 import { MatIcon } from '@angular/material/icon'
 import { RadioButtonComponent } from '../radio-button/radio-button.component'
@@ -36,6 +36,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
 export class AppDockerStepperComponent {
   private destroyRef = inject(DestroyRef)
   private fb: FormBuilder = inject(FormBuilder)
+  private cdr = inject(ChangeDetectorRef)
   existingMachines: DropDownOption[] = []
 
   readonly clipboardButton = ClipboardbuttonComponent
@@ -203,11 +204,14 @@ export class AppDockerStepperComponent {
           console.error('Image is not deployable')
           this.imageIsChecking = null
         }
+        // OnPush: the result arrives from a debounced HTTP check.
+        this.cdr.markForCheck()
       },
       error: (error) => {
         this.imageIsChecking = null
         this.dockerHubUrl.setErrors({ dockerHubUrl: error })
         console.error('Error checking image deployability:', error);
+        this.cdr.markForCheck()
       },
     })
 
@@ -215,6 +219,8 @@ export class AppDockerStepperComponent {
       takeUntilDestroyed(this.destroyRef),
     ).subscribe((value) => {
       this.flyTomlMarkdown = value
+      // OnPush: valueChanges fires outside the editor's own template event.
+      this.cdr.markForCheck()
     })
 
     this.updateStep1Validators('default')

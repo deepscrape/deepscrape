@@ -33,10 +33,10 @@ describe('AppSidebarComponent', () => {
 
   it('should update loading state from LoadingService stream', () => {
     loadingSubject.next(true);
-    expect(component.isLoading).toBe(true);
+    expect(component.isLoading()).toBe(true);
 
     loadingSubject.next(false);
-    expect(component.isLoading).toBe(false);
+    expect(component.isLoading()).toBe(false);
   });
 
   it('should emit backdrop event on sidebar close', () => {

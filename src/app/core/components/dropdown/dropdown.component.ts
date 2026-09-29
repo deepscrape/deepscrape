@@ -1,12 +1,12 @@
 import { animate, style, transition, trigger } from '@angular/animations';
-import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, HostListener, inject, Input, Output, ViewChild } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, HostListener, inject, Input, Output, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { LocalStorage } from '../../services';
 import { Outsideclick } from '../../directives';
-import { themeStorageKey } from 'src/app/shared';
+import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 
 @Component({
   selector: 'app-dropdown',
@@ -30,6 +30,7 @@ export class DropdownComponent {
 
   private localStorage = inject(LocalStorage)
   private translate = inject(TranslateService)
+  private cdr = inject(ChangeDetectorRef)
 
   // display label: raw text passes through, i18n key paths resolve (ponytail: keyboard search matches what the user sees)
   private display(option?: { name: string; code: string }): string {
@@ -97,6 +98,8 @@ export class DropdownComponent {
                 this.control.setValue(closestValue ?? this.options[0]);
                 this.select.emit(this.control.value);
                 this.isOpen = false;
+                // OnPush: deferred past the keydown's own check.
+                this.cdr.markForCheck();
               }, 100);
             }
           } else if (this.control.dirty) {

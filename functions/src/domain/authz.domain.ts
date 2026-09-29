@@ -36,6 +36,22 @@ type AuthResources = {
         dataType: { orgId?: string; ownerId?: string }
         action: "read" | "manage" | "invite"
     }
+    /**
+     * The account itself: suspension and erasure.
+     *
+     * Deliberately scoped by `ownerId` and granted to no org role. A tenant admin
+     * removing someone from their org is `organization:manage` on a membership — it
+     * must never reach here. Deleting the human is between that human and the
+     * platform; an org admin holds no consent to destroy a third party's data, which
+     * may also span orgs the admin cannot see.
+     *
+     * `suspend` is granted to no role at all: it resolves true only through the
+     * platform-admin short-circuit in `canPerform`, which is the intent.
+     */
+    account: {
+        dataType: { ownerId?: string }
+        action: "read" | "suspend" | "delete"
+    }
 }
 
 type PermissionCheck<Key extends keyof AuthResources> =
@@ -85,6 +101,8 @@ const POLICIES = {
     machine: {read: true, deploy: true, update: true, delete: true},
     billing: {read: true, manage: true},
     organization: {read: true, manage: true},
+    // `suspend` is intentionally absent — see the resource comment above.
+    account: {read: true, delete: true},
   },
 } as const satisfies RolePolicies
 

@@ -1,6 +1,7 @@
 /* eslint-disable max-len */
 import assert from "node:assert/strict"
 import test from "node:test"
+import {redis} from "../app/cacheConfig"
 import {APP_CHECK_ENFORCED, applyAppCheckPolicy, enforceCallableRateLimit, guardedOnCall, resolveCallableLimitKey} from "./callable-limiter"
 
 // Covers the branches reachable without mocking Redis. The counter itself is the same
@@ -57,6 +58,48 @@ test("guardedOnCall still passes the request through to the handler", async () =
   // If the wrapper ever swallows the handler call, this fails.
   assert.equal(result, "ok")
   assert.equal(seen, request)
+})
+
+test("guardedOnCall rejects a closed account before the handler runs", async () => {
+  // The tombstone lookup fails OPEN on a Redis error and this environment has no Redis,
+  // so stub the shared client for the duration. Patching the object the module already
+  // closed over exercises the real code path instead of inventing a test-only seam.
+  const client = redis as unknown as {get: (key: string) => Promise<unknown>}
+  const originalGet = client.get
+
+  let handlerRan = false
+  const wrapped = guardedOnCall(async () => {
+    handlerRan = true
+    return "ok"
+  }) as unknown as {run: (r: unknown) => Promise<unknown>}
+
+  try {
+    client.get = async () => "1"
+
+    await assert.rejects(
+      wrapped.run({auth: {uid: "closed_account"}}),
+      (error: {code?: string}) => error.code === "permission-denied",
+    )
+
+    // The point of the gate: the handler must never see the request. Disabling the Auth
+    // record only stops the NEXT token, so without this a token minted a minute earlier
+    // keeps full access to every callable — including billing and account administration
+    // — for up to an hour. Before this guard, only the Express routes were covered.
+    assert.equal(handlerRan, false, "handler ran for a closed account")
+
+    // A live account is unaffected.
+    client.get = async () => null
+    handlerRan = false
+    assert.equal(await wrapped.run({auth: {uid: "live_account"}}), "ok")
+    assert.equal(handlerRan, true)
+
+    // An anonymous invocation has no uid to look up: it must not be rejected by a lookup
+    // keyed on nothing. Guest callers (the heartbeat) rely on this.
+    client.get = async () => "1"
+    assert.equal(await wrapped.run({auth: null}), "ok")
+  } finally {
+    client.get = originalGet
+  }
 })
 
 test("applyAppCheckPolicy keeps the server in lockstep with a client that sends no token", () => {

@@ -187,9 +187,14 @@ const getEnv = () => {
     GROQ_API_KEY: getConfigValue("GROQ_API_KEY"),
     RESEND_API_KEY: getConfigValue("RESEND_API_KEY"),
     RESEND_FROM_EMAIL: getConfigValue("RESEND_FROM_EMAIL"),
-    // Origin used to build absolute links inside transactional email. Hard-coded
-    // default because an email with a relative URL is a dead link.
+    // Origin of the AUTHENTICATED app — settings, login, billing. An email link must be
+    // absolute or it is a dead link, hence the hard-coded default. Still the apex today;
+    // set it to the dashboard origin at cutover.
     APP_ORIGIN: getConfigValue("APP_ORIGIN", "https://deepscrape.dev"),
+    // Origin of the public marketing site. Deliberately not the same constant as
+    // APP_ORIGIN: the two diverge at the subdomain split, and an "Appeal" link belongs on
+    // the marketing contact page while a "Sign in" link must not.
+    MARKETING_ORIGIN: getConfigValue("MARKETING_ORIGIN", "https://deepscrape.dev"),
     AUTHZ_STRICT_ORG_MODE: getConfigValue("AUTHZ_STRICT_ORG_MODE", "false"),
 
     // Google Cloud & Stripe

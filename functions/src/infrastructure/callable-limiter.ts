@@ -12,6 +12,7 @@
 // sendDeviceVerificationCode: no new script, no new dependency.
 import {HttpsError, onCall as rawOnCall} from "firebase-functions/v2/https"
 import {redisEval} from "../app/cacheConfig"
+import {isAccountDeleted} from "./account-tombstone"
 import {FIXED_WINDOW_INCREMENT} from "../../../src/config/redis-scripts"
 import {
   CALLABLE_RATE_LIMIT_MAX,
@@ -178,6 +179,20 @@ export const guardedOnCall = ((
 
   const guarded = async (request: CallableLike): Promise<unknown> => {
     await enforceCallableRateLimit(request)
+
+    // Deleted-account gate. Lives here rather than in each handler because this wrapper
+    // is the single choke point every callable already routes through — the aliasing at
+    // the import site means ~65 call sites cannot forget it. Without it, disabling the
+    // Auth record only stops the *next* token: an ID token minted a minute earlier keeps
+    // full access to every callable for up to an hour, which is where the expensive
+    // paths live (billing, sessions, account administration).
+    if (request.auth?.uid && await isAccountDeleted(request.auth.uid)) {
+      throw new HttpsError(
+        "permission-denied",
+        "This account has been closed. Contact support if you believe this is a mistake.",
+      )
+    }
+
     return handler(request)
   }
 

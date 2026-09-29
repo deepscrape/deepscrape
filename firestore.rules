@@ -70,11 +70,40 @@ service cloud.firestore {
         allow read: if isAuthenticated() && request.auth.uid == userId;
         allow create, update, delete: if false;
       }
+
+      // Saved cards, listed by /billing/paymentmethods. Written by the
+      // `payment_method.attached|detached|updated` webhook handlers with the Admin SDK.
+      //
+      // Same trap as alerts above: with no block here the recursive catch-all applied,
+      // which grants read to ADMINS ONLY. The page's `catchError(() => of([]))` swallowed
+      // the permission-denied, so every real user got "No payment methods saved" — even
+      // with the card attached to their Stripe customer and the mirror doc written.
+      match /payment_methods/{paymentMethodId} {
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        allow create, update, delete: if false;
+      }
     }
     
     function isAuthenticated() {
     
     	return request.auth != null;
+    }
+    
+    // Erasure audit trail: append-only, written by Cloud Functions with the Admin SDK.
+    // Readable by platform admins so an operator can answer "who deleted this account
+    // and on what authority" without a support escalation. No client writes at all: the
+    // record describes the actor, and an actor who can edit their own audit trail does
+    // not have one.
+    match /admin_audit/{auditId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // Pending deletion confirmations (hashed code + expiry). Server-only in both
+    // directions: a client that could read this would learn the code's hash, and a
+    // client that could write it would mint its own deletion authority.
+    match /deletion_requests/{requestId} {
+      allow read, create, update, delete: if false;
     }
     
     function hasRole(roleName) {

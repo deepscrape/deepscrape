@@ -249,6 +249,40 @@ export const TRUSTED_DEVICE_TTL_SECONDS = 90 * 24 * 60 * 60
 export const VERIFICATION_RATE_LIMIT_MAX = 3
 export const VERIFICATION_RATE_LIMIT_WINDOW_SECONDS = 10 * 60
 
+// ---------------------------------------------------------------------------
+// Account deletion
+// ---------------------------------------------------------------------------
+
+/**
+ * Tombstone marking an account as deleted, checked by `buildSubject`.
+ *
+ * Why Redis and not a Firestore read: `disabled: true` on the Auth record stops new
+ * tokens and `revokeRefreshTokens` stops refreshes, but an ID token already in the
+ * wild stays valid until it expires — up to an hour. Those are the authoritative
+ * controls; this tombstone closes that window on the read path, at the cost of one
+ * GET rather than one billed Firestore read per authorized request.
+ *
+ * Only a deletion tombstone is worth a check on every request. A *ban* is reversible
+ * and time-boxed, so it stays Auth-only.
+ */
+export const DELETED_USER_PREFIX = 'deleted:user:'
+
+/**
+ * Outlives the longest possible ID-token lifetime by a wide margin, so a deleted
+ * account can never be resurrected by a stale token. Matches REVOCATION_TTL_SECONDS:
+ * if the tombstone and the revocation tombstones disagree, one of them is wrong.
+ */
+export const DELETED_USER_TTL_SECONDS = 30 * 24 * 60 * 60
+
+/** Budget for *wrong confirmations* of a deletion request, per uid. */
+export const ACCOUNT_DELETION_ATTEMPT_MAX = 5
+export const ACCOUNT_DELETION_ATTEMPT_WINDOW_SECONDS = 60 * 60
+
+/** Budget for *sending* deletion confirmation mail, per uid. Separate counter from
+ * the attempts above: five typos must not also starve the resend path. */
+export const ACCOUNT_DELETION_REQUEST_MAX = 3
+export const ACCOUNT_DELETION_REQUEST_WINDOW_SECONDS = 60 * 60
+
 /** Dedupe window for device-mismatch audit rows. */
 export const DEVICE_MISMATCH_DEDUPE_TTL_SECONDS = 10 * 60
 
@@ -379,6 +413,17 @@ export const verificationRateLimitKey = (userId: string): string =>
  */
 export const verificationAttemptKey = (userId: string): string =>
   `verificationAttempts:${userId}`
+
+/** Deletion tombstone for one account. See DELETED_USER_PREFIX. */
+export const deletedUserKey = (userId: string): string => `${DELETED_USER_PREFIX}${userId}`
+
+/** Wrong-confirmation budget for one deletion request. */
+export const accountDeletionAttemptKey = (userId: string): string =>
+  `accountDeletionAttempts:${userId}`
+
+/** Send-confirmation-mail budget for one account. */
+export const accountDeletionRequestKey = (userId: string): string =>
+  `accountDeletionRequests:${userId}`
 
 /**
  * Per-UID budget for callable invocations (all of them, one counter).

@@ -12,6 +12,7 @@ import {
   canPerform,
 } from "../domain/authz.domain"
 import {env} from "../config"
+import {isAccountDeleted} from "./account-tombstone"
 
 type RequirePermissionOptions<Resource extends AuthResource> = {
     getData?: (req: Request) => Partial<AuthData<Resource>>
@@ -74,6 +75,11 @@ function buildDecisionEvent<Resource extends AuthResource>(
   result: "allow" | "deny",
   reasonCode: string
 ): AuthorizationDecisionEvent {
+  // Not every resource is org- or owner-scoped (`account` carries ownerId only), so the
+  // union has no shared shape to narrow to. The event reports scope best-effort; an
+  // absent field is the honest answer for a resource that has no such scope.
+  const scope = data as { orgId?: string; ownerId?: string }
+
   return {
     version: "v1",
     timestamp: Date.now(),
@@ -84,8 +90,8 @@ function buildDecisionEvent<Resource extends AuthResource>(
     action,
     result,
     reasonCode,
-    orgId: data.orgId,
-    ownerId: data.ownerId,
+    orgId: scope.orgId,
+    ownerId: scope.ownerId,
     source: "middleware",
     mode: AUTHZ_STRICT_ORG_MODE ? "strict" : "compat",
   }
@@ -235,11 +241,23 @@ async function buildSubject(req: Request, res: Response): Promise<AuthorizationS
     return locals.authzSubject
   }
 
+  // One round-trip instead of two: the memberships read is wasted for a deleted account,
+  // but deleted accounts are rare and a second sequential Redis call is paid by every
+  // request on this path.
+  const [deleted, memberships] = await Promise.all([
+    isAccountDeleted(uid),
+    loadMemberships(uid),
+  ])
+
+  if (deleted) {
+    return null
+  }
+
   const role = (req.user as Record<string, unknown> | undefined)?.["role"]
   const subject: AuthorizationSubject = {
     uid,
     isPlatformAdmin: role === "admin",
-    memberships: await loadMemberships(uid),
+    memberships,
     claims: req.user,
   }
 

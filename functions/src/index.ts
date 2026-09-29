@@ -14,6 +14,7 @@ import * as sessions from "./gfunctions/sessions"
 import * as webauthn from "./gfunctions/webauthn"
 import * as notifications from "./gfunctions/notifications"
 import * as alertFanout from "./gfunctions/alert-fanout"
+import * as adminUsers from "./gfunctions/admin-users"
 // import path, { join } from "node:path"
 // import { fileURLToPath } from "node:url"
 
@@ -41,12 +42,25 @@ export const setDefaultAdminRole = auth.setDefaultAdminRole
 export const setDefaultRole = auth.setDefaultRole
 export const createDefaultOrganization = auth.createDefaultOrganization
 
+// ACCOUNT LIFECYCLE - Function TRIGGERS
+// Read and destroy are separated on purpose: nothing erases an account synchronously.
+// `requestMyAccountDeletion` mails a code, `confirmMyAccountDeletion` locks the account
+// and sets a deadline, and only `purgeDeletedAccounts` (a nightly schedule) erases data.
+// The admin surface mirrors that split with suspend (reversible) vs delete (scheduled).
+export const requestMyAccountDeletion = adminUsers.requestMyAccountDeletion
+export const confirmMyAccountDeletion = adminUsers.confirmMyAccountDeletion
+export const cancelMyAccountDeletion = adminUsers.cancelMyAccountDeletion
+export const adminListUsers = adminUsers.adminListUsers
+export const adminGetUserOverview = adminUsers.adminGetUserOverview
+export const adminSuspendUser = adminUsers.adminSuspendUser
+export const adminUnsuspendUser = adminUsers.adminUnsuspendUser
+export const adminScheduleAccountDeletion = adminUsers.adminScheduleAccountDeletion
+export const adminCancelAccountDeletion = adminUsers.adminCancelAccountDeletion
+export const purgeDeletedAccounts = adminUsers.purgeDeletedAccounts
+
 
 // STRIPE Functions
 export const newStripeCustomer = stripe.newStripeCustomer
-export const createPaymentIntent = stripe.createPaymentIntent
-export const createSetupIntent = stripe.createSetupIntent
-export const startSubscription = stripe.startSubscription
 export const updateUsage = stripe.updateUsage
 export const getBillingCatalog = stripe.getBillingCatalog
 export const getMyEntitlements = stripe.getMyEntitlements

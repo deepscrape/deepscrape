@@ -1,0 +1,290 @@
+<section class="space-y-6">
+  <header class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div>
+      <h2 class="text-2xl font-bold text-gray5 dark:text-gray-100">
+        {{ 'ADMIN_USERS.TITLE' | translate }}
+      </h2>
+      <p class="text-sm text-gray5/70 dark:text-gray-300 mt-1">
+        {{ 'ADMIN_USERS.SUB' | translate }}
+      </p>
+    </div>
+
+    <div class="flex flex-wrap gap-2">
+      <a
+        routerLink="/admin/analytics"
+        appRipple
+        rippleColor="dark"
+        class="btn btn-sm btn-gray btn-ring inline-flex items-center justify-center">
+        {{ 'ADMIN_USERS.BACK_ANALYTICS' | translate }}
+      </a>
+      <button
+        type="button"
+        (click)="load(true)"
+        [disabled]="loading"
+        appRipple
+        rippleColor="light"
+        class="btn btn-sm btn-gray btn-ring disabled:opacity-50 disabled:cursor-not-allowed">
+        {{ 'COMMON.REFRESH' | translate }}
+      </button>
+    </div>
+  </header>
+
+  <!-- Filter + search. Search submits explicitly rather than on each keystroke: every
+       call is a billed admin read, and partial terms match nothing. -->
+  <div class="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+    <div class="flex flex-wrap gap-2" role="tablist">
+      @for (option of filters; track option) {
+        <button
+          type="button"
+          role="tab"
+          [attr.aria-selected]="filter === option"
+          (click)="setFilter(option)"
+          appRipple
+          rippleColor="light"
+          class="rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors"
+          [class]="filter === option
+            ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-700 dark:text-cyan-300'
+            : 'border-gray3/55 dark:border-gray5/60 text-gray5/70 dark:text-gray-300 hover:bg-gray4/10'">
+          {{ 'ADMIN_USERS.FILTER_' + option.toUpperCase() | translate }}
+        </button>
+      }
+    </div>
+
+    <div class="flex items-end gap-2">
+      <app-stinput
+        class="block w-full xl:w-72"
+        [control]="search"
+        [label]="'ADMIN_USERS.SEARCH_LABEL' | translate"></app-stinput>
+      <button
+        type="button"
+        (click)="applySearch()"
+        [disabled]="loading"
+        appRipple
+        rippleColor="light"
+        class="btn btn-sm btn-gray btn-ring disabled:opacity-50 disabled:cursor-not-allowed">
+        {{ 'ADMIN_USERS.SEARCH_ACTION' | translate }}
+      </button>
+      @if (search.value) {
+        <button
+          type="button"
+          (click)="clearSearch()"
+          appRipple
+          rippleColor="light"
+          class="btn btn-sm btn-gray btn-ring">
+          {{ 'COMMON.CLEAR' | translate }}
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (error) {
+    <div class="rounded-lg p-3 text-sm bg-rose-50 text-rose-800 dark:bg-rose-900/20 dark:text-rose-300">
+      {{ error }}
+    </div>
+  }
+
+  @if (notice) {
+    <div class="rounded-lg p-3 text-sm bg-cyan-50 text-cyan-900 dark:bg-cyan-900/20 dark:text-cyan-200">
+      {{ notice }}
+    </div>
+  }
+
+  <!-- Deliberate: the irreversible step is named, and the reversibility of everything
+       before it is stated. -->
+  <div class="rounded-lg border border-amber-300/70 dark:border-amber-500/40 bg-amber-50/70 dark:bg-amber-900/15 p-3 text-xs text-amber-900 dark:text-amber-200">
+    {{ 'ADMIN_USERS.POLICY_NOTE' | translate }}
+  </div>
+
+  @if (loading && items.length === 0) {
+    <div class="rounded-xl border border-gray3/55 dark:border-gray5/60 p-5 text-sm text-gray5/70 dark:text-gray-300">
+      {{ 'ADMIN_USERS.LOADING' | translate }}
+    </div>
+  }
+
+  @if (!loading && items.length === 0) {
+    <div class="rounded-xl border border-gray3/55 dark:border-gray5/60 p-5 text-sm text-gray5/70 dark:text-gray-300">
+      {{ 'ADMIN_USERS.EMPTY' | translate }}
+    </div>
+  }
+
+  <div class="space-y-3">
+    @for (user of items; track user.uid) {
+      <article class="rounded-xl border border-gray3/55 dark:border-gray5/60 bg-white/75 dark:bg-gray7/55 p-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <button
+            type="button"
+            (click)="open(user)"
+            class="text-left min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-sm font-semibold text-gray5 dark:text-gray-100 truncate">
+                {{ displayName(user) }}
+              </span>
+              <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider" [class]="statusClasses(user)">
+                {{ statusKey(user) | translate }}
+              </span>
+              @if (user.role === 'admin') {
+                <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:text-rose-300">
+                  {{ 'ADMIN_USERS.BADGE_ADMIN' | translate }}
+                </span>
+              }
+              @if (user.plan) {
+                <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-gray4/15 text-gray5 dark:text-gray-300">
+                  {{ user.plan }}
+                </span>
+              }
+            </div>
+            <p class="mt-1 font-mono text-[11px] text-gray5/60 dark:text-gray-400 break-all">{{ user.uid }}</p>
+            @if (user.isBanned && user.banReason) {
+              <p class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ user.banReason }}</p>
+            }
+            @if (user.isDeleted) {
+              <p class="mt-1 text-xs text-rose-700 dark:text-rose-300">
+                {{ 'ADMIN_USERS.ERASE_ON' | translate: { date: formatDate(user.purgeAfter), by: user.deletedBy || '—' } }}
+              </p>
+            }
+          </button>
+
+          <div class="flex flex-wrap gap-2">
+            @if (user.isDeleted && !user.purgedAt) {
+              <button
+                type="button"
+                [disabled]="busyUid === user.uid"
+                (click)="ask('restore', user)"
+                appRipple
+                rippleColor="light"
+                class="btn btn-sm btn-gray btn-ring disabled:opacity-50 disabled:cursor-not-allowed">
+                {{ 'ADMIN_USERS.ACTION_RESTORE' | translate }}
+              </button>
+            } @else if (!user.isDeleted) {
+              @if (user.isBanned) {
+                <button
+                  type="button"
+                  [disabled]="busyUid === user.uid"
+                  (click)="ask('unsuspend', user)"
+                  appRipple
+                  rippleColor="light"
+                  class="btn btn-sm btn-gray btn-ring disabled:opacity-50 disabled:cursor-not-allowed">
+                  {{ 'ADMIN_USERS.ACTION_UNSUSPEND' | translate }}
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  [disabled]="busyUid === user.uid"
+                  (click)="ask('suspend', user)"
+                  appRipple
+                  rippleColor="light"
+                  class="btn btn-sm btn-gray btn-ring disabled:opacity-50 disabled:cursor-not-allowed">
+                  {{ 'ADMIN_USERS.ACTION_SUSPEND' | translate }}
+                </button>
+              }
+              <button
+                type="button"
+                [disabled]="busyUid === user.uid"
+                (click)="ask('delete', user)"
+                appRipple
+                rippleColor="light"
+                class="btn btn-sm btn-ring text-rose-600 dark:text-rose-400 disabled:opacity-50 disabled:cursor-not-allowed">
+                {{ 'ADMIN_USERS.ACTION_DELETE' | translate }}
+              </button>
+            }
+          </div>
+        </div>
+
+        @if (selected?.uid === user.uid) {
+          <div class="mt-4 border-t border-gray3/55 dark:border-gray5/60 pt-4 space-y-3">
+            @if (overviewLoading) {
+              <p class="text-sm text-gray5/70 dark:text-gray-300">{{ 'ADMIN_USERS.LOADING' | translate }}</p>
+            } @else if (overview) {
+              <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div>
+                  <p class="text-[10px] font-semibold uppercase tracking-wider text-gray5/60 dark:text-gray-400">{{ 'ADMIN_USERS.F_SESSIONS' | translate }}</p>
+                  <p class="text-lg font-bold text-gray5 dark:text-gray-100">{{ overview.activeSessions }}</p>
+                </div>
+                <div>
+                  <p class="text-[10px] font-semibold uppercase tracking-wider text-gray5/60 dark:text-gray-400">{{ 'ADMIN_USERS.F_AUTH_STATE' | translate }}</p>
+                  <p class="text-lg font-bold" [class]="overview.authDisabled ? 'text-rose-600 dark:text-rose-400' : 'text-cyan-600 dark:text-cyan-400'">
+                    {{ (overview.authDisabled ? 'ADMIN_USERS.AUTH_LOCKED' : 'ADMIN_USERS.AUTH_LIVE') | translate }}
+                  </p>
+                </div>
+                <div>
+                  <p class="text-[10px] font-semibold uppercase tracking-wider text-gray5/60 dark:text-gray-400">{{ 'ADMIN_USERS.F_CREATED' | translate }}</p>
+                  <p class="text-sm font-semibold text-gray5 dark:text-gray-100">{{ formatDate(overview.created_At) }}</p>
+                </div>
+                <div>
+                  <p class="text-[10px] font-semibold uppercase tracking-wider text-gray5/60 dark:text-gray-400">{{ 'ADMIN_USERS.F_LAST_SIGN_IN' | translate }}</p>
+                  <p class="text-sm font-semibold text-gray5 dark:text-gray-100">{{ formatDate(overview.authLastSignIn) }}</p>
+                </div>
+              </div>
+
+              @if (overview.history.length) {
+                <div>
+                  <h3 class="text-xs font-semibold uppercase tracking-wider text-gray5/70 dark:text-gray-300 mb-2">
+                    {{ 'ADMIN_USERS.H_HISTORY' | translate }}
+                  </h3>
+                  <ul class="space-y-1">
+                    @for (entry of overview.history; track entry.id) {
+                      <li class="rounded-md bg-gray4/10 dark:bg-gray5/20 px-2 py-1.5 text-xs text-gray5 dark:text-gray-200">
+                        <span class="font-semibold">{{ entry.action }}</span>
+                        <span class="text-gray5/60 dark:text-gray-400"> · {{ formatDate(entry.at) }}</span>
+                        @if (entry.reason) {
+                          <span class="text-gray5/70 dark:text-gray-300"> · {{ entry.reason }}</span>
+                        }
+                        @if (entry.sessionsRevoked) {
+                          <span class="text-gray5/60 dark:text-gray-400"> · {{ 'ADMIN_USERS.SESSIONS_REVOKED' | translate: { count: entry.sessionsRevoked } }}</span>
+                        }
+                      </li>
+                    }
+                  </ul>
+                </div>
+              }
+            }
+          </div>
+        }
+      </article>
+    }
+  </div>
+
+  @if (hasMore) {
+    <div class="flex justify-center">
+      <button
+        type="button"
+        (click)="load(false)"
+        [disabled]="loading"
+        appRipple
+        rippleColor="light"
+        class="btn btn-sm btn-gray btn-ring disabled:opacity-50 disabled:cursor-not-allowed">
+        {{ 'ADMIN_USERS.LOAD_MORE' | translate }}
+      </button>
+    </div>
+  }
+</section>
+
+@if (pendingAction) {
+  <app-dialog
+    [title]="dialogTitle"
+    [subtitle]="dialogSubtitle"
+    [confirmLabel]="'ADMIN_USERS.DLG_CONFIRM'"
+    (onClose)="closeDialog()"
+    (onConfirm)="confirmAction()">
+    <div class="space-y-3">
+      <app-stinput
+        class="block w-full"
+        [control]="reason"
+        [label]="'ADMIN_USERS.LBL_REASON' | translate"></app-stinput>
+
+      @if (pendingAction.kind === 'suspend') {
+        <app-stinput
+          class="block w-full"
+          type="number"
+          [min]="1"
+          [max]="365"
+          [control]="suspendDays"
+          [label]="'ADMIN_USERS.LBL_SUSPEND_DAYS' | translate"></app-stinput>
+      }
+
+      @if (!reasonValid) {
+        <p class="text-xs text-rose-600 dark:text-rose-400">{{ 'ADMIN_USERS.ERR_REASON_REQUIRED' | translate }}</p>
+      }
+    </div>
+  </app-dialog>
+}

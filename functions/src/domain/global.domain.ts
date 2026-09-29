@@ -35,7 +35,6 @@ export type Users = {
     status?: string
     currentUsage?: number
     balance?: number
-    itemId?: string
 
     // User Authorization fields
     role?: string
@@ -78,6 +77,18 @@ export type ProfileStatus = {
     deleteReason?: string
     banExpires?: Date | null
     deletedAt?: Date | null
+
+    // Deletion lifecycle. `deletedAt` alone cannot express "locked out, not yet
+    // erased": the two-phase design keeps the row recoverable during the grace
+    // window and lets the scheduled purger find exactly what is due.
+    /** Hard-delete deadline. The purger only touches accounts whose deadline passed. */
+    purgeAfter?: Date | null
+    /** Set once the purger has run. Makes the purge idempotent across retries. */
+    purgedAt?: Date | null
+    /** `self` for a user-requested deletion, otherwise the acting admin's uid. */
+    deletedBy?: string | null
+    /** Join key into `deletion_audit/{deletionId}`, the retained erasure record. */
+    deletionId?: string | null
 }
 
 

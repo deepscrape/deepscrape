@@ -1064,21 +1064,30 @@ const isBootstrapAdminEmail = (email?: string | null): boolean => {
   return env.ADMIN_EMAILS.some((adminEmail) => adminEmail === normalizedEmail)
 }
 
-const resolveActorSessionAccess = async (
-  auth: { uid: string; token?: Record<string, unknown> },
-): Promise<{
+/** Resolved privileges of the caller, as far as role sources can tell. */
+export type ActorSessionAccess = {
   canManageSessions: boolean
   role: "admin" | "manager" | "owner" | "superadmin" | "elevated" | "user"
-}> => {
+}
+
+export const resolveActorSessionAccess = async (
+  auth: { uid: string; token?: Record<string, unknown> },
+  options: { fresh?: boolean } = {},
+): Promise<ActorSessionAccess> => {
   // This ran 3 sequential reads on every privileged call, uncached.
   // ponytail: 60s of role staleness. Lower the TTL if a demotion must bite faster.
   const accessCacheKey = sessionAccessKey(auth.uid)
-  const cachedAccess = await redis.get<{
-    canManageSessions: boolean
-    role: "admin" | "manager" | "owner" | "superadmin" | "elevated" | "user"
-  }>(accessCacheKey)
-  if (cachedAccess && typeof cachedAccess === "object") {
-    return cachedAccess
+
+  // `fresh: true` is for account erasure only. Everywhere else the 60s cache is the
+  // right trade — but here a demoted admin would keep the ability to destroy accounts
+  // for up to a cache lifetime, so the destructive path pays three reads instead. The
+  // fresh result still repopulates the cache, which shortens the stale window rather
+  // than extending it.
+  if (!options.fresh) {
+    const cachedAccess = await redis.get<ActorSessionAccess>(accessCacheKey)
+    if (cachedAccess && typeof cachedAccess === "object") {
+      return cachedAccess
+    }
   }
 
   const collectedRoles: string[] = []

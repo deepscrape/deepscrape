@@ -9,7 +9,7 @@ DEPLOY_JSON_SCRIPT := $(FUNCTIONS_DIR)/scripts/deploy-with-json-config.cjs
 BFF_DIR := bff
 HOSTING_PROJECT := libnet-d76db
 
-.PHONY: help lfs-install lfs-pull lfs-status lfs-refresh lfs-stage-bin ip2location-check ip2location-refresh ip2location-sync env-json deploy-json deploy-bff deploy-hosting deploy-functions deploy-all test-bff build hosting bff-image bff-local bff-push bff-deploy bff-release
+.PHONY: help lfs-install lfs-pull lfs-status lfs-refresh lfs-stage-bin ip2location-check ip2location-refresh ip2location-sync env-json deploy-json deploy-bff deploy-hosting deploy-hosting-marketing deploy-hosting-dashboard deploy-hosting-console deploy-functions deploy-all test-bff build hosting bff-image bff-local bff-push bff-deploy bff-release
 
 help:
 	@echo "Available targets:"
@@ -24,7 +24,10 @@ help:
 	@echo "  make ip2location-sync    - Stage changed local BIN in Git LFS and sync checksum/upload"
 	@echo "  make deploy-json         - Push FUNCTIONS_ENV_JSON and deploy using deploy-with-json-config script"
 	@echo "  make deploy-bff          - Build+push the BFF image and deploy it to Cloud Run"
-	@echo "  make deploy-hosting      - Deploy Firebase Hosting"
+	@echo "  make deploy-hosting      - Deploy all three Hosting sites at once"
+	@echo "  make deploy-hosting-dashboard - Deploy only dashboard.deepscrape.dev"
+	@echo "  make deploy-hosting-console   - Deploy only console.deepscrape.dev"
+	@echo "  make deploy-hosting-marketing - Deploy only the apex, deepscrape.dev (301s)"
 	@echo "  make deploy-functions    - Push FUNCTIONS_ENV_JSON and deploy the functions"
 	@echo "  make test-bff            - Run the BFF (Bun + Elysia) unit tests"
 	@echo "  make deploy-all          - functions + BFF + hosting (JSON env first)"
@@ -76,6 +79,20 @@ deploy-bff:
 
 deploy-hosting:
 	firebase deploy --only hosting
+
+# Hosting is THREE sites serving ONE build artifact (firebase.json `hosting` is an array;
+# targets live in .firebaserc). `deploy-hosting` ships all three, which is right for a
+# routine release. Use the per-site rules when the apex must not move yet: the apex carries
+# the 301s that send app paths to the other two origins, so those have to be serving first.
+# The initial cutover was done dashboard -> console -> marketing for exactly that reason.
+deploy-hosting-marketing:
+	firebase deploy --only hosting:marketing
+
+deploy-hosting-dashboard:
+	firebase deploy --only hosting:dashboard
+
+deploy-hosting-console:
+	firebase deploy --only hosting:console
 
 deploy-functions: deploy-json
 

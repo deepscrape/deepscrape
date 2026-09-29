@@ -46,6 +46,11 @@ jobs:
       - name: Install Angular project dependencies
         run: bun install --frozen-lockfile
 
+      # Guard against the OnPush staleness pattern — an async write to a rendered
+      # field with no signal/markForCheck. tsc, Karma and `ng build` all pass it.
+      - name: Check OnPush safety
+        run: bun scripts/check-onpush.mjs
+
       # Install Chromium for ChromeHeadless testing
       - name: Install Chromium
         run: |
@@ -63,7 +68,7 @@ jobs:
           export const environment = {
             production: false,
             emulators: false,
-            assetsUri: 'https://deepscrape.dev/assets/',
+            assetsUri: '/assets/',
             wsUrl: '',
             nekoUrl: '',
             firebaseConfig: {

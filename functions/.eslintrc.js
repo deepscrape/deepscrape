@@ -36,5 +36,9 @@ module.exports = {
     "import/no-unresolved": 0,
     "indent": ["error", 2],
     "linebreak-style": 0,
+    // A leading underscore is this codebase's "deliberately unused" marker
+    // (`computeDeviceFingerprint(userAgent, _ipAddress)`), so honour it here
+    // rather than re-flagging the name on every touch.
+    "@typescript-eslint/no-unused-vars": ["warn", {argsIgnorePattern: "^_"}],
   },
 }

@@ -1,5 +1,20 @@
 {
   "projects": {
     "default": "libnet-d76db"
+  },
+  "targets": {
+    "libnet-d76db": {
+      "hosting": {
+        "marketing": [
+          "deepscrape"
+        ],
+        "dashboard": [
+          "deepscrape-app"
+        ],
+        "console": [
+          "deepscrape-console"
+        ]
+      }
+    }
   }
 }

@@ -194,6 +194,12 @@ jobs:
             --quiet
 
       # Deploy to Firebase Hosting
+      # `firebase.json` declares THREE hosting configs (targets marketing/dashboard/console)
+      # that all serve the same build. A channel deploy can only address ONE site, so
+      # action-hosting-deploy fails here — it has no `target` input set. The CLI fans
+      # `--only hosting` out across every target instead. Auth comes from
+      # GOOGLE_APPLICATION_CREDENTIALS, exported above and already used by the functions
+      # deploy step below.
       - name: Deploy to Firebase Hosting
         if: needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.hosting == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0

@@ -58,7 +58,16 @@ const CSRF_IGNORED_PATH_PREFIXES = ['/event', '/status', '/oauth', '/services/co
 const CSRF_IGNORED_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 const ALLOWED_ORIGINS = isProd
-  ? ['https://deepscrape.dev', 'https://deepscrape.web.app']
+  ? [
+      'https://deepscrape.dev',
+      'https://deepscrape.web.app',
+      // Added while the subdomains are still dark so this origin gate cannot be the
+      // thing that breaks the cutover. Host-only cookies (no `Domain=` on `_csrf`)
+      // keep each origin's CSRF token to itself — which is also why the console needs
+      // its own sign-in instead of sharing the app's session.
+      'https://dashboard.deepscrape.dev',
+      'https://console.deepscrape.dev',
+    ]
   : [
       'http://localhost:5000',
       'http://127.0.0.1:5000',

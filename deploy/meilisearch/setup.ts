@@ -161,4 +161,4 @@ async function main(): Promise<void> {
   console.log('Catalog applied.')
 }
 
-await main()
+void main()

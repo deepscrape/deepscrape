@@ -249,6 +249,8 @@ jobs:
         if: needs.detect_changes.outputs.functions == 'true'
         working-directory: ./functions
         run: bun run build
+      # `target: marketing` is required: firebase.json declares three hosting configs, and a
+      # preview channel can only address one site. Without it the action deploys nothing.
       - name: Deploy to Firebase Hosting
         if: needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.functions == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
@@ -257,6 +259,7 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           projectId: ${{ env.FIREBASE_PROJECT_ID }}
           channelId: pr-${{ github.event.pull_request.number }}
+          target: marketing
           entryPoint: "."
           expires: 10d
         env:

@@ -10,5 +10,6 @@ Disallow: /profile
 Disallow: /service/
 Disallow: /playground
 Disallow: /crawlpack
+Disallow: /chatai
 
 Sitemap: https://deepscrape.dev/sitemap.xml

@@ -20,7 +20,7 @@ export const MainRoutes: Routes = [
     },
     {
         path: 'resetpassword',
-        loadComponent: () => import('../../pages').then(m => m.ResetPasswordComponent),
+        loadComponent: () => import('../../pages/service/resetpassword/resetpassword.component').then(m => m.ResetPasswordComponent),
         data: {
             title: 'resetpassword',
             animation: 'resetpassword'
@@ -29,7 +29,7 @@ export const MainRoutes: Routes = [
     },
     {
         path: 'verification',
-        loadComponent: () => import('../../pages').then(m => m.VerifyEmailComponent),
+        loadComponent: () => import('../../pages/service/verification/verification.component').then(m => m.VerifyEmailComponent),
         data: {
             title: 'verification',
             animation: 'verification'
@@ -38,7 +38,7 @@ export const MainRoutes: Routes = [
     },
     {
         path: 'device-verification',
-        loadComponent: () => import('../../pages').then(m => m.DeviceVerificationRouteComponent),
+        loadComponent: () => import('../../pages/service/device-verification/device-verification.component').then(m => m.DeviceVerificationRouteComponent),
         data: {
             title: 'device-verification',
             animation: 'device-verification'
@@ -46,7 +46,7 @@ export const MainRoutes: Routes = [
     },
     {
         path: 'action',
-        loadComponent: () => import('../../pages').then(m => m.ActionHandlerComponent),
+        loadComponent: () => import('../../pages/service/action/action-handler.component').then(m => m.ActionHandlerComponent),
         data: {
             title: 'action',
             animation: 'action'
@@ -54,7 +54,7 @@ export const MainRoutes: Routes = [
     },
     {
         path: 'onboarding',
-        loadComponent: () => import('../../pages').then(m => m.OnboardingComponent),
+        loadComponent: () => import('../../pages/service/onboarding/onboarding.component').then(m => m.OnboardingComponent),
         data: {
             title: 'onboarding',
             animation: 'onboarding'

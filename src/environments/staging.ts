@@ -1,7 +1,7 @@
 export const environment = {
   "production": true,
   "emulators": false,
-  "assetsUri": "https://deepscrape.web.app/assets/",
+  "assetsUri": "/assets/",
   "wsUrl": "wss://agent.deepscrape.dev",
   "nekoUrl": "wss://neko-rtc.fly.dev",
   "firebaseConfig": {

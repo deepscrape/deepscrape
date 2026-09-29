@@ -16,5 +16,32 @@ export const serverRoutes: ServerRoute[] = [
     { path: 'operations/**', renderMode: RenderMode.Server },
     { path: 'user/**', renderMode: RenderMode.Server },
     { path: 'billing/**', renderMode: RenderMode.Server },
+    // Auth-restricted app pages, not marketing. Prerendering them bakes the guest
+    // shell into a real URL — the same failure this list already documents for
+    // `/billing/plans/:planId` — and the host guard sends them to the app origin.
+    { path: 'crawlpack/**', renderMode: RenderMode.Server },
+    { path: 'playground/**', renderMode: RenderMode.Server },
+    // Same reason as playground: auth-gated, so prerendering only bakes a guest shell.
+    { path: 'chatai/**', renderMode: RenderMode.Server },
+    // Marketing and auth pages, listed EXPLICITLY and ahead of the `:orgId` rule below.
+    // `:orgId/**` matches any first segment, so without these it would pull every one of
+    // them into Server mode and silently stop baking them — an SEO regression that no
+    // type check would catch. Verified by diffing the baked files after a build.
+    { path: 'contact', renderMode: RenderMode.Prerender },
+    { path: 'privacy', renderMode: RenderMode.Prerender },
+    { path: 'terms', renderMode: RenderMode.Prerender },
+    { path: 'deep-scraper', renderMode: RenderMode.Prerender },
+    { path: 'mcp-web-scraping', renderMode: RenderMode.Prerender },
+    { path: 'alternatives/crawl4ai', renderMode: RenderMode.Prerender },
+    { path: 'service/action', renderMode: RenderMode.Prerender },
+    { path: 'service/device-verification', renderMode: RenderMode.Prerender },
+    { path: 'service/login', renderMode: RenderMode.Prerender },
+    { path: 'service/onboarding', renderMode: RenderMode.Prerender },
+    { path: 'service/resetpassword', renderMode: RenderMode.Prerender },
+    { path: 'service/signup', renderMode: RenderMode.Prerender },
+    { path: 'service/verification', renderMode: RenderMode.Prerender },
+    // Canonical org-scoped app shell. Server mode because `:orgId` is a parameter and a
+    // Prerender fallback would demand `getPrerenderParams`.
+    { path: ':orgId/**', renderMode: RenderMode.Server },
     { path: '**', renderMode: RenderMode.Prerender },
 ];

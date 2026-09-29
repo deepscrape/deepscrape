@@ -1,56 +1,48 @@
 import { Routes } from "@angular/router";
-import { provideCharts, withDefaultRegisterables } from 'ng2-charts';
-import { provideNgxStripe } from 'ngx-stripe';
 import { paywallGuard } from "src/app/core/guards";
 
 export const billingRoutes: Routes = [
     {
         path: '',
-        // loadComponent: () => import('../../pages').then(m => m.PassesComponent),
         // canActivate: [LoginGuard],
         redirectTo: 'plans',
         pathMatch: 'full'
     },
     {
-        path: "paymentintent", // 
-        loadComponent: () => import('../../pages').then(m => m.SetupIntentComponent),
-        providers: [provideNgxStripe()],
-        data: { animation: 'billing-paymentintent' },
-    },
-    {
         path: 'paymentmethods',
-        loadComponent: () => import('../../pages').then(m => m.PaymentMethodsComponent),
+        loadComponent: () => import('../../pages/user/billing/paymentmethods/paymentmethods.component').then(m => m.PaymentMethodsComponent),
         data: { animation: 'billing-paymentmethods' },
     },
     {
         path: 'plans',
-        loadComponent: () => import('../../pages').then(m => m.PlansComponent),
+        loadComponent: () => import('../../pages/user/billing/plans/plans.component').then(m => m.PlansComponent),
         data: { animation: 'billing-plans' },
     },
     {
         path: 'plans/:planId',
-        loadComponent: () => import('../../pages').then(m => m.PlanDetailsComponent),
+        loadComponent: () => import('../../pages/user/billing/plan-details/plan-details.component').then(m => m.PlanDetailsComponent),
         data: { animation: 'billing-plan-details' },
     },
     {
         path: 'usage',
-        loadComponent: () => import('../../pages').then(m => m.UsageComponent),
-        providers: [provideCharts(withDefaultRegisterables())],
+        loadComponent: () => import('../../pages/user/billing/usage/usage.component').then(m => m.UsageComponent),
+        // chart.js is registered by `src/app/core/chart-registration.ts`, imported by the page;
+        // importing ng2-charts here made it part of the initial bundle. v4 does NOT self-register.
         data: { animation: 'billing-usage' },
     },
     {
         path: 'success',
-        loadComponent: () => import('../../pages').then(m => m.BillingSuccessComponent),
+        loadComponent: () => import('../../pages/user/billing/success/billing-success.component').then(m => m.BillingSuccessComponent),
         data: { animation: 'billing-success' },
     },
     {
         path: 'cancel',
-        loadComponent: () => import('../../pages').then(m => m.BillingCancelComponent),
+        loadComponent: () => import('../../pages/user/billing/cancel/billing-cancel.component').then(m => m.BillingCancelComponent),
         data: { animation: 'billing-cancel' },
     },
     {
         path: 'passes',
-        loadComponent: () => import('../../pages').then(m => m.PassesComponent),
+        loadComponent: () => import('../../pages/user/billing/passes/passes.component').then(m => m.PassesComponent),
         canActivate: [paywallGuard],
         data: { animation: 'billing-passes' },
     }

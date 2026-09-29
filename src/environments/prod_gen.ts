@@ -35,7 +35,11 @@ console.log(`[prod_gen] mode=${mode} files=${selectedEnvFiles.join(', ')}`)
 const environment = {
     production: env["PRODUCTION"] === "true",
     emulators: env["EMULATORS"] === "true",
-    assetsUri: "https://deepscrape.dev/assets/",
+    // Relative on purpose: this is consumed only by `customImageLoader`
+    // (app.config.ts), and an absolute apex base made every optimized image on the
+    // dashboard/console origins load cross-origin from the marketing site. A relative
+    // base resolves against whatever origin served the page.
+    assetsUri: "/assets/",
     wsUrl: "wss://agent.deepscrape.dev", //  || "ws://crawlagent.fly.dev"
     nekoUrl: "wss://neko-rtc.fly.dev",
     firebaseConfig: {

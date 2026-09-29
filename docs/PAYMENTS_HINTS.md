@@ -695,7 +695,17 @@ firebase deploy --only functions
 
 2. **Webhook endpoint**
 
-   * Deploy `stripeWebhook` and then register its URL in the Stripe Dashboard as the webhook endpoint for the events you want (checkout.session.completed, customer.subscription.*, invoice.*).
+   * Deploy `stripeWebhook` and register its URL in the Stripe Dashboard as the webhook
+     endpoint. Subscribe every event `processStripeEvent` handles - a missing subscription
+     fails silently, because the handler is simply never called and nothing logs:
+     `checkout.session.completed`, `customer.subscription.created|updated|deleted`,
+     `invoice.created|finalized|paid|payment_failed|upcoming|voided`,
+     `payment_intent.succeeded|payment_failed`, `charge.refunded`,
+     `charge.dispute.created`, `customer.updated`, and - required for the saved-card list on
+     `/billing/paymentmethods` - `payment_method.attached`, `payment_method.detached`,
+     `payment_method.updated` and `payment_method.automatically_updated` (the last two catch
+     network/API changes to an existing card's brand, last4 or expiry).
+     The sandbox endpoint (`stripeWebhookTest`) needs the same list.
    * Stripe requires TLS and reachable endpoint. Use the functions URL (e.g. `https://<region>-<project>.cloudfunctions.net/stripeWebhook`).
 
 3. **Callable `startCheckout` usage (Angular)**

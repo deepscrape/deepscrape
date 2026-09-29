@@ -1,6 +1,6 @@
 /* eslint-disable max-len */
 /* eslint-disable object-curly-spacing */
-import { Timestamp } from "firebase-admin/firestore"
+import { FieldValue, Timestamp } from "firebase-admin/firestore"
 import { db } from "../../app/config"
 
 /**
@@ -10,14 +10,15 @@ import { db } from "../../app/config"
  * sender, the audit/timeline writer, geo on each session); what was absent was any
  * comparison of a login's geo against the user's history. This is that comparison.
  *
- * Deliberately does NOT order by createdAt: `where(userId) + orderBy(createdAt)`
- * needs a composite index, and a *sample* of the user's sessions is sufficient —
- * any single prior session from the same country proves the country is not new.
- * ponytail: 20-doc sample, add the composite index + a wider window if a user ever
- * accumulates enough history that 20 arbitrary sessions miss a known country.
+ * The history is `users/{uid}.knownCountries`, not a query over `loginSessions`. That
+ * query read up to 20 full session documents on every single login and, with no orderBy,
+ * Firestore handed back whichever 20 the index yielded first — so the answer came from an
+ * arbitrary old slice of history, got worse as the collection grew, and the cost landed
+ * inside the login response. The user document is read here anyway for the opt-out, so the
+ * country set now costs nothing extra, is exact, and needs no composite index.
+ * ponytail: countries are bounded by the number of countries there are; no cap needed.
  */
 
-const SAMPLE_SIZE = 20
 const UNKNOWN_VALUES = new Set(["", "unknown", "n/a", "null", "undefined"])
 
 const isKnown = (value: string | undefined): value is string =>
@@ -52,26 +53,32 @@ export async function detectNewLoginLocation(input: LoginLocationInput): Promise
     const country = input.country?.trim()
     if (!isKnown(country) || !input.uid) return false
 
-    const [userSnap, priorSessions] = await Promise.all([
-      db.doc(`users/${input.uid}`).get(),
-      db.collection("loginSessions").where("userId", "==", input.uid).limit(SAMPLE_SIZE).get(),
-    ])
+    const normalizedCountry = country.trim().toLowerCase()
+    const userRef = db.doc(`users/${input.uid}`)
+    const userSnap = await userRef.get()
+    const userData = userSnap.data() as {
+      notifications?: { securityAlerts?: boolean }
+      knownCountries?: string[]
+    } | undefined
 
     // Opt-out via the existing typed field (undefined = enabled).
-    const notifications = userSnap.data()?.notifications as { securityAlerts?: boolean } | undefined
-    if (notifications?.securityAlerts === false) return false
+    if (userData?.notifications?.securityAlerts === false) return false
 
-    const seenCountries = new Set<string>()
-    for (const session of priorSessions.docs) {
-      if (session.id === input.sessionId) continue
-      const priorCountry = (session.data() as { country?: string }).country
-      if (isKnown(priorCountry)) seenCountries.add(priorCountry.trim().toLowerCase())
+    const knownCountries = new Set<string>(
+      (userData?.knownCountries || []).filter(isKnown).map((entry) => entry.trim().toLowerCase())
+    )
+
+    // First country an account is ever seen from is not a "new location" — there is nothing
+    // to compare against, and alerting on it would train users to ignore the bell.
+    const isNewCountry = knownCountries.size > 0 && !knownCountries.has(normalizedCountry)
+
+    // Remember it either way, so an alert can fire for the *next* unseen country. Atomic, and
+    // skipped on the common path: a login from a country we already know is one read, no write.
+    if (!knownCountries.has(normalizedCountry)) {
+      await userRef.set({ knownCountries: FieldValue.arrayUnion(country) }, { merge: true })
     }
 
-    // First-ever session (or no prior country recorded) is not a "new location" —
-    // there is nothing to compare against, and alerting on it would train users to
-    // ignore the bell.
-    if (!seenCountries.size || seenCountries.has(country.toLowerCase())) return false
+    if (!isNewCountry) return false
 
     await db.collection("users").doc(input.uid).collection("alerts").add({
       type: "warning",
@@ -92,7 +99,7 @@ export async function detectNewLoginLocation(input: LoginLocationInput): Promise
         region: input.region || null,
         location: input.location || null,
         userAgent: input.userAgent || null,
-        knownCountries: [...seenCountries].slice(0, 20),
+        knownCountries: [...knownCountries].slice(0, 20),
       },
     })
 

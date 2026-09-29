@@ -13,18 +13,25 @@ import { provideAnalytics, getAnalytics, UserTrackingService } from '@angular/fi
 import { getAuth, inMemoryPersistence, initializeAuth, provideAuth } from '@angular/fire/auth';
 import { LoadingBarHttpClientModule } from '@ngx-loading-bar/http-client';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
-import { browserProvider, BrowserToken, PLUTO_ID, STORAGE_PROVIDERS, windowProvider, WindowToken } from './core/services';
+// Direct imports rather than the './core/services' barrel: the barrel re-exports every
+// root service (including firestore.service), which would retain their modules — and the
+// Firebase SDKs they import — in the eager initial bundle.
+import { browserProvider, BrowserToken } from './core/services/browser.service';
+import { windowProvider, WindowToken } from './core/services/window.service';
+import { PLUTO_ID } from './core/services/pluto.service';
+import { STORAGE_PROVIDERS } from './core/services/storage.service';
 import { provideHttpClient, withFetch, withInterceptors, withInterceptorsFromDi, withXsrfConfiguration } from '@angular/common/http';
 import { IMAGE_LOADER, ImageLoaderConfig } from '@angular/common';
 import { isPlatformBrowser } from '@angular/common';
 import { environment } from 'src/environments/environment';
-import { ReactiveFormsModule } from '@angular/forms';
 import { NAVIGATOR_PROVIDER } from './core/providers';
 import { LogLevel, setLogLevel } from '@angular/fire';
 import { LUCIDE_ICONS, LucideIconProvider } from 'lucide-angular';
-import { myIcons } from './shared'
+// Direct import rather than the './shared' barrel (which re-exports notification-bell → Auth + Firestore).
+import { myIcons } from './shared/lucideicons'
 import { provideI18n } from './core/i18n'; // Import provideI18n
 import { csrfRefreshInterceptor, orgContextInterceptor, paymentRequiredInterceptor, sessionRevocationInterceptor } from './core/interceptors';
+import { provideHostRouting } from './core/guards/host-routing.guard';
 import { SeoTitleStrategy } from './core/services/seo-title.strategy';
 import { PLATFORM_ID } from '@angular/core';
 
@@ -74,6 +81,11 @@ export const appConfig: ApplicationConfig = {
     // provideZoneChangeDetection({ eventCoalescing: true }),
     provideZonelessChangeDetection(),
     provideRouter(routes),
+    // Keeps client-side navigations on the origin that owns the target route.
+    // The Hosting redirects only cover cold document loads; a routerLink issues
+    // no HTTP request, so without this a marketing-page link into `/service/**`
+    // would render the app on the apex. See `core/guards/host-routing.policy.ts`.
+    provideHostRouting(),
     { provide: TitleStrategy, useClass: SeoTitleStrategy },
     // GA is a third-party processor: loading it sets Google's own `_ga` cookies
     // and starts sending page views, which is the lawful-basis problem the
@@ -121,6 +133,8 @@ export const appConfig: ApplicationConfig = {
       return firestore
     }
     ),
+    // Required: FirestoreService injects the `Functions` token (optional) and
+    // NotificationService resolves it via the injector — both call `httpsCallable`.
     provideFunctions(() => {
 
       const functions = getFunctions()
@@ -147,7 +161,6 @@ export const appConfig: ApplicationConfig = {
     // that, so this file and that constant are the two halves of one switch: re-add
     // provideAppCheck() here FIRST, then flip that constant to true.
     provideAnimationsAsync(),
-    importProvidersFrom(ReactiveFormsModule),
     {
       provide: PLUTO_ID,
       useValue: '449f8516-791a-49ab-a09d-50f79a0678b6',

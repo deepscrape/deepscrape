@@ -1,3 +1,75 @@
+/**
+ * Console-only sidebar (`console.deepscrape.dev`): the admin pages plus one way back
+ * to the app. The app origin shows a single "Console" entry instead — see
+ * `navigation` below.
+ *
+ * ponytail: the admin items live here and nowhere else, so the dashboard sidebar can
+ * no longer offer a link that leaves its own origin. `/dashboard` is relative on
+ * purpose: the host guard forwards it to the app origin from the console.
+ */
+export const adminNavigation = [
+    {
+        name: 'Dashboard',
+        url: '/dashboard',
+        icon: {
+            matIcon: 'speedometer'
+        }
+    },
+    {
+        divider: true
+    },
+    {
+        title: true,
+        name: 'Admin'
+    },
+    {
+        name: 'Analytics',
+        url: '/admin/analytics',
+        icon: {
+            matIcon: 'pie_chart'
+        },
+        badge: {
+            variant: 'info',
+            text: 'new'
+        },
+    },
+    {
+        name: 'Billing Observability',
+        url: '/admin/billing-observability',
+        icon: {
+            matIcon: 'monitoring'
+        }
+    },
+    {
+        name: 'Migration',
+        url: '/admin/migration',
+        icon: {
+            matIcon: 'sync_alt'
+        }
+    },
+    {
+        name: 'Migration Runs',
+        url: '/admin/migration/runs',
+        icon: {
+            matIcon: 'history'
+        }
+    },
+    {
+        name: 'Migration Backups',
+        url: '/admin/migration/backups',
+        icon: {
+            matIcon: 'backup'
+        }
+    },
+    {
+        name: 'Users',
+        url: '/admin/users',
+        icon: {
+            matIcon: 'group'
+        }
+    },
+];
+
 export const navigation = [
     {
         name: 'Dashboard',
@@ -7,53 +79,15 @@ export const navigation = [
         },
         identity: true,
     },
+    // ponytail: the admin tree now lives in `adminNavigation` for the console. The app
+    // origin gets one cross-link instead — a relative `/admin`, which the host guard
+    // forwards to `console.`, so no absolute URL is hardcoded in a template.
     {
-        name: 'Admin',
-        url: '',
+        name: 'Console',
+        url: '/admin',
         icon: {
             matIcon: 'admin_panel_settings'
-        },
-        children: [
-            {
-                name: 'Analytics',
-                url: '/admin/analytics',
-                icon: {
-                    matIcon: 'pie_chart'
-                },
-                badge: {
-                    variant: 'info',
-                    text: 'new'
-                },
-            },
-            {
-                name: 'Billing Observability',
-                url: '/admin/billing-observability',
-                icon: {
-                    matIcon: 'monitoring'
-                }
-            },
-            {
-                name: 'Migration',
-                url: '/admin/migration',
-                icon: {
-                    matIcon: 'sync_alt'
-                }
-            },
-            {
-                name: 'Migration Runs',
-                url: '/admin/migration/runs',
-                icon: {
-                    matIcon: 'history'
-                }
-            },
-            {
-                name: 'Migration Backups',
-                url: '/admin/migration/backups',
-                icon: {
-                    matIcon: 'backup'
-                }
-            },
-        ]
+        }
     },
     /* Posts Management  */
     {
@@ -82,25 +116,16 @@ export const navigation = [
 
         identity: true,
     },
+    // ponytail: re-added now that /chatai is a real route. No badge — the previous one
+    // carried a hardcoded Greek string instead of an i18n key.
     {
         name: 'AI Chat',
         url: '/chatai',
         icon: {
-            matIcon: 'chatai'
+            matIcon: 'forum'
         },
-        badge: {
-            variant: 'new',
-            text: 'νέο!'
-        }
+        identity: true,
     },
-    {
-        name: 'Analytics',
-        url: '/charts',
-        icon: {
-            matIcon: 'pie_chart'
-        }
-    },
-    /* Billing Management  */
     {
         divider: true,
     },
@@ -128,6 +153,14 @@ export const navigation = [
         identity: true,
         icon: {
             matIcon: 'query_stats'
+        }
+    },
+    {
+        name: 'Payments',
+        url: '/billing/paymentmethods',
+        identity: true,
+        icon: {
+            matIcon: 'credit_card'
         }
     },
 

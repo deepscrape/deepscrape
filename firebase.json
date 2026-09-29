@@ -30,40 +30,172 @@
       ]
     }
   ],
-  "hosting": {
-    "site": "deepscrape",
-    "public": "dist/deepscrape/browser",
-    "rewrites": [
-      {
-        "source": "**",
-        "run": { "serviceId": "deepscrape-bff", "region": "us-central1" }
-      }
-    ],
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "headers": [
-      {
-        "source": "/**",
-        "headers": [
-          {
-            "key": "Strict-Transport-Security",
-            "value": "max-age=31536000; includeSubDomains; preload"
-          },
-          {
-            "key": "Content-Security-Policy",
-            "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://apis.google.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://fonts.googleapis.com; connect-src 'self' https://firebase.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://www.googleapis.com https://securetoken.googleapis.com https://us-central1-libnet-d76db.cloudfunctions.net https://region1.google-analytics.com https://cdnjs.cloudflare.com https://deepscrape.dev https://fonts.gstatic.com https://www.googletagmanager.com https://apis.google.com https://ui-avatars.com https://firebasestorage.googleapis.com https://firebaseinstallations.googleapis.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/enterprise/clr https://www.google.com/recaptcha/ https://challenges.cloudflare.com; img-src 'self' data: https: https://ui-avatars.com https://firebasestorage.googleapis.com https://www.googletagmanager.com https://www.gstatic.com https://www.googleapis.com https://www.google.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com https://fonts.googleapis.com; object-src 'none'; base-uri 'self'; frame-src 'self' https://libnet-d76db.firebaseapp.com https://www.google.com/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com;"
-          },
-          {
-            "key": "X-Content-Type-Options",
-            "value": "nosniff"
-          },
-          {
-            "key": "X-Frame-Options",
-            "value": "DENY"
-          }
-        ]
-      }
-    ]
-  },
+  "hosting": [
+    {
+      "target": "marketing",
+      "public": "dist/deepscrape/browser",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "redirects": [
+        { "source": "/admin", "destination": "https://console.deepscrape.dev/admin", "type": 301 },
+        { "source": "/admin/:rest*", "destination": "https://console.deepscrape.dev/admin/:rest", "type": 301 },
+        { "source": "/dashboard", "destination": "https://dashboard.deepscrape.dev/dashboard", "type": 301 },
+        { "source": "/dashboard/:rest*", "destination": "https://dashboard.deepscrape.dev/dashboard/:rest", "type": 301 },
+        { "source": "/settings", "destination": "https://dashboard.deepscrape.dev/settings", "type": 301 },
+        { "source": "/settings/:rest*", "destination": "https://dashboard.deepscrape.dev/settings/:rest", "type": 301 },
+        { "source": "/operations", "destination": "https://dashboard.deepscrape.dev/operations", "type": 301 },
+        { "source": "/operations/:rest*", "destination": "https://dashboard.deepscrape.dev/operations/:rest", "type": 301 },
+        { "source": "/playground", "destination": "https://dashboard.deepscrape.dev/playground", "type": 301 },
+        { "source": "/playground/:rest*", "destination": "https://dashboard.deepscrape.dev/playground/:rest", "type": 301 },
+        { "source": "/crawlpack", "destination": "https://dashboard.deepscrape.dev/crawlpack", "type": 301 },
+        { "source": "/crawlpack/:rest*", "destination": "https://dashboard.deepscrape.dev/crawlpack/:rest", "type": 301 },
+        { "source": "/billing", "destination": "https://dashboard.deepscrape.dev/billing", "type": 301 },
+        { "source": "/billing/:rest*", "destination": "https://dashboard.deepscrape.dev/billing/:rest", "type": 301 },
+        { "source": "/service", "destination": "https://dashboard.deepscrape.dev/service", "type": 301 },
+        { "source": "/service/:rest*", "destination": "https://dashboard.deepscrape.dev/service/:rest", "type": 301 }
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "run": { "serviceId": "deepscrape-bff", "region": "us-central1" }
+        }
+      ],
+      "headers": [
+        {
+          "source": "/**",
+          "headers": [
+            {
+              "key": "Strict-Transport-Security",
+              "value": "max-age=31536000; includeSubDomains; preload"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://apis.google.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://fonts.googleapis.com; connect-src 'self' https://firebase.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://www.googleapis.com https://securetoken.googleapis.com https://us-central1-libnet-d76db.cloudfunctions.net https://region1.google-analytics.com https://cdnjs.cloudflare.com https://deepscrape.dev https://fonts.gstatic.com https://www.googletagmanager.com https://apis.google.com https://ui-avatars.com https://firebasestorage.googleapis.com https://firebaseinstallations.googleapis.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/enterprise/clr https://www.google.com/recaptcha/ https://challenges.cloudflare.com; img-src 'self' data: https: https://ui-avatars.com https://firebasestorage.googleapis.com https://www.googletagmanager.com https://www.gstatic.com https://www.googleapis.com https://www.google.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com https://fonts.googleapis.com; object-src 'none'; base-uri 'self'; frame-src 'self' https://libnet-d76db.firebaseapp.com https://www.google.com/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com;"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "dashboard",
+      "public": "dist/deepscrape/browser",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "redirects": [
+        { "source": "/", "destination": "/dashboard", "type": 301 },
+        { "source": "/admin", "destination": "https://console.deepscrape.dev/admin", "type": 301 },
+        { "source": "/admin/:rest*", "destination": "https://console.deepscrape.dev/admin/:rest", "type": 301 },
+        { "source": "/contact", "destination": "https://deepscrape.dev/contact", "type": 301 },
+        { "source": "/contact/:rest*", "destination": "https://deepscrape.dev/contact/:rest", "type": 301 },
+        { "source": "/privacy", "destination": "https://deepscrape.dev/privacy", "type": 301 },
+        { "source": "/privacy/:rest*", "destination": "https://deepscrape.dev/privacy/:rest", "type": 301 },
+        { "source": "/terms", "destination": "https://deepscrape.dev/terms", "type": 301 },
+        { "source": "/terms/:rest*", "destination": "https://deepscrape.dev/terms/:rest", "type": 301 },
+        { "source": "/deep-scraper", "destination": "https://deepscrape.dev/deep-scraper", "type": 301 },
+        { "source": "/deep-scraper/:rest*", "destination": "https://deepscrape.dev/deep-scraper/:rest", "type": 301 },
+        { "source": "/alternatives", "destination": "https://deepscrape.dev/alternatives", "type": 301 },
+        { "source": "/alternatives/:rest*", "destination": "https://deepscrape.dev/alternatives/:rest", "type": 301 },
+        { "source": "/mcp-web-scraping", "destination": "https://deepscrape.dev/mcp-web-scraping", "type": 301 },
+        { "source": "/mcp-web-scraping/:rest*", "destination": "https://deepscrape.dev/mcp-web-scraping/:rest", "type": 301 }
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "run": { "serviceId": "deepscrape-bff", "region": "us-central1" }
+        }
+      ],
+      "headers": [
+        {
+          "source": "/**",
+          "headers": [
+            {
+              "key": "Strict-Transport-Security",
+              "value": "max-age=31536000; includeSubDomains; preload"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://apis.google.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://fonts.googleapis.com; connect-src 'self' https://firebase.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://www.googleapis.com https://securetoken.googleapis.com https://us-central1-libnet-d76db.cloudfunctions.net https://region1.google-analytics.com https://cdnjs.cloudflare.com https://deepscrape.dev https://fonts.gstatic.com https://www.googletagmanager.com https://apis.google.com https://ui-avatars.com https://firebasestorage.googleapis.com https://firebaseinstallations.googleapis.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/enterprise/clr https://www.google.com/recaptcha/ https://challenges.cloudflare.com; img-src 'self' data: https: https://ui-avatars.com https://firebasestorage.googleapis.com https://www.googletagmanager.com https://www.gstatic.com https://www.googleapis.com https://www.google.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com https://fonts.googleapis.com; object-src 'none'; base-uri 'self'; frame-src 'self' https://libnet-d76db.firebaseapp.com https://www.google.com/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com;"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Robots-Tag",
+              "value": "noindex, nofollow"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "console",
+      "public": "dist/deepscrape/browser",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "redirects": [
+        { "source": "/", "destination": "/admin", "type": 301 },
+        { "source": "/contact", "destination": "https://deepscrape.dev/contact", "type": 301 },
+        { "source": "/contact/:rest*", "destination": "https://deepscrape.dev/contact/:rest", "type": 301 },
+        { "source": "/privacy", "destination": "https://deepscrape.dev/privacy", "type": 301 },
+        { "source": "/privacy/:rest*", "destination": "https://deepscrape.dev/privacy/:rest", "type": 301 },
+        { "source": "/terms", "destination": "https://deepscrape.dev/terms", "type": 301 },
+        { "source": "/terms/:rest*", "destination": "https://deepscrape.dev/terms/:rest", "type": 301 },
+        { "source": "/deep-scraper", "destination": "https://deepscrape.dev/deep-scraper", "type": 301 },
+        { "source": "/deep-scraper/:rest*", "destination": "https://deepscrape.dev/deep-scraper/:rest", "type": 301 },
+        { "source": "/alternatives", "destination": "https://deepscrape.dev/alternatives", "type": 301 },
+        { "source": "/alternatives/:rest*", "destination": "https://deepscrape.dev/alternatives/:rest", "type": 301 },
+        { "source": "/mcp-web-scraping", "destination": "https://deepscrape.dev/mcp-web-scraping", "type": 301 },
+        { "source": "/mcp-web-scraping/:rest*", "destination": "https://deepscrape.dev/mcp-web-scraping/:rest", "type": 301 }
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "run": { "serviceId": "deepscrape-bff", "region": "us-central1" }
+        }
+      ],
+      "headers": [
+        {
+          "source": "/**",
+          "headers": [
+            {
+              "key": "Strict-Transport-Security",
+              "value": "max-age=31536000; includeSubDomains; preload"
+            },
+            {
+              "key": "Content-Security-Policy",
+              "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://apis.google.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://fonts.googleapis.com; connect-src 'self' https://firebase.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://www.googleapis.com https://securetoken.googleapis.com https://us-central1-libnet-d76db.cloudfunctions.net https://region1.google-analytics.com https://cdnjs.cloudflare.com https://deepscrape.dev https://fonts.gstatic.com https://www.googletagmanager.com https://apis.google.com https://ui-avatars.com https://firebasestorage.googleapis.com https://firebaseinstallations.googleapis.com https://www.google.com https://www.gstatic.com https://www.google.com/recaptcha/enterprise/clr https://www.google.com/recaptcha/ https://challenges.cloudflare.com; img-src 'self' data: https: https://ui-avatars.com https://firebasestorage.googleapis.com https://www.googletagmanager.com https://www.gstatic.com https://www.googleapis.com https://www.google.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com https://fonts.googleapis.com; object-src 'none'; base-uri 'self'; frame-src 'self' https://libnet-d76db.firebaseapp.com https://www.google.com/ https://www.gstatic.com/recaptcha/ https://challenges.cloudflare.com;"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "X-Robots-Tag",
+              "value": "noindex, nofollow"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "no-referrer"
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "emulators": {
     "firestore": {
       "port": 5001

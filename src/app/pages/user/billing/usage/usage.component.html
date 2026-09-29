@@ -76,6 +76,29 @@
             </div>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
               <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.USAGE_TO_DATE' | translate }}</p>
+                <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
+                  {{ report.usage.currentUsage | number:'1.0-0' }}
+                  @if (report.usage.usageCap > 0) {
+                    <span class="text-base font-normal text-gray-500 dark:text-gray-400">/ {{ report.usage.usageCap | number:'1.0-0' }}</span>
+                  }
+                </p>
+              </div>
+              <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.CREDITS_AVAILABLE' | translate }}</p>
+                <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
+                  {{ (report.usage.includedCredits + report.usage.purchasedCredits) | number:'1.0-0' }}
+                </p>
+              </div>
+              <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.CREDITS_USED' | translate }}</p>
+                <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
+                  {{ report.usage.creditsUsedInRange | number:'1.0-0' }}
+                </p>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
                 <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.TOTAL_INVOICED' | translate }}</p>
                 <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
                   {{ report.summary.totalInvoiced | currency: asCurrencyCode(report.summary.currency) }}
@@ -87,30 +110,6 @@
                   {{ report.summary.totalPaid | currency: asCurrencyCode(report.summary.currency) }}
                 </p>
               </div>
-              <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.METERED_UNITS' | translate }}</p>
-                <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
-                  {{ report.summary.totalMeteredUnits | number:'1.0-2' }}
-                </p>
-              </div>
-            </div>
-            <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 mb-8 shadow-md">
-              <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">{{ 'BILLING_USAGE.METER_TREND' | translate }}</h3>
-              @if (vm.chartPoints.length) {
-                <div class="usage-chart-shell">
-                  <div class="h-72 w-full">
-                    <canvas
-                      baseChart
-                      [data]="vm.chartData"
-                      [options]="vm.chartOptions"
-                      [type]="'bar'"
-                      class="h-full w-full"
-                    ></canvas>
-                  </div>
-                </div>
-              } @else {
-                <p class="text-sm text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.NO_CHART_DATA' | translate }}</p>
-              }
             </div>
             <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
               <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">{{ 'BILLING_USAGE.BREAKDOWN_TITLE' | translate }}</h3>
@@ -140,23 +139,15 @@
                           }
                         </td>
                         <td class="px-3 py-2 whitespace-nowrap">
-                          @if (item.unitAmount !== null && !isUnitRow(item)) {
+                          @if (item.unitAmount !== null) {
                             {{ item.unitAmount | currency: asCurrencyCode(item.currency) }}
-                          }
-                          @if (item.unitAmount !== null && isUnitRow(item)) {
-                            {{ item.unitAmount | number:'1.0-2' }} units
                           }
                           @if (item.unitAmount === null) {
                             -
                           }
                         </td>
                         <td class="px-3 py-2 whitespace-nowrap font-medium">
-                          @if (!isUnitRow(item)) {
-                            {{ item.total | currency: asCurrencyCode(item.currency) }}
-                          }
-                          @if (isUnitRow(item)) {
-                            {{ item.total | number:'1.0-2' }} units
-                          }
+                          {{ item.total | currency: asCurrencyCode(item.currency) }}
                         </td>
                       </tr>
                     }

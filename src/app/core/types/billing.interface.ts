@@ -106,21 +106,6 @@ export type BillingUsageSummary = {
   currency: string
   totalInvoiced: number
   totalPaid: number
-  totalMeteredUnits: number
-}
-
-export type BillingMeterTimelinePoint = {
-  start: string
-  end: string
-  value: number
-}
-
-export type BillingUsageMeter = {
-  meterId: string
-  displayName: string
-  eventName: string
-  aggregatedValue: number
-  timeline: BillingMeterTimelinePoint[]
 }
 
 export type BillingUsageInvoice = {
@@ -148,7 +133,7 @@ export type BillingUsagePayment = {
 export type BillingUsageBreakdownItem = {
   id: string
   date: string
-  source: "invoice_line" | "payment" | "meter"
+  source: "invoice_line" | "payment"
   category: string
   description: string
   quantity: number | null
@@ -158,12 +143,18 @@ export type BillingUsageBreakdownItem = {
   referenceId: string
 }
 
+export type BillingUsageStats = {
+  currentUsage: number
+  usageCap: number
+  includedCredits: number
+  purchasedCredits: number
+  creditsUsedInRange: number
+}
+
 export type BillingUsageResponse = {
   range: BillingUsageRange
   summary: BillingUsageSummary
-  meteredUsage: {
-    meters: BillingUsageMeter[]
-  }
+  usage: BillingUsageStats
   invoices: BillingUsageInvoice[]
   payments: BillingUsagePayment[]
   breakdown: BillingUsageBreakdownItem[]

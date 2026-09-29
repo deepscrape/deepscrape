@@ -1,3 +1,27 @@
+# [0.9.0-beta.23](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.22...v0.9.0-beta.23) (2026-09-29)
+
+
+### Bug Fixes
+
+* **billing:** send card management to the hosted Stripe portal ([20e8060](https://github.com/deepscrape/deepscrape/commit/20e80604f8e02d8b9246628d47d5ddbc9f59892d))
+* **billing:** survive a Stripe id that belongs to the other account ([e953a23](https://github.com/deepscrape/deepscrape/commit/e953a23ba0f347263ec03ecdce54637a4952a591))
+* **webauthn:** narrow the credential types instead of asserting them ([b4ac6cf](https://github.com/deepscrape/deepscrape/commit/b4ac6cf4cc745746d59c0b4cb0584bee7752600d))
+
+
+### Features
+
+* **accounts:** two-step account erasure with an admin user console ([f8c0963](https://github.com/deepscrape/deepscrape/commit/f8c0963af3d9e074537e69d37b0354faa6f79619))
+* **i18n:** convert the remaining hardcoded copy to translation keys ([8d6cb39](https://github.com/deepscrape/deepscrape/commit/8d6cb397f72ca559e6e0809517de6b462e45b530))
+* **multisite:** split the apex, app and console origins behind one path policy ([5a1a5d5](https://github.com/deepscrape/deepscrape/commit/5a1a5d5598b14349250b57b909c8fcbe89ff3078))
+* **orgs:** scope the app shell under /{orgId} and resolve the active org ([3bded16](https://github.com/deepscrape/deepscrape/commit/3bded169b2ec941a268be6a61effbd248167313f))
+* **pages:** add the AI chat and MCP web-scraping pages ([ab26914](https://github.com/deepscrape/deepscrape/commit/ab26914c7ce0eecc4488f05cd800fd595a3b47b3))
+* **routing:** wire the org-scoped, console and new page routes ([93cdb7f](https://github.com/deepscrape/deepscrape/commit/93cdb7ff7dd3719e698e3f09f1d54e735600e81d))
+
+
+### Performance Improvements
+
+* **sessions:** detect new login locations without scanning loginSessions ([9c84eec](https://github.com/deepscrape/deepscrape/commit/9c84eec38dd22c5a96ac9312e69a71a10f2ffca5))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

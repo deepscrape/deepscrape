@@ -12,7 +12,7 @@ import {
   getStripe,
   getStripeWebhookSecret,
 } from "./config"
-import { grantBillingCredits } from "./billing-credits"
+import { applyBillingCreditMutation, grantBillingCredits } from "./billing-credits"
 import type { UserInfo } from "firebase-admin/auth"
 import { FieldValue } from "firebase-admin/firestore"
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
@@ -23,7 +23,7 @@ import type { SecretParam } from "firebase-functions/params"
 // onCall, so createPaymentIntent/createCheckoutSession were unbounded per account.
 import { guardedOnCall as onCallv2 } from "../infrastructure/callable-limiter"
 import { onSchedule } from "firebase-functions/v2/scheduler"
-import { Users, Guest, ANALYTICS_EVENTS, buildAnalyticsEvent, canPurchaseStandaloneCredits, getPurchasedCreditsAvailable, toEventHour, toPaidCounterKeys } from "../domain"
+import { Users, Guest, ANALYTICS_EVENTS, buildAnalyticsEvent, canPurchaseStandaloneCredits, getIncludedCreditsAvailable, getPurchasedCreditsAvailable, toEventHour, toPaidCounterKeys } from "../domain"
 import Stripe from "stripe"
 import { env } from "../config/env"
 import { findUnusableCatalogPrices, lookupKeyForCredits, lookupKeyForPlan, resolvePriceId } from "./stripe-price-resolution"
@@ -244,7 +244,16 @@ const CUSTOM_CREDITS_MAX = toPositiveInteger(env.BILLING_CUSTOM_CREDITS_MAX, 500
 const CUSTOM_CREDIT_UNIT_AMOUNT_EUR = toPositiveInteger(env.BILLING_CUSTOM_CREDIT_UNIT_AMOUNT_EUR, 19)
 const BILLING_RESTRICTED_ROLE_KEYWORDS = ["manager", "editor"]
 const billingAllowedOrigins = env.IS_PRODUCTION ?
-  ["https://deepscrape.dev", "https://deepscrape.web.app"] :
+  [
+    "https://deepscrape.dev",
+    "https://deepscrape.web.app",
+    // Widened BEFORE the subdomains carry traffic. Checkout sends
+    // `window.location.origin + '/billing/success'`, so an origin missing here makes
+    // `assertAllowedReturnUrl` throw permission-denied and billing fails outright the
+    // moment the app moves. Listing an origin that does not resolve yet is inert.
+    "https://dashboard.deepscrape.dev",
+    "https://console.deepscrape.dev",
+  ] :
   [
     "http://localhost:5000",
     "http://127.0.0.1:5000",
@@ -829,24 +838,6 @@ const resolveBillingUsageWindow = (rangeKey: BillingUsageRangeKey): BillingUsage
   }
 }
 
-const alignToMinuteFloorSeconds = (ms: number): number => Math.floor(ms / 60000) * 60
-
-const alignToMinuteCeilSeconds = (ms: number): number => {
-  const ceilMs = Math.ceil(ms / 60000) * 60000
-  return Math.floor(ceilMs / 1000)
-}
-
-const ensureNonEmptyMeterWindow = (startSeconds: number, endSeconds: number): { startSeconds: number, endSeconds: number } => {
-  if (endSeconds > startSeconds) {
-    return { startSeconds, endSeconds }
-  }
-
-  return {
-    startSeconds,
-    endSeconds: startSeconds + 60,
-  }
-}
-
 const toIso = (seconds: number): string => new Date(seconds * 1000).toISOString()
 
 const getInvoiceLinePriceId = (line: Stripe.InvoiceLineItem): string | null => {
@@ -927,6 +918,79 @@ const resolveUidByStripeCustomer = async (
   }
 
   return userSnap.docs[0].id
+}
+
+/**
+ * The Stripe customer to use, or null when this account has never heard of the one on file.
+ *
+ * A customer id is only meaningful inside the account that minted it, and this project runs
+ * the live and sandbox functions against ONE Firestore - so a `stripeId` written while testing
+ * in sandbox is not a customer the live key can retrieve. Stripe answers `resource_missing`,
+ * and unhandled that surfaced as a 500 on the whole callable: the billing pages, and the
+ * checkout that would have replaced the id. Treat it as "no customer yet" - drop the stale
+ * field so the next checkout mints one in this account - and let the caller take its
+ * no-customer path.
+ *
+ * @param {*} stripe Initialised Stripe client.
+ * @param {*} uid User id, so the stale field can be cleared.
+ * @param {*} stripeId The id on the user document, if any.
+ * @return {*} A usable customer id, or null.
+ */
+const resolveStripeCustomerId = async (
+  stripe: Stripe,
+  uid: string,
+  stripeId: string | undefined,
+): Promise<string | null> => {
+  if (!stripeId) {
+    return null
+  }
+
+  try {
+    const customer = await stripe.customers.retrieve(stripeId)
+    return customer.deleted ? null : stripeId
+  } catch (error) {
+    if ((error as {code?: string} | null)?.code !== "resource_missing") {
+      throw error
+    }
+
+    console.warn(`[billing] stripeId ${stripeId} is not a customer in this account; clearing it for ${uid}`)
+    await db.doc(`users/${uid}`).set({ stripeId: FieldValue.delete() }, { merge: true })
+    return null
+  }
+}
+
+/**
+ * The customer id to charge, minting one in the account the current key belongs to.
+ *
+ * `resolveStripeCustomerId` returns null for a customer minted while the other account was
+ * configured - the state of everyone who registered before livemode was switched on.
+ * Checkout always answered that by creating a fresh customer; the portal did not, so those
+ * users hit a 400 dead end on "add payment method" and could never clear it themselves —
+ * the id is only dropped on the way to that same failure. Both paths now resolve-or-mint.
+ *
+ * @param {*} stripe Initialised Stripe client.
+ * @param {*} uid Firebase user id, written as `stripeId` and in both metadata keys.
+ * @param {*} user User document, for the email Stripe shows on the customer.
+ * @return {*} A customer id this key can actually use.
+ */
+const ensureStripeCustomerId = async (
+  stripe: Stripe,
+  uid: string,
+  user: Users | undefined,
+): Promise<string> => {
+  const resolved = await resolveStripeCustomerId(stripe, uid, user?.stripeId)
+  if (resolved) {
+    return resolved
+  }
+
+  const customer = await stripe.customers.create({
+    email: user?.email || user?.providerData?.[0]?.email || undefined,
+    // `uid` is what the charge, subscription and invoice handlers read; `firebaseUID` is
+    // what `customer.updated` reads. Write both so either event resolves the user.
+    metadata: { uid, firebaseUID: uid },
+  })
+  await db.doc(`users/${uid}`).set({ stripeId: customer.id }, { merge: true })
+  return customer.id
 }
 
 // Record a paid conversion as an `analytics_events` fact plus its per-day counters.
@@ -1035,7 +1099,10 @@ export async function createCustomer(firebaseUser: StripeCustomerInput): Promise
     email,
     name,
     phone: phone || undefined,
-    metadata: { firebaseUID: firebaseUser.uid },
+    // `firebaseUID` is what `customer.updated` reads; `uid` is what the charge, subscription
+    // and invoice handlers read. Write both so a customer resolves from either event without
+    // falling back to a Firestore collection query.
+    metadata: { uid: firebaseUser.uid, firebaseUID: firebaseUser.uid },
   })
 }
 
@@ -1134,269 +1201,6 @@ export const newStripeCustomer = onDocumentCreated(
   },
 )
 
-
-export const createPaymentIntent = onCallv2(
-  { secrets: stripeSecrets, enforceAppCheck: false },
-  async (req) => {
-    const secret: string | undefined = stripeSecrets.find((secret) => secret.name === "STRIPE_SECRET_KEY")?.value()
-    const stripe = getStripe(secret)
-    // Where the cart id is the cart id of last paymentIntent
-    // plan chosen plan from cache memmory
-    let clientSecret = ""
-    let { amount, cartId } = req.data
-    // The caller does not get to name the price. `currency` was the dangerous half: a
-    // zero-decimal currency (JPY, KRW) redefines what an amount is worth, so the currency
-    // comes from the catalog instead. The amount stays caller-chosen because a credit top-up
-    // is deliberately pay-what-you-want, but it is now bounded by the same credits the
-    // catalog actually sells.
-    const currency = customCreditsCatalog.currency
-    const amountCents = Number(amount)
-    const minAmountCents = customCreditsCatalog.minimumCredits * customCreditsCatalog.unitAmount
-    const maxAmountCents = customCreditsCatalog.maximumCredits * customCreditsCatalog.unitAmount
-    try {
-      const userId = req?.auth?.uid
-      if (!userId) {
-        throw new HttpsError("unauthenticated", "User must be authenticated")
-      }
-
-      if (!Number.isFinite(amountCents) || amountCents < minAmountCents || amountCents > maxAmountCents) {
-        throw new HttpsError(
-          "invalid-argument",
-          `Amount must be between ${minAmountCents} and ${maxAmountCents} ${currency}`,
-        )
-      }
-
-      console.log(`userId : ${userId}`)
-
-      // Get the user from firestore
-      const userDoc = await db.doc(`users/${userId}`).get()
-      const user = userDoc.data() as Users | undefined
-      assertBillingAllowed(user, getTokenRole(req))
-
-      // Get the user's email
-      const userEmail: string = user?.providerData?.length ?
-        user?.providerData[0]?.email : ""
-
-
-      // if cartId is not in session of the browser storage
-      if (!cartId) {
-        const listpayment = await stripe.paymentIntents.list({ customer: user?.stripeId })
-        // Cancel only intents that are cancelable (requires_payment_method) to avoid
-        // cancelling succeeded/processing intents from other browser tabs or sessions.
-        const cancelableStatuses = new Set(["requires_payment_method", "requires_confirmation", "requires_action"])
-        const cancelable = listpayment.data.filter((item) => cancelableStatuses.has(item.status))
-        if (cancelable.length > 0) {
-          await Promise.all(cancelable.map(async (item) => {
-            await stripe.paymentIntents.cancel(item.id)
-          }))
-        }
-        const paymentIntent = await stripe.paymentIntents.create({
-          receipt_email: userEmail,
-          currency,
-          customer: user?.stripeId,
-          payment_method_types: ["card"],
-          amount: amountCents,
-        })
-        // FIXME: need to specified the cartId or create new cart if it doesn't exist
-        const newCart = await db.collection(`users/${userId}/paymentcart`).add({
-          paymentIntentId: paymentIntent.id,
-          status: paymentIntent.status,
-          created_At: paymentIntent.created,
-          lastPaymentAttempt: new Date().getUTCDate(),
-        })
-        cartId = newCart.id
-        clientSecret = paymentIntent.client_secret || "" // or is null
-      } else {
-        // retrieve the paymentIntent where already Created
-        const cartData = await db.doc(`users/${userId}/paymentcart/${cartId}`).get()
-        const cart = cartData.data()
-
-        // get the latest used paymentIntentId
-        if (cart?.paymentIntentId) {
-          const incompleteIntent = await stripe.paymentIntents.retrieve(cart?.paymentIntentId)
-          /* if (incompleteIntent.status === "requires_payment_method") {} */
-          clientSecret = incompleteIntent.client_secret || "" // or is null
-        }
-      }
-
-      return { clientSecret, cartId }
-    } catch (error) {
-      console.log(error)
-      if (error instanceof HttpsError) {
-        throw error
-      }
-
-      throw new HttpsError("internal", "cannot create a payment intent")
-    }
-  }
-)
-
-export const createSetupIntent = onCallv2(
-  { secrets: stripeSecrets, enforceAppCheck: false },
-  async (req) => {
-    const secret: string | undefined = stripeSecrets.find((secret) => secret.name === "STRIPE_SECRET_KEY")?.value()
-    const stripe = getStripe(secret)
-    const userId = req.auth?.uid
-    if (!userId) {
-      throw new HttpsError("unauthenticated", "User must be authenticated")
-    }
-
-    const { cartId } = req.data as { cartId?: string | null }
-    const userRef = db.doc(`users/${userId}`)
-    const userDoc = await userRef.get()
-    const user = userDoc.data() as Users | undefined
-    assertBillingAllowed(user, getTokenRole(req))
-
-    const userEmail = user?.email || user?.providerData?.[0]?.email || ""
-    let customerId = user?.stripeId
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: userEmail,
-        metadata: { firebaseUID: userId },
-      })
-      customerId = customer.id
-      await userRef.set({ stripeId: customerId }, { merge: true })
-    }
-
-    const createNewSetupIntent = async () => {
-      const setupIntent = await stripe.setupIntents.create({
-        customer: customerId,
-        usage: "off_session",
-        automatic_payment_methods: {
-          enabled: true,
-        },
-      })
-
-      const createdCart = await db.collection(`users/${userId}/paymentcart`).add({
-        setupIntentId: setupIntent.id,
-        status: setupIntent.status,
-        created_At: setupIntent.created,
-        lastPaymentAttempt: new Date().toISOString(),
-      })
-
-      return {
-        clientSecret: setupIntent.client_secret || "",
-        cartId: createdCart.id,
-      }
-    }
-
-    if (!cartId) {
-      return createNewSetupIntent()
-    }
-
-    const cartRef = db.doc(`users/${userId}/paymentcart/${cartId}`)
-    const cartSnap = await cartRef.get()
-    const cart = cartSnap.data() as { setupIntentId?: string } | undefined
-
-    if (!cart?.setupIntentId) {
-      return createNewSetupIntent()
-    }
-
-    const setupIntent = await stripe.setupIntents.retrieve(cart.setupIntentId)
-    if (setupIntent.status === "succeeded" || setupIntent.status === "canceled") {
-      return createNewSetupIntent()
-    }
-
-    await cartRef.set({
-      status: setupIntent.status,
-      lastPaymentAttempt: new Date().toISOString(),
-    }, { merge: true })
-
-    return {
-      clientSecret: setupIntent.client_secret || "",
-      cartId,
-    }
-  },
-)
-
-
-export const startSubscription = onCallv2(
-  { secrets: stripeSecrets, enforceAppCheck: false },
-  async (req) => {
-    const secret: string | undefined = stripeSecrets.find((secret) => secret.name === "STRIPE_SECRET_KEY")?.value()
-    const stripe = getStripe(secret)
-    try {
-      // 1. Get user data and validate
-      const userId = req?.auth?.uid
-      if (!userId) {
-        throw new HttpsError("unauthenticated", "User must be authenticated")
-      }
-
-      const userDoc = await db.doc(`users/${userId}`).get()
-      const user = userDoc.data() as Users | undefined
-      assertBillingAllowed(user, getTokenRole(req))
-      if (!user || !user.stripeId) {
-        throw new HttpsError("not-found", "User or Stripe customer not found")
-      }
-
-      // 2. Extract and validate required data
-      const { price, paymentMethod, currency } = req.data
-      if (!price || !paymentMethod || !currency) {
-        throw new HttpsError("invalid-argument", "Missing required payment information")
-      }
-
-      // 3. Check for existing subscription
-      if (user.subscriptionId) {
-        // Redirect to Stripe Customer Portal for plan changes — never silently update
-        // an existing subscription without the user's explicit intent.
-        throw new HttpsError(
-          "failed-precondition",
-          "User already has an active subscription. Use the Customer Portal to change plans.",
-        )
-      }
-
-      // 4. Check for existing payment methods (PaymentMethods API)
-      const paymentMethodsList = await stripe.paymentMethods.list({
-        customer: user.stripeId,
-        type: "card",
-        limit: 100,
-      })
-      let paymentMethodExists = false
-      for (const pm of paymentMethodsList.data) {
-        if (pm.id === paymentMethod) {
-          paymentMethodExists = true
-          break
-        }
-      }
-      // Attach payment method if not already attached
-      if (!paymentMethodExists) {
-        await stripe.paymentMethods.attach(paymentMethod, { customer: user.stripeId })
-      }
-
-      // 5. Set as default payment method for invoices
-      await stripe.customers.update(user.stripeId, {
-        invoice_settings: { default_payment_method: paymentMethod },
-      })
-
-      // 6. Create subscription with idempotency key and default payment method
-      const sub = await stripe.subscriptions.create({
-        customer: user.stripeId,
-        items: [{ price }],
-        default_payment_method: paymentMethod,
-        currency,
-      }, {
-        idempotencyKey: `sub_${userId}_${price}`,
-      })
-
-      // 7. Update user document
-      await db.doc(`users/${userId}`).update({
-        status: sub.status,
-        currentUsage: 0,
-        subscriptionId: sub.id,
-        itemId: sub.items.data[0].id,
-      })
-
-      return { message: "Subscription created successfully", subscriptionId: sub.id }
-    } catch (error) {
-      console.error("Error in startSubscription:", error)
-      if (error instanceof HttpsError) {
-        throw error
-      }
-
-      throw new HttpsError("internal", "Failed to start subscription")
-    }
-  }
-)
 
 export const getBillingCatalog = onCallv2(
   { secrets: stripeSecrets, enforceAppCheck: false },
@@ -1893,6 +1697,11 @@ export const startTrial = onCallv2(
   },
 )
 
+// ponytail: the consume rows are scanned flat and capped - the ledger subcollection has no
+// range index, and one user's ledger stays small. Add a createdAt range index if a heavy
+// user's ledger ever approaches this.
+const USAGE_LEDGER_SCAN_LIMIT = 500
+
 export const getBillingUsage = onCallv2(
   { secrets: stripeSecrets, enforceAppCheck: false },
   async (req) => {
@@ -1915,7 +1724,35 @@ export const getBillingUsage = onCallv2(
     const userSnap = await db.doc(`users/${userId}`).get()
     const user = userSnap.data() as Users | undefined
     assertBillingAllowed(user, getTokenRole(req))
-    const stripeCustomerId = user?.stripeId || null
+
+    const secret: string | undefined = stripeSecrets.find((entry) => entry.name === "STRIPE_SECRET_KEY")?.value()
+    const stripe = getStripe(secret)
+    // A customer from the other mode is not retrievable here, so this clears it rather than
+    // letting Stripe's resource_missing fail the whole call.
+    const stripeCustomerId = await resolveStripeCustomerId(stripe, userId, user?.stripeId)
+
+    // The only part of this page that is not money. `currentUsage` is the counter the
+    // `projects/{projectId}` trigger increments and the credits ledger records what was
+    // actually consumed; Stripe knows neither number, which is why the meter chart that used
+    // to sit below could never fill itself.
+    const consumeLedger = await db.collection(`users/${userId}/credits_ledger`)
+      .where("operation", "==", "consume")
+      .limit(USAGE_LEDGER_SCAN_LIMIT)
+      .get()
+    const creditsUsedInRange = consumeLedger.docs.reduce((acc, entry) => {
+      const row = entry.data() as { delta?: number, createdAt?: { toMillis?: () => number } }
+      const at = row.createdAt?.toMillis?.() || 0
+      return at >= window.startMs && at <= window.endMs ? acc + Math.abs(Number(row.delta || 0)) : acc
+    }, 0)
+    const creditsSnap = await db.doc(`users/${userId}/billing/current`).get()
+    const credits = creditsSnap.data() as UserBilling | undefined
+    const usage = {
+      currentUsage: Number(user?.currentUsage || 0),
+      usageCap: Number(usageCapsByPlan[mapPlanIdToTier(user?.plan || "free")] || 0),
+      includedCredits: getIncludedCreditsAvailable(credits),
+      purchasedCredits: getPurchasedCreditsAvailable(credits),
+      creditsUsedInRange,
+    }
 
     const emptyResponse = {
       range: {
@@ -1929,21 +1766,8 @@ export const getBillingUsage = onCallv2(
         currency: "eur",
         totalInvoiced: 0,
         totalPaid: 0,
-        totalMeteredUnits: 0,
       },
-      meteredUsage: {
-        meters: [] as Array<{
-          meterId: string
-          displayName: string
-          eventName: string
-          aggregatedValue: number
-          timeline: Array<{
-            start: string
-            end: string
-            value: number
-          }>
-        }>,
-      },
+      usage,
       invoices: [] as Array<{
         id: string
         number: string | null
@@ -1967,7 +1791,7 @@ export const getBillingUsage = onCallv2(
       breakdown: [] as Array<{
         id: string
         date: string
-        source: "invoice_line" | "payment" | "meter"
+        source: "invoice_line" | "payment"
         category: string
         description: string
         quantity: number | null
@@ -1982,10 +1806,7 @@ export const getBillingUsage = onCallv2(
       return emptyResponse
     }
 
-    const secret: string | undefined = stripeSecrets.find((entry) => entry.name === "STRIPE_SECRET_KEY")?.value()
-    const stripe = getStripe(secret)
-
-    const [invoiceList, paymentIntentList, meterList] = await Promise.all([
+    const [invoiceList, paymentIntentList] = await Promise.all([
       stripe.invoices.list({
         customer: stripeCustomerId,
         created: createdRange,
@@ -1996,10 +1817,6 @@ export const getBillingUsage = onCallv2(
         created: createdRange,
         limit: 100,
       }),
-      stripe.billing.meters.list({
-        status: "active",
-        limit: 25,
-      }).catch(() => ({ data: [] as Stripe.Billing.Meter[] } as { data: Stripe.Billing.Meter[] })),
     ])
 
     const invoiceRows = invoiceList.data.map((invoice) => ({
@@ -2022,46 +1839,6 @@ export const getBillingUsage = onCallv2(
       currency: (paymentIntent.currency || "eur").toLowerCase(),
       createdAt: toIso(paymentIntent.created),
       description: getPaymentIntentDescription(paymentIntent),
-    }))
-
-    const meterWindowStart = alignToMinuteFloorSeconds(window.startMs)
-    const meterWindowEnd = alignToMinuteCeilSeconds(window.endMs)
-    const safeMeterWindow = ensureNonEmptyMeterWindow(meterWindowStart, meterWindowEnd)
-
-    const meterSummaryRows = await Promise.all(meterList.data.map(async (meter) => {
-      try {
-        const summaries = await stripe.billing.meters.listEventSummaries(meter.id, {
-          customer: stripeCustomerId,
-          start_time: safeMeterWindow.startSeconds,
-          end_time: safeMeterWindow.endSeconds,
-          value_grouping_window: window.grouping,
-          limit: 100,
-        })
-
-        const timeline = summaries.data.map((summary) => ({
-          start: toIso(summary.start_time),
-          end: toIso(summary.end_time),
-          value: Number(summary.aggregated_value || 0),
-        }))
-
-        const aggregatedValue = timeline.reduce((acc, item) => acc + item.value, 0)
-
-        return {
-          meterId: meter.id,
-          displayName: meter.display_name,
-          eventName: meter.event_name,
-          aggregatedValue,
-          timeline,
-        }
-      } catch {
-        return {
-          meterId: meter.id,
-          displayName: meter.display_name,
-          eventName: meter.event_name,
-          aggregatedValue: 0,
-          timeline: [],
-        }
-      }
     }))
 
     const breakdownFromInvoices = invoiceList.data.flatMap((invoice) => {
@@ -2103,29 +1880,13 @@ export const getBillingUsage = onCallv2(
       referenceId: payment.id,
     }))
 
-    const breakdownFromMeters = meterSummaryRows.flatMap((meter) =>
-      meter.timeline.map((item, timelineIndex) => ({
-        id: `${meter.meterId}_meter_${timelineIndex}`,
-        date: item.end,
-        source: "meter" as const,
-        category: "metered_usage",
-        description: `${meter.displayName} (${meter.eventName})`,
-        quantity: item.value,
-        unitAmount: null,
-        total: item.value,
-        currency: "units",
-        referenceId: meter.meterId,
-      })))
-
     const breakdown = [
       ...breakdownFromInvoices,
       ...breakdownFromPayments,
-      ...breakdownFromMeters,
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
     const totalInvoiced = invoiceRows.reduce((acc, row) => acc + row.total, 0)
     const totalPaid = invoiceRows.reduce((acc, row) => acc + row.amountPaid, 0)
-    const totalMeteredUnits = meterSummaryRows.reduce((acc, row) => acc + row.aggregatedValue, 0)
 
     return {
       range: {
@@ -2139,11 +1900,8 @@ export const getBillingUsage = onCallv2(
         currency: invoiceRows[0]?.currency || "eur",
         totalInvoiced,
         totalPaid,
-        totalMeteredUnits,
       },
-      meteredUsage: {
-        meters: meterSummaryRows,
-      },
+      usage,
       invoices: invoiceRows,
       payments: paymentRows,
       breakdown,
@@ -2200,17 +1958,10 @@ export const createCheckoutSession = onCallv2(
     // FIX #3: billing embedded in user doc — no subcollection read needed
     const billing = user?.billing as UserBilling | undefined
   assertBillingAllowed(user, getTokenRole(req))
-    const userEmail = user?.email || user?.providerData?.[0]?.email || ""
 
-    let customerId = user?.stripeId
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: userEmail,
-        metadata: { firebaseUID: userId },
-      })
-      customerId = customer.id
-      await db.doc(`users/${userId}`).set({ stripeId: customerId }, { merge: true })
-    }
+    // Resolves the stored id, or mints a customer in the account this key actually owns. A
+    // sandbox-era id is not retrievable with the live key, so it is dropped and replaced here.
+    const customerId = await ensureStripeCustomerId(stripe, userId, user)
 
     const selectedPlan = billingPlanCatalog.find((item) => item.id === planId)
     const selectedPack = creditPackCatalog.find((item) => item.id === planId)
@@ -2393,12 +2144,13 @@ export const createBillingPortalSession = onCallv2(
     const userSnap = await db.doc(`users/${userId}`).get()
     const user = userSnap.data() as Users | undefined
     assertBillingAllowed(user, getTokenRole(req))
-    if (!user?.stripeId) {
-      throw new HttpsError("failed-precondition", "Stripe customer not found")
-    }
+    // No dead end: a customer minted under the previously-configured account is not retrievable
+    // here, so resolve-or-mint instead of throwing - "add payment method" must still open the
+    // portal for every account that registered before livemode was switched on.
+    const customerId = await ensureStripeCustomerId(stripe, userId, user)
 
     const portal = await stripe.billingPortal.sessions.create({
-      customer: user.stripeId,
+      customer: customerId,
       return_url: returnUrl,
     })
 
@@ -2431,9 +2183,20 @@ export const resumeSubscriptionCancellation = onCallv2(
       throw new HttpsError("failed-precondition", "No active subscription found")
     }
 
-    const updatedSubscription = await stripe.subscriptions.update(subscriptionId, {
-      cancel_at_period_end: false,
-    })
+    let updatedSubscription: Stripe.Subscription
+    try {
+      updatedSubscription = await stripe.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: false,
+      })
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code !== "resource_missing") throw error
+      // Same failure class as the stored customer id: an id minted under the other
+      // Stripe account (test vs live) is meaningless to the current key. Clear it so
+      // the UI stops offering "resume" and the caller gets a clean error, not a 500.
+      console.warn(`[billing] subscription ${subscriptionId} does not exist in this account; clearing it for ${userId}`)
+      await userRef.set({ "subscriptionId": FieldValue.delete(), "billing.subscriptionId": null }, { merge: true })
+      throw new HttpsError("failed-precondition", "This subscription no longer exists for this account. Please choose a plan to continue.")
+    }
 
     const recurringPrice = updatedSubscription.items.data[0]?.price
     const recurringMatch = inferRecurringPlanFromPriceId(recurringPrice?.id, recurringPrice?.lookup_key)
@@ -2525,6 +2288,38 @@ export const verifyCheckoutSession = onCallv2(
     }
   }
 )
+
+/**
+ * Credits to claw back for a refund, pure so the spec can pin it.
+ *
+ * Only credit-pack and custom-credit charges granted *purchased* credits; subscription
+ * charges granted included credits that renew on the next invoice, so they are not reversed
+ * here. Pro-rata by refunded amount and clamped to what is actually left: reversing a spent
+ * balance would drive the ledger negative, which `applyBillingCreditMutation` rejects, and a
+ * rejected mutation fails the webhook for Stripe to retry forever.
+ *
+ * ponytail: pro-rata on money, not FIFO over ledger rows. Exact lot accounting needs a refund
+ * tied to the grant it reverses - worth it only if partial refunds of mixed packs get common.
+ *
+ * @param {*} charge Charge as the webhook delivered it.
+ * @param {*} packCredits Credits that charge originally granted.
+ * @param {*} availablePurchased Purchased credits the customer can still use.
+ * @return {*} Whole credits to reverse, never negative, never more than available.
+ */
+export const computeRefundCreditReversal = (
+  charge: Pick<Stripe.Charge, "amount" | "amount_refunded">,
+  packCredits: number,
+  availablePurchased: number,
+): number => {
+  const amount = Number(charge.amount || 0)
+  const refunded = Number(charge.amount_refunded || 0)
+  if (amount <= 0 || refunded <= 0 || packCredits <= 0) {
+    return 0
+  }
+
+  const granted = Math.floor(packCredits * Math.min(1, refunded / amount))
+  return Math.max(0, Math.min(granted, availablePurchased))
+}
 
 const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<void> => {
   switch (event.type) {
@@ -3039,9 +2834,16 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
   }
   case "charge.dispute.created": {
     const dispute = event.data.object as Stripe.Dispute
-    const disputeCustomerId = typeof dispute.charge === "string"?
-      dispute.charge : (dispute.charge as Stripe.Charge | null)?.customer || null
-    const disputeUid = dispute.metadata?.uid || await resolveUidByStripeCustomer(disputeCustomerId)
+    // `dispute.charge` arrives as an id in a webhook, so this used to hand a *charge* id to a
+    // lookup that matches on `users.stripeId`: it never matched, the guard below dropped the
+    // event, and disputes were recorded nowhere. Retrieve the charge (disputes are rare, one
+    // call) and read the uid off its metadata, which Checkout copies from the PaymentIntent.
+    const disputeCharge = typeof dispute.charge === "string" ?
+      await stripe.charges.retrieve(dispute.charge) :
+      dispute.charge as Stripe.Charge | null
+    const disputeUid = dispute.metadata?.uid ||
+      disputeCharge?.metadata?.uid ||
+      await resolveUidByStripeCustomer(disputeCharge?.customer)
     if (!disputeUid) {
       break
     }
@@ -3089,9 +2891,44 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
         paymentIntentId: charge.payment_intent || null,
       },
     })
+
+    // Take back the purchased credits this charge granted. Keyed on the cumulative refunded
+    // amount, so each partial refund reverses exactly once and a replay of the same event
+    // reverses nothing - the ledger's own idempotency check decides.
+    const checkoutType = charge.metadata?.checkoutType
+    const packCredits = checkoutType === "custom_credits" ?
+      Math.floor(Number(charge.metadata?.customCredits || 0)) :
+      checkoutType === "credits" ?
+        creditPackCatalog.find((item) => item.id === charge.metadata?.planId)?.credits || 0 :
+        0
+    const refundBillingSnap = await db.doc(`users/${refundUid}/billing/current`).get()
+    const refundReversal = computeRefundCreditReversal(
+      charge,
+      packCredits,
+      getPurchasedCreditsAvailable(refundBillingSnap.data() as UserBilling | undefined),
+    )
+    if (refundReversal > 0) {
+      await applyBillingCreditMutation({
+        uid: refundUid,
+        bucket: "purchased",
+        balanceDelta: -refundReversal,
+        ledger: {
+          source: "stripe_refund",
+          operation: "adjust",
+          reason: "refund_reversal",
+          idempotencyKey: `refund:${charge.id}:${refundedAmount}`,
+          metadata: {chargeId: charge.id, amountRefunded: refundedAmount, credits: refundReversal},
+        },
+      })
+    }
     break
   }
-  case "payment_method.attached": {
+  // The network (card account updater) or the PaymentMethod update API can change the brand,
+  // last4 and expiry of an already-attached card without detaching it, so the mirror below has
+  // to re-merge on those events too or /billing/paymentmethods shows a stale expiry.
+  case "payment_method.attached":
+  case "payment_method.updated":
+  case "payment_method.automatically_updated": {
     const pm = event.data.object as Stripe.PaymentMethod
     if (pm.type !== "card" || !pm.customer) {
       break
@@ -3111,7 +2948,9 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       expMonth: pm.card?.exp_month || null,
       expYear: pm.card?.exp_year || null,
       billingDetails: pm.billing_details?.email || null,
-      createdAt: FieldValue.serverTimestamp(),
+      // only the first sighting stamps the add time; an update must not move it
+      ...(event.type === "payment_method.attached" ?
+       { createdAt: FieldValue.serverTimestamp() } : {}),
     }, { merge: true })
     break
   }
@@ -3131,50 +2970,10 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     await detachedRef.delete().catch(() => undefined)
     break
   }
-  case "setup_intent.succeeded": {
-    const setupIntent = event.data.object as Stripe.SetupIntent
-    const setupUid = setupIntent.metadata?.uid || await resolveUidByStripeCustomer(setupIntent.customer)
-    if (!setupUid) {
-      break
-    }
-
-    // Update any pending setup intent cart references
-    const setupCarts = await db.collection(`users/${setupUid}/paymentcart`)
-      .where("setupIntentId", "==", setupIntent.id)
-      .limit(1)
-      .get()
-
-    if (!setupCarts.empty) {
-      await setupCarts.docs[0].ref.set({
-        status: "succeeded",
-        lastPaymentAttempt: new Date().toISOString(),
-      }, { merge: true })
-    }
-    break
-  }
-  case "setup_intent.canceled": {
-    const canceledSetup = event.data.object as Stripe.SetupIntent
-    const canceledSetupUid = canceledSetup.metadata?.uid || await resolveUidByStripeCustomer(canceledSetup.customer)
-    if (!canceledSetupUid) {
-      break
-    }
-
-    const canceledCarts = await db.collection(`users/${canceledSetupUid}/paymentcart`)
-      .where("setupIntentId", "==", canceledSetup.id)
-      .limit(1)
-      .get()
-
-    if (!canceledCarts.empty) {
-      await canceledCarts.docs[0].ref.set({
-        status: "canceled",
-        lastPaymentAttempt: new Date().toISOString(),
-      }, { merge: true })
-    }
-    break
-  }
   case "customer.updated": {
     const customer = event.data.object as Stripe.Customer
-    const custUid = customer.metadata?.firebaseUID || await resolveUidByStripeCustomer(customer.id)
+    const custUid = customer.metadata?.uid || customer.metadata?.firebaseUID ||
+      await resolveUidByStripeCustomer(customer.id)
     if (!custUid) {
       break
     }
@@ -3340,6 +3139,11 @@ type StripeWebhookBinding = {
   expectLivemode: boolean
 }
 
+// How long one delivery owns an event record. Long enough to cover a slow handler, short
+// enough that a retry after a crash is not blocked. Stored as a number, not a Timestamp, so
+// the comparison below needs no conversion.
+const STRIPE_EVENT_LEASE_MS = 5 * 60 * 1000
+
 // The response object `onRequest` hands its callback, derived so express does not have to be
 // imported just to name it.
 type StripeWebhookResponse = Parameters<HttpsFunction>[1]
@@ -3392,6 +3196,11 @@ async function processStripeWebhookRequest(
     }
 
     const eventRef = db.doc(`stripe_events/${event.id}`)
+    // Stripe can redeliver an event while the first delivery is still running, and without a
+    // claim both would apply it. The lease lets exactly one through: the loser answers 200 so
+    // Stripe stops retrying, and the winner is already applying it. The lease expires, so a
+    // genuine retry after a crash still proceeds.
+    const leaseUntilMs = Date.now() + STRIPE_EVENT_LEASE_MS
     try {
       await eventRef.create({
         type: event.type,
@@ -3401,13 +3210,19 @@ async function processStripeWebhookRequest(
         processed: false,
         failed: false,
         retryCount: 0,
+        leaseUntilMs,
         processingStartedAt: FieldValue.serverTimestamp(),
       })
     } catch {
       const existingEvent = await eventRef.get()
-      const existingData = existingEvent.data() as { processed?: boolean } | undefined
+      const existingData = existingEvent.data() as { processed?: boolean, leaseUntilMs?: number } | undefined
       if (existingData?.processed === true) {
         res.status(200).send("Already processed")
+        return
+      }
+
+      if ((existingData?.leaseUntilMs || 0) > Date.now()) {
+        res.status(200).send("Already in progress")
         return
       }
 
@@ -3415,6 +3230,7 @@ async function processStripeWebhookRequest(
         failed: false,
         lastRetryAt: FieldValue.serverTimestamp(),
         retryCount: FieldValue.increment(1),
+        leaseUntilMs,
         processingStartedAt: FieldValue.serverTimestamp(),
       }, { merge: true })
     }
@@ -3426,6 +3242,7 @@ async function processStripeWebhookRequest(
         type: event.type,
         processed: true,
         failed: false,
+        leaseUntilMs: 0,
         lastError: null,
         processedAt: FieldValue.serverTimestamp(),
       }, { merge: true })
@@ -3437,6 +3254,8 @@ async function processStripeWebhookRequest(
       await eventRef.set({
         processed: false,
         failed: true,
+        // Released so Stripe's own retry (or the admin replay) is not locked out.
+        leaseUntilMs: 0,
         lastError: errorMessage,
         failedAt: FieldValue.serverTimestamp(),
       }, { merge: true })
@@ -3478,15 +3297,12 @@ export const updateUsage = onDocumentCreated(
   {
     document: "projects/{projectId}",
     database: dbName,
-    secrets: stripeSecrets,
   },
   async (event) => {
     const snap = event.data
     if (!snap) {
       return
     }
-    const secret: string | undefined = stripeSecrets.find((secret) => secret.name === "STRIPE_SECRET_KEY")?.value()
-    const stripe = getStripe(secret)
     const project = snap.data() as { userId?: string }
     const userId = project?.userId
     if (!userId) {
@@ -3497,35 +3313,6 @@ export const updateUsage = onDocumentCreated(
 
     const userDoc = await userRef.get()
     const user = userDoc.data()
-
-    if (!user?.stripeId || !user?.itemId) {
-      return
-    }
-
-    await stripe.billing.meterEvents.create(
-      {
-        event_name: "blaze_plan_monthly",
-        payload: {
-          "stripe_customer_id": user.stripeId,
-          "value": "1",
-        },
-        timestamp: Math.floor(snap.createTime.toDate().getTime() / 1000),
-      },
-      {
-        idempotencyKey: snap.id,
-      },
-    )
-    await stripe.subscriptionItems.createUsageRecord(
-      user.itemId,
-      {
-        quantity: 1,
-        action: "increment",
-        timestamp: Math.floor(snap.createTime.toDate().getTime() / 1000),
-      },
-      {
-        idempotencyKey: snap.id,
-      },
-    )
 
     const nextUsage = Number(user?.currentUsage || 0) + 1
     const userPlan = mapPlanIdToTier(user?.plan || "free")
@@ -3944,9 +3731,16 @@ export const requestStripeEventRetry = onCallv2(
       throw new HttpsError("not-found", "Event not found")
     }
 
-    const eventData = eventSnap.data() as { processed?: boolean, failed?: boolean } | undefined
+    const eventData = eventSnap.data() as { processed?: boolean, failed?: boolean, leaseUntilMs?: number } | undefined
     if (eventData?.processed === true && eventData?.failed !== true) {
       throw new HttpsError("failed-precondition", "Event already processed successfully")
+    }
+
+    // The handler that owns this event is still running, so replaying it now would apply it
+    // twice. No lease is taken here: a manual replay is one operator, and if it fails the
+    // failure path clears nothing, so there is no lease to strand.
+    if ((eventData?.leaseUntilMs || 0) > Date.now()) {
+      throw new HttpsError("failed-precondition", "Event is being processed right now")
     }
 
     const secret: string | undefined = stripeSecrets.find((entry) => entry.name === "STRIPE_SECRET_KEY")?.value()

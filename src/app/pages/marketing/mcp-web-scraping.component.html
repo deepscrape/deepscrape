@@ -1,0 +1,401 @@
+<div class="min-h-screen section-dark relative flex flex-col">
+  <!-- Decorative backdrop (landpage research-lab language) -->
+  <div class="absolute inset-0 grid-lines pointer-events-none opacity-15 dark:opacity-50"></div>
+  <div class="absolute inset-0 overflow-hidden pointer-events-none">
+    <div class="absolute -top-24 -right-24 w-96 h-96 orb-cyan-md rounded-full blur-3xl"></div>
+    <div class="absolute -bottom-24 -left-24 w-96 h-96 orb-rose-md rounded-full blur-3xl"></div>
+  </div>
+
+  <app-landing-subheader></app-landing-subheader>
+
+  <main class="relative z-10 flex-1 w-full mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-14">
+    <div class="glass rounded-2xl p-5 sm:p-10 border border-white/5 dark:border-white/10 shadow-xl">
+      <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">
+        MCP web scraping
+      </p>
+      <h1 class="text-3xl sm:text-5xl font-display font-bold tracking-tight text-gray-900 dark:text-white">
+        An MCP web scraping server your agent can actually drive
+      </h1>
+      <p class="mt-4 text-lg leading-8 text-gray-600 dark:text-gray-300">
+        The Model Context Protocol lets a model call tools instead of you wiring scripts together. An
+        MCP web scraping server is what happens when one of those tools is a real browser: your agent
+        reads a page, decides what to do, and hands back structured data. deepscrape runs that server
+        as a managed service, so the browser pool, proxies and stealth profiles are somebody else's
+        problem.
+      </p>
+
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a
+          [routerLink]="['/service/signup']"
+          class="rounded-lg bg-cyan-600 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-cyan-500"
+          >Start free</a
+        >
+        <a
+          [routerLink]="['/']"
+          fragment="pricing"
+          class="rounded-lg border border-cyan-600/40 px-5 py-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-500/10 dark:text-cyan-300"
+          >See pricing</a
+        >
+      </div>
+
+      <div class="prose prose-gray mt-10 max-w-none space-y-8 text-[15px] leading-7 text-gray-600 dark:text-gray-300">
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">What MCP changes about scraping</h2>
+          <p>
+            A conventional scraper is a program you write. You inspect a page, choose selectors, and
+            re-inspect every time the markup shifts. An MCP scraping server inverts that: it exposes
+            intent-shaped tools, and the model decides which one to call next.
+          </p>
+          <ul class="list-disc space-y-2 pl-5">
+            <li>
+              <strong>Tools, not selectors.</strong> The agent asks to <em>observe</em> a page or
+              <em>extract</em> prices; it does not need a CSS path that breaks next Tuesday.
+            </li>
+            <li>
+              <strong>Recovery is in the loop.</strong> Every navigation reports the challenge it hit,
+              so the model can escalate from a fast engine to a full browser instead of failing silently.
+            </li>
+            <li>
+              <strong>Structured output is the default.</strong> Results come back as typed JSON, ready
+              for the next tool call rather than for a parser you maintain.
+            </li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Two engines, one platform</h2>
+          <p>
+            Most scraping products pick a side: a pipe for agents, or a crawler for volume. deepscrape
+            runs both behind one API and one credit balance.
+          </p>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            webrain — the agent engine
+          </h3>
+          <p>
+            <strong>webrain</strong> is the MCP-native engine that powers AI chat and autonomous
+            agents. It is open source (MIT) and local-first, shipped as a single Rust binary of roughly
+            22&nbsp;MB with no Node, Python or Docker runtime. It is the same engine available at
+            <a
+              [href]="webrainDocsUrl"
+              target="_blank"
+              rel="noopener"
+              class="font-medium text-cyan-700 underline hover:text-cyan-600 dark:text-cyan-300"
+              >docs.webrayn.dev</a
+            >
+            — you can install it yourself, or let deepscrape run it for you.
+          </p>
+          <ul class="list-disc space-y-2 pl-5">
+            <li><strong>17 intent-based tools</strong> behind one MCP surface, over stdio or HTTP.</li>
+            <li>
+              <strong>Three browser engines plus a no-browser path</strong>, all behind one CDP backend.
+            </li>
+            <li>
+              <strong>Offline reading.</strong> Video transcripts run on a bundled whisper build and
+              vision on a local Qwen3-VL-2B model, so no cloud key is required.
+            </li>
+          </ul>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            Crawl4AI — the crawling engine
+          </h3>
+          <p>
+            <strong>Crawl4AI</strong> is the Python crawler package that handles breadth: BFS, DFS and
+            BestFirst traversal, crash recovery and a prefetch mode for large jobs. It drives the
+            hosted playground and the CrawlPack machines you can deploy into your own account.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">What your agent can call</h2>
+          <p>
+            Each tool maps to an intent rather than a browser primitive. A representative slice of the
+            surface:
+          </p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead>
+                <tr class="border-b border-gray-300 dark:border-gray-700">
+                  <th scope="col" class="py-3 pr-4 font-semibold text-gray-900 dark:text-white">Tool</th>
+                  <th scope="col" class="py-3 font-semibold text-gray-900 dark:text-white">What it is for</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">navigate</td>
+                  <td class="py-3">Load a URL and report the challenge state it encountered.</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">observe</td>
+                  <td class="py-3">Return a DOM or accessibility snapshot for the model to reason over.</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">interact</td>
+                  <td class="py-3">Click, type and scroll to reach content behind a step or a tab.</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">extract</td>
+                  <td class="py-3">Produce structured rows via autoschema, schema, regex, table or JSON-LD.</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">batch</td>
+                  <td class="py-3">Fan a single operation across many URLs in parallel.</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">crawl</td>
+                  <td class="py-3">Spider or sitemap traversal with checkpoint and resume.</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">session</td>
+                  <td class="py-3">Log in against a persistent profile and reuse it across calls.</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-mono text-xs">serp</td>
+                  <td class="py-3">Typed search results across five engines, two of them browserless.</td>
+                </tr>
+                <tr>
+                  <td class="py-3 pr-4 font-mono text-xs">watch</td>
+                  <td class="py-3">Transcribe a video and sample frames for the model to inspect.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+            Extraction without an LLM in the loop
+          </h2>
+          <p>
+            The expensive way to extract data is to paste a page into a model and ask for JSON. The
+            deterministic way is to let the engine probe the DOM and generate the schema itself. That
+            second path is what <span class="font-mono text-xs">autoschema</span> does, and it costs
+            nothing per row.
+          </p>
+          <p>
+            Measured on a live storefront, the agent-driven route returned 407 unique products in about
+            17 tool calls for roughly 46,000 tokens. Pointing the deterministic extractor at the same
+            store produced the same 407 products with <strong>zero tokens</strong> and no model in the
+            loop. Which one you want depends on whether the page needs judgement or just parsing.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Four ways to load a page</h2>
+          <p>
+            Sending a full browser at a static HTML page is the most common way to waste money. The
+            engine can be selected per operation:
+          </p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead>
+                <tr class="border-b border-gray-300 dark:border-gray-700">
+                  <th scope="col" class="py-3 pr-4 font-semibold text-gray-900 dark:text-white">Engine</th>
+                  <th scope="col" class="py-3 pr-4 font-semibold text-gray-900 dark:text-white">Best for</th>
+                  <th scope="col" class="py-3 font-semibold text-gray-900 dark:text-white">Trade-off</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Chrome</td>
+                  <td class="py-3 pr-4">SPAs, challenges, screenshots</td>
+                  <td class="py-3">Heaviest; the safe default</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Obscura</td>
+                  <td class="py-3 pr-4">Fast batch work on unchallenged JS pages</td>
+                  <td class="py-3">No paint engine, so no screenshots</td>
+                </tr>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Lightpanda</td>
+                  <td class="py-3 pr-4">Lightweight reads with a real accessibility tree</td>
+                  <td class="py-3">Screenshots come back as a placeholder</td>
+                </tr>
+                <tr>
+                  <td class="py-3 pr-4 font-medium text-gray-900 dark:text-white">Plain HTTP</td>
+                  <td class="py-3 pr-4">Static HTML with no JavaScript and no auth</td>
+                  <td class="py-3">Cannot execute scripts at all</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+            The runtime every run inherits
+          </h2>
+          <p>
+            The engine is the visible half. The half that decides whether a job survives contact with
+            the open web is the runtime underneath it:
+          </p>
+          <ul class="list-disc space-y-2 pl-5">
+            <li>
+              <strong>A memory-adaptive dispatcher.</strong> Work is scheduled against a pre-warmed
+              browser pool, so runs do not pay a cold-start penalty per page.
+            </li>
+            <li>
+              <strong>Persistent stealth profiles.</strong> Real browser profiles that survive between
+              runs, rather than a fresh fingerprint every request.
+            </li>
+            <li>
+              <strong>An encrypted credential vault.</strong> Logins are stored with AES-256-GCM, with
+              optional TOTP, and cookies transfer between engines.
+            </li>
+            <li>
+              <strong>Proxy rotation with real geography.</strong> Egress across 40+ countries so you
+              can see the regional version of a page rather than a generic one.
+            </li>
+            <li>
+              <strong>Challenge handling as a first-class signal.</strong> Cloudflare, Turnstile and
+              reCAPTCHA gates are reported and cleared, not swallowed.
+            </li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+            Run it yourself, or run it managed
+          </h2>
+          <p>
+            Being straight about this matters. webrain is MIT-licensed and local-first: you can install
+            the binary, point Claude, Cursor, Copilot, Codex or Gemini at it over MCP, and pay nothing.
+            If that is all you need, take it.
+          </p>
+          <p>
+            deepscrape is for the part that starts after that: you would rather not run a browser fleet,
+            rotate your own proxies, keep profiles patched, or own the uptime. You get the same engines
+            as a managed API, with cloud browsers, residential egress and stealth profiles included,
+            billed in credits. Free includes 100 credits per month; Pro is €19.99 for 5,000. If you want
+            the crawler in your own infrastructure instead, CrawlPack machines deploy into your account.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Frequently asked</h2>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            What is an MCP web scraping server?
+          </h3>
+          <p>
+            It is a server that exposes scraping and browser automation as MCP tools, so an LLM client
+            can drive a browser directly. Instead of writing selectors, you describe the outcome and
+            the model selects tools such as navigate, observe, interact and extract.
+          </p>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            Which MCP clients does it work with?
+          </h3>
+          <p>
+            Any MCP client. That includes Claude, Claude Code, Cursor, GitHub Copilot, Codex and Gemini.
+            It speaks stdio and HTTP, so registration is a couple of lines in the client's MCP config.
+          </p>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            Do I need to run Node, Python or Docker?
+          </h3>
+          <p>
+            Not for the agent engine. webrain is one static Rust binary; the browsers it drives download
+            on demand into a cache directory. The crawling engine is a Python package, which is one
+            reason people hand that half to us instead.
+          </p>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            Can it scrape pages that require a login?
+          </h3>
+          <p>
+            Yes. Credentials live in an encrypted vault with optional TOTP, and a persistent browser
+            profile carries the session across requests and between runs. That covers the common case of
+            a page that only renders once you are authenticated.
+          </p>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            Does every extraction need an LLM?
+          </h3>
+          <p>
+            No, and it usually should not. Deterministic modes including autoschema, schema, regex,
+            table, JSON-LD and BM25 run with no model and no token cost. Reserve the agent loop for
+            pages that genuinely need judgement.
+          </p>
+
+          <h3 class="mt-6 text-base font-semibold text-gray-900 dark:text-white">
+            Is webrain the same thing as deepscrape?
+          </h3>
+          <p>
+            No. webrain is the open-source engine, available at
+            <a
+              [href]="webrainDocsUrl"
+              target="_blank"
+              rel="noopener"
+              class="font-medium text-cyan-700 underline hover:text-cyan-600 dark:text-cyan-300"
+              >docs.webrayn.dev</a
+            >
+            and on
+            <a
+              [href]="webrainRepoUrl"
+              target="_blank"
+              rel="noopener"
+              class="font-medium text-cyan-700 underline hover:text-cyan-600 dark:text-cyan-300"
+              >GitHub</a
+            >. deepscrape is the managed platform that runs it alongside the Crawl4AI crawler, with
+            hosting, proxies, profiles and billing handled for you.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Where to next</h2>
+          <ul class="list-disc space-y-2 pl-5">
+            <li>
+              <a
+                [routerLink]="['/deep-scraper']"
+                class="font-medium text-cyan-700 underline hover:text-cyan-600 dark:text-cyan-300"
+                >The deep scraper</a
+              >
+              — what "deep" means when a page renders client-side and fights back.
+            </li>
+            <li>
+              <a
+                [routerLink]="['/alternatives/crawl4ai']"
+                class="font-medium text-cyan-700 underline hover:text-cyan-600 dark:text-cyan-300"
+                >deepscrape vs self-hosted Crawl4AI</a
+              >
+              — the honest comparison if you are already running the Python package.
+            </li>
+            <li>
+              <a
+                [routerLink]="['/']"
+                class="font-medium text-cyan-700 underline hover:text-cyan-600 dark:text-cyan-300"
+                >Architecture and pricing</a
+              >
+              — the full data flow, the two engines and the credit model in one place.
+            </li>
+            <li>
+              <a
+                [routerLink]="['/contact']"
+                class="font-medium text-cyan-700 underline hover:text-cyan-600 dark:text-cyan-300"
+                >Talk to us</a
+              >
+              — for volume, procurement or a workload you are not sure we handle.
+            </li>
+          </ul>
+        </section>
+      </div>
+
+      <div class="mt-10 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+          Point your agent at a real browser
+        </h2>
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+          Free includes 100 credits per month, no card required. Bring the MCP client you already use.
+        </p>
+        <a
+          [routerLink]="['/service/signup']"
+          class="mt-4 inline-block rounded-lg bg-cyan-600 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-cyan-500"
+          >Start free</a
+        >
+      </div>
+    </div>
+  </main>
+
+  <app-footer></app-footer>
+</div>

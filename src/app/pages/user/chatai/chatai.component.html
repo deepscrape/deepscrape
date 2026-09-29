@@ -1,0 +1,71 @@
+<div class="flex min-h-0 grow flex-col gap-4 p-4">
+  <div
+    #scroller
+    class="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray2 bg-slate-50/30 p-4 dark:border-gray5 dark:bg-gray7/80">
+
+    @if (messages().length === 0) {
+      <p class="text-sm text-gray6 dark:text-gray2">
+        {{ 'CHAT.EMPTY_STATE' | translate }}
+      </p>
+    }
+
+    <ul class="flex flex-col gap-4">
+      @for (message of messages(); track $index) {
+        <li class="flex" [class.justify-end]="message.role === 'user'">
+          @if (message.role === 'user') {
+            <p class="max-w-[80%] whitespace-pre-wrap rounded-xl bg-cyan-600 px-4 py-2 text-white">
+              {{ message.content }}
+            </p>
+          } @else {
+            <div class="max-w-[80%] rounded-xl border border-gray2 bg-white px-4 py-2 dark:border-gray5 dark:bg-gray6">
+              @if (message.content) {
+                <markdown
+                  class="text-base text-gray6 dark:text-gray2"
+                  clipboard
+                  emoji
+                  [clipboardButtonComponent]="clipboardButton"
+                  [data]="message.content"></markdown>
+              } @else {
+                <mat-spinner [diameter]="18"></mat-spinner>
+              }
+            </div>
+          }
+        </li>
+      }
+    </ul>
+
+    @if (failed()) {
+      <p class="mt-4 text-sm text-rose-600 dark:text-rose-300" role="alert">
+        {{ 'CHAT.ERROR' | translate }}
+      </p>
+    }
+  </div>
+
+  <div class="flex flex-col gap-2">
+    <!-- Opens upward: it sits at the bottom of the page, so a downward menu would clip. -->
+    <app-dropdown
+      [options]="model"
+      [control]="modelAI | formControl"
+      [padding]="'p-2'"
+      [position]="'top'"
+      dropDownName="CHAT.MODEL_LABEL"></app-dropdown>
+
+    <form class="flex items-end gap-2" (ngSubmit)="send()">
+      <textarea
+        name="draft"
+        rows="2"
+        [attr.aria-label]="'CHAT.PLACEHOLDER' | translate"
+        [placeholder]="'CHAT.PLACEHOLDER' | translate"
+        [ngModel]="draft()"
+        (ngModelChange)="draft.set($event)"
+        (keydown)="onKeydown($event)"
+        class="min-h-11 grow resize-none rounded-xl border border-gray2 bg-white px-3 py-2 text-gray6 outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 dark:border-gray5 dark:bg-gray6 dark:text-white"></textarea>
+      <button
+        type="submit"
+        [disabled]="streaming() || !draft().trim()"
+        class="rounded-xl bg-cyan-600 px-4 py-2 font-medium text-white transition hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+        {{ (streaming() ? 'CHAT.SENDING' : 'CHAT.SEND') | translate }}
+      </button>
+    </form>
+  </div>
+</div>

@@ -12,6 +12,11 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } from "@simplewebauthn/server"
+import type {
+  AuthenticationResponseJSON,
+  AuthenticatorTransportFuture,
+  RegistrationResponseJSON,
+} from "@simplewebauthn/server"
 import { db, auth as adminAuth } from "../app/config"
 import { redis } from "../app/cacheConfig"
 import { PASSKEY_CHALLENGE_PREFIX, PASSKEY_CHALLENGE_TTL_SECONDS } from "../../../src/config/redis-keys"
@@ -29,21 +34,52 @@ const RP_ID = new URL(RP_ORIGIN).hostname
  * Helper: retrieve stored passkey credentials for a user from Firestore.
  */
 /**
+ * One stored passkey, as `verifyWebAuthnRegistration` writes it. Declared so the
+ * exclude/allow lists and the assertion lookup read the same field names the client's
+ * `WebAuthnCredential` expects, instead of three separate `any` casts.
+ */
+interface StoredPasskeyCredential {
+  id: string
+  /** Always written by `verifyWebAuthnRegistration`; required so callers need no guards. */
+  credentialId: string
+  publicKey: string
+  counter: number
+  deviceName?: string
+  transports?: string[]
+  createdAt?: string
+  lastUsedAt?: string
+}
+
+/**
  * getPasskeyCredentials
  * @param {*} userId
  */
-async function getPasskeyCredentials(userId: string) {
+async function getPasskeyCredentials(userId: string): Promise<StoredPasskeyCredential[]> {
   const snapshot = await db
     .collection("users")
     .doc(userId)
     .collection("passkey_credentials")
     .get()
 
-  return snapshot.docs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-    createdAt: doc.data().createdAt?.toDate?.()?.toISOString?.() || doc.data().createdAt,
-  }))
+  return snapshot.docs.map((doc) => {
+    const data = doc.data()
+    const asIso = (value: unknown): string | undefined => {
+      if (typeof value === "string") return value
+      const stamped = value as { toDate?: () => Date } | undefined
+      return stamped?.toDate?.().toISOString()
+    }
+
+    return {
+      id: doc.id,
+      credentialId: data.credentialId as string,
+      publicKey: data.publicKey as string,
+      counter: data.counter as number,
+      deviceName: data.deviceName as string | undefined,
+      transports: data.transports as string[] | undefined,
+      createdAt: asIso(data.createdAt),
+      lastUsedAt: asIso(data.lastUsedAt),
+    }
+  })
 }
 
 /**
@@ -129,8 +165,8 @@ export const generateWebAuthnRegistrationOptions = onCall(
       // Get existing credentials IDs to exclude from re-registration
       const existingCreds = await getPasskeyCredentials(userId)
       const excludeCredentials = existingCreds
-        .filter((c: any) => c.credentialId)
-        .map((c: any) => ({
+        .filter((c) => c.credentialId)
+        .map((c) => ({
           id: c.credentialId,
           transports: ["internal" as const],
         }))
@@ -230,7 +266,7 @@ export const verifyWebAuthnRegistration = onCall(
       await challengeDoc.ref.delete()
 
       const verification = await verifyRegistrationResponse({
-        response: credential as any,
+        response: credential as unknown as RegistrationResponseJSON,
         expectedChallenge,
         expectedOrigin: RP_ORIGIN,
         expectedRPID: RP_ID,
@@ -302,8 +338,8 @@ export const generateWebAuthnAuthenticationOptions = onCall(
         const existingCreds = await getPasskeyCredentials(userId)
 
         const allowCredentials = existingCreds
-          .filter((c: any) => c.credentialId)
-          .map((c: any) => ({
+          .filter((c) => c.credentialId)
+          .map((c) => ({
             id: c.credentialId,
             transports: ["internal" as const],
           }))
@@ -401,7 +437,14 @@ export const verifyWebAuthnAuthentication = onCall(
           throw new Error("No pending authentication challenge found")
         }
 
-        expectedChallenge = challengeDoc.data()!.challenge
+        // `exists` does not narrow the data: a doc created without `challenge` (an older
+        // shape, or a half-written one) would otherwise be asserted away with a `!`.
+        const challengeData = challengeDoc.data()
+        if (!challengeData?.challenge) {
+          throw new Error("No pending authentication challenge found")
+        }
+
+        expectedChallenge = challengeData.challenge
         await challengeDoc.ref.delete()
       } else {
         expectedChallenge = readChallengeFromClientData(credential.response.clientDataJSON)
@@ -428,7 +471,7 @@ export const verifyWebAuthnAuthentication = onCall(
       }
 
       const credDoc = credSnapshot.docs[0]
-      const storedCred = credDoc.data() as any
+      const storedCred = credDoc.data() as StoredPasskeyCredential
       const ownerUserId = userId || credDoc.ref.parent.parent?.id || ""
 
       if (!ownerUserId) {
@@ -436,7 +479,7 @@ export const verifyWebAuthnAuthentication = onCall(
       }
 
       const verification = await verifyAuthenticationResponse({
-        response: credential as any,
+        response: credential as unknown as AuthenticationResponseJSON,
         expectedChallenge,
         expectedOrigin: RP_ORIGIN,
         expectedRPID: RP_ID,
@@ -444,7 +487,7 @@ export const verifyWebAuthnAuthentication = onCall(
           id: credentialIdB64,
           publicKey: new Uint8Array(Buffer.from(storedCred.publicKey, "base64url")),
           counter: storedCred.counter,
-          transports: storedCred.transports || ["internal"],
+          transports: (storedCred.transports as AuthenticatorTransportFuture[] | undefined) || ["internal"],
         },
       })
 

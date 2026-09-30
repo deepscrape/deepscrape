@@ -840,7 +840,11 @@ export async function guestTracker(req: Request, res: Response, next: NextFuncti
     console.log("guestTracker: Incoming request - Guest ID from cookie:", guestId) // Debug log
   }
 
-  const user = req.app.locals["user"] as string | null
+  // Identity comes from the VERIFIED token, never from the shared application
+  // locals: `req.app.locals` is process-wide, so a read there could observe a
+  // different request's credential and mis-classify a guest as signed in (or the
+  // reverse). `EventsAPIProxy.optionalJwtAuth` is what populates `req.user`.
+  const user = req.user
   const isUser = !!user
 
   // Only track guests, skip if authenticated or has aid cookie

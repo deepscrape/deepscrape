@@ -60,4 +60,15 @@ export interface CrawlResult {
   status: string;
   message?: string;
   expanded?: boolean;
+  /**
+   * Anti-bot gate the worker could not pass: `cloudflare_challenge`, `blocked` or
+   * `captcha`. `core/functions/crawl.fun.ts` owns the value set and the classifier;
+   * `null`/absent means the page loaded.
+   *
+   * Deliberately a plain string rather than that module's `CrawlChallenge` union, to
+   * keep types from importing functions. `crawlOutcome()` is what narrows it, and it
+   * treats ANY non-empty value as a gate, so a value this union does not know yet
+   * degrades to "blocked" rather than to "ok".
+   */
+  challenge?: string | null;
 }

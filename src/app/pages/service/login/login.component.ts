@@ -110,7 +110,9 @@ export class LoginComponent  {
 
   // Component properties
   /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
-  protected readonly apexUrl: string = ORIGINS.marketing;
+  // ponytail: was ORIGINS.marketing — see app-service-layout: prerendered, so the origin is
+  // named rather than derived, and it is the app one so the logo cannot surface the landing page.
+  protected readonly homeUrl: string = ORIGINS.app + '/dashboard';
   /** Manages the loading state for various authentication methods. */
   protected loading: Loading;
   /** Reactive form group for handling login input fields (identifier and password). */
@@ -644,9 +646,12 @@ export class LoginComponent  {
    */
   ngAfterViewInit(): void {
     // Recaptcha initialization might be placed here if it depends on DOM elements being present.
-    // if (!isPlatformBrowser(this.platformId)) {
-    //   return;
-    // }
+    // The guard is load-bearing: this page is PRERENDERED, and `new RecaptchaVerifier(...)`
+    // reads browser-only Auth internals, so without it every build logs
+    // `auth/operation-not-supported-in-this-environment` for `/service/login`.
+    if (!isPlatformBrowser(this.platformId)) {
+      return;
+    }
     this.initializeRecaptcha()
   }
 

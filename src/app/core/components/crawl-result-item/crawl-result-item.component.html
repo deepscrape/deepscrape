@@ -23,7 +23,52 @@
     [hidden]="!crawlResult.expanded"
     [@expandCollapse]="crawlResult.expanded ? 'expanded' : 'collapsed'"
     class="mt-4">
-    <!-- Sub-tab Navigation -->
+    <!--
+      Outcome state. "The site blocked us", "the site returned nothing" and "the
+      request failed" are three different things; without this they all look like
+      a successful scrape of an empty page.
+    -->
+    @if (outcome !== 'ok') {
+      <div
+        class="rounded-lg border p-4 text-sm"
+        [ngClass]="{
+          'border-rose-400/60 bg-rose-50/70 text-rose-900 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-100': outcome !== 'empty',
+          'border-gray-300/70 bg-slate-50/60 text-gray5 dark:border-gray5/60 dark:bg-gray6/60 dark:text-gray-300': outcome === 'empty'
+        }">
+        <div class="flex items-start gap-3">
+          <mat-icon
+            class="shrink-0"
+            [ngClass]="{ 'text-rose-600 dark:text-rose-300': outcome !== 'empty', 'text-gray5 dark:text-gray-300': outcome === 'empty' }">
+            {{ outcome === 'challenge' ? 'block' : (outcome === 'empty' ? 'search_off' : 'error_outline') }}
+          </mat-icon>
+          <div class="space-y-1">
+            <p class="font-semibold">
+              @switch (outcome) {
+                @case ('challenge') { {{ gateTitleKey | translate }} }
+                @case ('empty') { {{ 'CR_RES.OUTCOME_EMPTY_TITLE' | translate }} }
+                @default { {{ 'CR_RES.OUTCOME_FAILED_TITLE' | translate }} }
+              }
+            </p>
+            <p>
+              @switch (outcome) {
+                @case ('challenge') { {{ 'CR_RES.OUTCOME_CHALLENGE_BODY' | translate }} }
+                @case ('empty') { {{ 'CR_RES.OUTCOME_EMPTY_BODY' | translate }} }
+                @default { {{ 'CR_RES.OUTCOME_FAILED_BODY' | translate }} }
+              }
+            </p>
+            @if (outcome === 'challenge') {
+              <p class="font-medium">
+                {{ 'CR_RES.OUTCOME_CHALLENGE_ACTION' | translate }}
+              </p>
+            }
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- Sub-tab Navigation. Hidden while gated: the gate notice is the only
+         truthful thing to show about a page we never read. -->
+    @if (!isGated) {
     <div
       class="flex flex-wrap gap-2 mb-4 border-b border-gray-300 dark:border-gray-700">
       @for (tab of subTabs; track tab) {
@@ -39,10 +84,19 @@
         </button>
       }
     </div>
+    }
 
     <!-- Sub-tab Content -->
     <div class="sub-tab-content">
-      @switch (activeSubTab) {
+      @switch (isGated ? '__gate' : activeSubTab) {
+        @case ('__gate') {
+          <div
+            class="rounded-lg border border-rose-400/60 bg-rose-50/70 p-4 text-sm text-rose-900 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-100">
+            <p class="font-semibold">{{ gateTitleKey | translate }}</p>
+            <p class="mt-1">{{ 'CR_RES.OUTCOME_CHALLENGE_BODY' | translate }}</p>
+            <p class="mt-2 font-medium">{{ 'CR_RES.OUTCOME_CHALLENGE_ACTION' | translate }}</p>
+          </div>
+        }
         @case ('overview') {
           <div>
             <div

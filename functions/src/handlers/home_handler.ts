@@ -181,7 +181,7 @@ const logSuspiciousDeviceMismatch = async (params: {
 export const heartbeat = async (req: Request, res: Response) => {
     try {
         const parsedData = req.cookies["aid"] ? JSON.parse(req.cookies["aid"]) :
-            req.app.locals["user"]
+            req.authToken
 
         // ponytail: identity comes from the VERIFIED token only. `aid` is a
         // JS-readable, client-written cookie and the /event router had no auth

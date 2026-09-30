@@ -137,6 +137,89 @@ export function switchPackageIcon(packKey: string, browserType: string = 'playwr
 
 }
 
+/**
+ * A gate the crawler could not pass. The worker reports this on every navigate;
+ * `null`/absent means the page loaded. `captcha` covers the interactive widgets
+ * (Turnstile / reCAPTCHA / hCaptcha) that only a real Chrome profile can claim.
+ */
+export type CrawlChallenge = 'cloudflare_challenge' | 'blocked' | 'captcha'
+
+/** What a crawl result actually IS, as opposed to what it contains. */
+export type CrawlOutcome = 'ok' | 'empty' | 'challenge' | 'failed'
+
+/**
+ * The minimal shape the classifier reads.
+ *
+ * Deliberately structural rather than typed against a `CrawlResult`: this repo
+ * declares `CrawlResult` in both `crawl.interface.ts` and `crawl-result.type.ts`
+ * and re-exports both from the types barrel, so which definition a caller gets
+ * depends on barrel order. Reading fields keeps this correct either way, and
+ * keeps the new state from having to be added to every duplicate.
+ */
+export interface CrawlOutcomeInput {
+    challenge?: CrawlChallenge | string | null
+    success?: boolean
+    status_code?: number
+    error_message?: string
+    markdown?: string | Record<string, unknown> | null
+    cleaned_html?: string | null
+    html?: string | null
+    fit_html?: string | null
+}
+
+/**
+ * Tells "the site blocked us" apart from "the site returned nothing".
+ *
+ * The challenge check runs FIRST and outranks any body in the same response: a
+ * Cloudflare interstitial is valid HTML with a real title and markdown, so every
+ * body-based test reads it as a successful scrape. That is the failure this
+ * exists to prevent — a gate must never be extracted as content.
+ *
+ * Any non-empty `challenge` counts as a gate, not just the three known values: a
+ * new value from the worker should degrade to "blocked", never to "ok".
+ *
+ * ponytail: with the field absent (a crawl4ai-shaped response) a 403 reads as
+ * `failed` rather than `challenge`. The worker only populates the field itself,
+ * so the discriminator is authoritative exactly when it is set; calling a 403 a
+ * gate on the provider path would be a guess.
+ */
+export function crawlOutcome(result: CrawlOutcomeInput | null | undefined): CrawlOutcome {
+    if (!result) {
+        return 'failed'
+    }
+
+    if (typeof result.challenge === 'string' && result.challenge.length > 0) {
+        return 'challenge'
+    }
+
+    if (result.success === false || (result.error_message ?? '') !== '' || (result.status_code ?? 0) >= 400) {
+        return 'failed'
+    }
+
+    // `markdown` is a STRING on the crawl4ai-shaped result but an OBJECT on
+    // `CrawlResults` ({raw_markdown, markdown_with_citations, ...}), which
+    // `CrawlOutcomeInput` already allowed for. Reading it as a body and comparing
+    // to '' therefore missed the object case entirely: an object is never '', so a
+    // result whose markdown had been stripped to empty reported `ok` — the false
+    // positive the `empty` state exists to prevent. Collect the candidates and ask
+    // whether ANY of them carries text.
+    const markdown = result.markdown
+    const bodies: unknown[] = [
+        typeof markdown === 'object' && markdown !== null
+            ? (markdown as Record<string, unknown>)['raw_markdown']
+            : markdown,
+        result.cleaned_html,
+        result.html,
+        result.fit_html,
+    ]
+
+    if (bodies.some((candidate) => typeof candidate === 'string' && candidate.length > 0)) {
+        return 'ok'
+    }
+
+    return 'empty'
+}
+
 export function toSerializableDict(obj: any, ignoreDefaultValue: boolean = false): Serializable {
     if (obj === null || obj === undefined) {
         return null;

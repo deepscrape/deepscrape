@@ -6,7 +6,7 @@ import { pipeline } from "node:stream"
 import { createGunzip } from "node:zlib"
 import fetch, { RequestInit } from "node-fetch"
 import { Request, Response } from "express"
-import { env } from "../config/env"
+import { crawlAgentBaseUrl } from "../config/upstreams"
 
 /**
  * CrawlerHandler
@@ -28,9 +28,16 @@ class CrawlerHandler {
         // const decodedUrl = decodeURIComponent(url) // decode the UR
         // res.type("application/json")
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION === "true" ?
-            env.API_CRAWL4AI_URL || "https://crawlagent.fly.dev" : "http://localhost:8000"
+        // CORRECTED: this deliberately relays the CALLER's token, not a server
+        // secret. The target is `crawlagent` (github.com/deepscrape/crawlagent) —
+        // a FastAPI job service whose job routes are all `Depends(verify_token)`.
+        // It verifies the caller's Firebase ID token and derives `uid` from it
+        // (`uid = decoded_token.get("uid")`) to write `users/{uid}/operations`, so
+        // a server-held secret would break the ownership path. The token is read
+        // per-REQUEST from `req.authToken`; it used to come from `req.app.locals`,
+        // which is the application's object and therefore shared across requests.
+        const token = req.authToken
+        const apiUrl = crawlAgentBaseUrl()
         const url = new URL(`${apiUrl}/crawl/job/temp-task-id`)
 
         const headers = {
@@ -104,9 +111,8 @@ class CrawlerHandler {
 
         res.type("application/json")
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION === "true" ?
-            env.API_CRAWL4AI_URL || "https://crawlagent.fly.dev" : "http://localhost:8000"
+        const token = req.authToken
+        const apiUrl = crawlAgentBaseUrl()
         const url = new URL(`${apiUrl}/crawl/job/${tempTaskId}`)
 
         const headers = {
@@ -176,9 +182,8 @@ class CrawlerHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION === "true" ?
-            env.API_CRAWL4AI_URL || "https://crawlagent.fly.dev" : "http://localhost:8000"
+        const token = req.authToken
+        const apiUrl = crawlAgentBaseUrl()
         const url = new URL(`${apiUrl}/crawl/stream/job/status/${taskId}`)
 
         const headers = {
@@ -238,9 +243,8 @@ class CrawlerHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION === "true" ?
-            env.API_CRAWL4AI_URL || "https://crawlagent.fly.dev" : "http://localhost:8000"
+        const token = req.authToken
+        const apiUrl = crawlAgentBaseUrl()
         const url = new URL(`${apiUrl}/crawl/stream/job/${taskId}`)
 
         const headers = {
@@ -303,9 +307,8 @@ class CrawlerHandler {
 
         res.type("application/json")
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION === "true" ?
-            env.API_CRAWL4AI_URL || "https://crawlagent.fly.dev" : "http://localhost:8000"
+        const token = req.authToken
+        const apiUrl = crawlAgentBaseUrl()
         const url = new URL(`${apiUrl}/crawl/job/${tempTaskId}/cancel`)
 
         const headers = {
@@ -384,9 +387,8 @@ class CrawlerHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION === "true" ?
-            env.API_CRAWL4AI_URL || "https://crawlagent.fly.dev" : "http://localhost:8000"
+        const token = req.authToken
+        const apiUrl = crawlAgentBaseUrl()
         const url = new URL(`${apiUrl}/crawl/stream/job`)
 
         const headers = {

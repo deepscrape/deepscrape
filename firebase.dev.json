@@ -4,9 +4,6 @@
     "indexes": "firestore.indexes.json",
     "database": "easyscrape"
   },
-  "database": {
-    "rules": "database.rules.json"
-  },
   "functions": [
     {
       "source": "functions",

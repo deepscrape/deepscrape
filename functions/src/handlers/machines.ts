@@ -6,7 +6,7 @@
 import { Request, Response, NextFunction } from "express"
 import fetch, { RequestInit } from "node-fetch"
 import { Buffer } from "node:buffer" // Import Buffer for file handling
-import { env } from "../config/env"
+import { arachneflyBaseUrl } from "../config/upstreams"
 // import FormData from "form-data" // Import FormData for handling form data
 import { pipeline } from "node:stream"
 import { createGunzip } from "node:zlib"
@@ -60,9 +60,13 @@ class MachinesHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION === "true"?
-        env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev": "http://localhost:8080"
+        // Arachnefly re-verifies this token (FireAuthMiddleware in
+        // arachnefly/interfaces/controller/middleware.go), so the caller's
+        // credential is relayed verbatim — from THIS request's slot, never from
+        // the process-wide `req.app.locals`, which another request could have
+        // written.
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
         const url = new URL(`${apiUrl}/api/check-image`)
         url.searchParams.set("name", imageName)
 
@@ -143,8 +147,8 @@ class MachinesHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION == "true" ? env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
         const url: URL = new URL(`${apiUrl}/api/machine/${machineId}`)
         // ponytail: this used to relay EVERY inbound header to the upstream
         // (normalizeRequestHeaders), which forwarded the caller's `cookie`
@@ -181,9 +185,12 @@ class MachinesHandler {
             })
             res.end(Buffer.from(buffer))
         } catch (error) {
+            // The upstream's error body carries internal service names, validation
+            // rules and request ids. Log it server-side, never echo it.
             console.warn("API Error:", error)
-            const details = String(error)
-            res.status(500).json({ error: "Failed to get machine details. Please try again later.", message: details })
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to get machine details. Please try again later." })
+            }
         }
     }
 
@@ -206,9 +213,9 @@ class MachinesHandler {
             return
         }
 
-        // get tken from request include in locals
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION == "true" ? env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
+        // get token from the request (per-request slot, not app.locals)
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
 
         // const authHeader = req.headers["api-key"] as string
         // eslint-disable-next-line prefer-const
@@ -279,7 +286,9 @@ class MachinesHandler {
             // ponytail: `message: String(error)` removed — it carried the upstream's
             // whole JSON error body to the caller. Logged server-side only now.
             console.warn("------------------- API Error:", error)
-            res.status(500).json({ error: "Failed to deploy machine. Please try again later." })
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to deploy machine. Please try again later." })
+            }
         }
     }
 
@@ -305,8 +314,8 @@ class MachinesHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION == "true" ? env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
         const url: URL = new URL(`${apiUrl}/api/machine/waitforstate/${machineId}`)
 
         url.searchParams.set("state", state as string)
@@ -344,8 +353,9 @@ class MachinesHandler {
             res.end(Buffer.from(buffer))
         } catch (error) {
             console.warn("API Error:", error)
-            const details = String(error)
-            res.status(500).json({ error: "Failed to wait for machine state. Please try again later.", message: details })
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to wait for machine state. Please try again later." })
+            }
         }
     }
 
@@ -368,10 +378,8 @@ class MachinesHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION == "true" ?
-            env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
-
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
 
         const url: URL = new URL(`${apiUrl}/api/machine/${machineId}/start`)
         const headers = {
@@ -404,8 +412,9 @@ class MachinesHandler {
             res.end(Buffer.from(buffer))
         } catch (error) {
             console.warn("API Error:", error)
-            const details = String(error)
-            res.status(500).json({ error: "Failed to destroy machine. Please try again later.", message: details })
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to start machine. Please try again later." })
+            }
         }
     }
 
@@ -428,9 +437,8 @@ class MachinesHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION == "true" ?
-            env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
 
         const url: URL = new URL(`${apiUrl}/api/machine/${machineId}/suspend`)
         const headers = {
@@ -462,8 +470,9 @@ class MachinesHandler {
             res.end(Buffer.from(buffer))
         } catch (error) {
             console.warn("API Error:", error)
-            const details = String(error)
-            res.status(500).json({ error: "Failed to destroy machine. Please try again later.", message: details })
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to suspend machine. Please try again later." })
+            }
         }
     }
 
@@ -475,17 +484,19 @@ class MachinesHandler {
     async stopMachine(req: Request, res: Response) {
         const machineId = toSingleParam(req.params.machineId as string | string[] | undefined)
         res.type("application/json")
-        if (!validIdPattern.test(machineId)) {
-            res.status(400).json({ error: "Invalid machineId format" })
-            return
-        }
+        // Missing BEFORE malformed. The old order ran the pattern first, so an
+        // absent id ("") failed the 1-64 range check and was reported as
+        // "Invalid machineId format" — a 400 that misnames the actual problem.
         if (!machineId) {
             res.status(400).json({ error: "Missing required parameter: machineId" })
             return
         }
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION == "true" ?
-            env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
+        if (!validIdPattern.test(machineId)) {
+            res.status(400).json({ error: "Invalid machineId format" })
+            return
+        }
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
 
         const url: URL = new URL(`${apiUrl}/api/machine/${machineId}/stop`)
         const headers = {
@@ -517,8 +528,9 @@ class MachinesHandler {
             res.end(Buffer.from(buffer))
         } catch (error) {
             console.warn("API Error:", error)
-            const details = String(error)
-            res.status(500).json({ error: "Failed to destroy machine. Please try again later.", message: details })
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to stop machine. Please try again later." })
+            }
         }
     }
 
@@ -543,9 +555,8 @@ class MachinesHandler {
             return
         }
 
-        const token = req.app.locals["user"]
-        const apiUrl = env.PRODUCTION == "true" ?
-            env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev" : "http://localhost:8080"
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
         const url: URL = new URL(`${apiUrl}/api/machine/${machineId}`)
         url.searchParams.set("force", force.toString())
 
@@ -578,9 +589,82 @@ class MachinesHandler {
             })
             res.end(Buffer.from(buffer))
         } catch (error) {
-            const details = String(error)
-            console.warn("API Error:", details)
-            res.status(500).json({ error: "Failed to destroy machine. Please try again later.", message: details })
+            // ponytail: `message: String(error)` removed here too — same leak its
+            // siblings had (the upstream's whole JSON error body). Logged only.
+            console.warn("API Error:", error)
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to destroy machine. Please try again later." })
+            }
+        }
+    }
+
+    /**
+     * executeTask
+     *
+     * Runs a task inside a deployed container. Arachnefly replays the request
+     * onto the instance (`fly-replay: instance=<id>`) and posts the body,
+     * unchanged, to `/crawl` inside the container — so the payload's shape is
+     * the deployed image's contract, not this proxy's. The machine must already
+     * be started: arachnefly resolves it from its started-machine list.
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
+    async executeTask(req: Request, res: Response, next: NextFunction) {
+        const machineId = toSingleParam(req.params.machineId as string | string[] | undefined)
+        const body = req.body
+        res.type("application/json")
+
+        if (!machineId) {
+            res.status(400).json({ error: "Missing required parameter: machineId" })
+            return
+        }
+
+        if (!validIdPattern.test(machineId)) {
+            res.status(400).json({ error: "Invalid parameter: machineId" })
+            return
+        }
+
+        const token = req.authToken
+        const apiUrl = arachneflyBaseUrl()
+        const url: URL = new URL(`${apiUrl}/api/execute-task/${machineId}`)
+
+        const headers = {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+        }
+
+        try {
+            const fetchOptions: RequestInit = {
+                method: "POST",
+                body: JSON.stringify(body ?? {}),
+                headers,
+                compress: true,
+            }
+
+            const apiResponse = await fetch(url, fetchOptions)
+
+            if (!apiResponse.ok) {
+                throw new Error(`${JSON.stringify({code: apiResponse.statusText, internal_message: await apiResponse.json()})}`)
+            }
+
+            if (!apiResponse.body) {
+                throw new Error("API response body is empty")
+            }
+
+            const buffer = await apiResponse.arrayBuffer()
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Content-Length": buffer.byteLength,
+            })
+            res.end(Buffer.from(buffer))
+        } catch (error) {
+            // Same rule as its siblings: the upstream's error body carries internal
+            // service names and validation rules. Log it, never echo it.
+            console.warn("------------------- API Error:", error)
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Failed to execute task on machine. Please try again later." })
+            }
         }
     }
 }

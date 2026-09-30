@@ -59,6 +59,9 @@ class EventsAPIProxy {
         if (token) {
             try {
                 req.user = await adminAuth.verifyIdToken(token, true)
+                // Same per-request slot `isJwtAuth` fills. Never `req.app.locals`:
+                // that object is the application's, shared across requests.
+                req.authToken = token
             } catch (error) {
                 // Expired / revoked / malformed: stay anonymous. A 401 here would break
                 // the guest heartbeat, which has no token to offer.

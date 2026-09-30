@@ -179,8 +179,52 @@ const getEnv = () => {
     API_ARACHNEFLY_URL: getConfigValue("API_ARACHNEFLY_URL", "https://arachnefly.fly.dev"),
     API_CRAWL4AI_URL: getConfigValue("API_CRAWL4AI_URL", "https://crawlagent.fly.dev"),
 
+    // webrain MCP worker (the Rust scraping engine).
+    //
+    // No default host on purpose. The other two keep a default because they are
+    // deployed and long-standing; a NEW provider must not inherit "some host is
+    // assumed", which is how an arbitrary worker gets used without anyone choosing
+    // it. Empty means the route fails with a clear message (`infrastructure/webrain-mcp.ts`
+    // reports it as a transport error). Locally: http://127.0.0.1:9223
+    // (or whichever `--http <port>` the server was started with).
+    //
+    // A token is only needed when the worker was started with WEBRAIN_HTTP_TOKEN;
+    // unset here means no Authorization header is sent, which is the correct
+    // local-stdio default. On the shared free-tier pool it must be set, as
+    // defence in depth behind the gateway — it is NOT a tenancy boundary.
+    WEBRAIN_MCP_URL: getConfigValue("WEBRAIN_MCP_URL", ""),
+    WEBRAIN_MCP_TOKEN: getConfigValue("WEBRAIN_MCP_TOKEN"),
+
+    // QStash — the job queue. These ARE runtime secrets: the service publishes
+    // work and verifies the signature on the delivery endpoint, so unlike the Box
+    // key they belong in this module and in the deploy secret lists.
+    //
+    // No default URL. The documented global host exists, but a region-pinned token
+    // (qstash-eu-central-1.upstash.io) must be sent to its own region, and a
+    // default here would silently route it elsewhere. Empty means the queue is
+    // unconfigured, which should read as "not set up" rather than "delivered to
+    // the wrong region".
+    QSTASH_URL: getConfigValue("QSTASH_URL", ""),
+    QSTASH_TOKEN: getConfigValue("QSTASH_TOKEN"),
+    // Two signing keys, not one: QStash rotates them, and verification must accept
+    // the CURRENT and the NEXT during a rotation window. A single key means every
+    // rotation drops in-flight deliveries as forgeries.
+    QSTASH_CURRENT_SIGNING_KEY: getConfigValue("QSTASH_CURRENT_SIGNING_KEY"),
+    QSTASH_NEXT_SIGNING_KEY: getConfigValue("QSTASH_NEXT_SIGNING_KEY"),
+
+    // Which provider `/api/crawl` uses: 'crawl4ai' (the default) or 'webrain'.
+    // The default keeps an unconfigured deployment byte-for-byte as it was, so
+    // turning webrain on is a config change and turning it back off is too.
+    SCRAPE_PROVIDER: getConfigValue("SCRAPE_PROVIDER", "crawl4ai"),
+
     // Third-party API Keys
     JINAAI_API_KEY: getConfigValue("JINAAI_API_KEY"),
+    // Shared crawl-worker credential, sent as `Authorization: Bearer <this>`.
+    // It was declared only in src/config/env.ts (the root module), so the crawl
+    // handler had nothing to resolve and relayed the caller's own token instead.
+    // Verified against the worker: a relayed user token is a 401, this is a 200.
+    // In production it must be present in the FUNCTIONS_ENV_JSON secret.
+    CRAWL4AI_API_KEY: getConfigValue("CRAWL4AI_API_KEY"),
     ANTHROPIC_API_KEY: getConfigValue("ANTHROPIC_API_KEY"),
     OPENAI_API_URL: getConfigValue("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions"),
     OPENAI_API_KEY: getConfigValue("OPENAI_API_KEY"),

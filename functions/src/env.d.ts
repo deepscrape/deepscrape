@@ -14,6 +14,10 @@ declare namespace NodeJS {
     UPSTASH_REDIS_REST_URL: string
     UPSTASH_REDIS_REST_HOST: string
     UPSTASH_REDIS_REST_TOKEN: string
+    QSTASH_URL: string
+    QSTASH_TOKEN: string
+    QSTASH_CURRENT_SIGNING_KEY: string
+    QSTASH_NEXT_SIGNING_KEY: string
     UPSTASH_REDIS_REST_PORT: string
     UPSTASH_REDIS_REST_USER: string
     UPSTASH_REDIS_REST_PASSWORD: string
@@ -23,6 +27,9 @@ declare namespace NodeJS {
     // External API URLs
     API_ARACHNEFLY_URL: string
     API_CRAWL4AI_URL: string
+    WEBRAIN_MCP_URL: string
+    WEBRAIN_MCP_TOKEN: string
+    SCRAPE_PROVIDER: string
 
     // AI API Keys
     JINAAI_API_KEY: string

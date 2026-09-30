@@ -15,6 +15,7 @@ import * as webauthn from "./gfunctions/webauthn"
 import * as notifications from "./gfunctions/notifications"
 import * as alertFanout from "./gfunctions/alert-fanout"
 import * as adminUsers from "./gfunctions/admin-users"
+import * as userSettings from "./gfunctions/user-settings"
 // import path, { join } from "node:path"
 // import { fileURLToPath } from "node:url"
 
@@ -57,6 +58,15 @@ export const adminUnsuspendUser = adminUsers.adminUnsuspendUser
 export const adminScheduleAccountDeletion = adminUsers.adminScheduleAccountDeletion
 export const adminCancelAccountDeletion = adminUsers.adminCancelAccountDeletion
 export const purgeDeletedAccounts = adminUsers.purgeDeletedAccounts
+
+// USER SETTINGS - Scrape provider preference + AI vendor keys (BYOK)
+// The write path for the settings the request handlers read: a preference can
+// only be stored if the resolver would have selected it, so the stored value and
+// the effective value cannot disagree.
+export const getMySettings = userSettings.getMySettings
+export const setMyScrapeProvider = userSettings.setMyScrapeProvider
+export const setMyAiKey = userSettings.setMyAiKey
+export const clearMyAiKey = userSettings.clearMyAiKey
 
 
 // STRIPE Functions

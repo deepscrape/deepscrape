@@ -21,11 +21,12 @@ import type {
 } from '../functions/src/domain/authz.domain'
 import {
   anthropicAICore,
-  crawl4aiCore,
   groqAICore,
   jinaAICrawl,
   openaiAICore,
 } from '../functions/src/handlers/ai_handler'
+import { scrapeMiddleware } from '../functions/src/handlers/scrape'
+import { webrainJobs } from '../functions/src/handlers/webrain-jobs'
 import { submitContact } from '../functions/src/handlers/contact_handler'
 import { statusCheck } from '../functions/src/handlers/home_handler'
 import { arachnefly } from '../functions/src/handlers/machines'
@@ -152,7 +153,54 @@ api.post(
   '/api/groq/chat/completions',
   h(guard([paid, perm('ai', 'execute'), groqAICore])),
 )
-api.post('/api/crawl', h(guard([paid, perm('crawl', 'execute'), crawl4aiCore])))
+// `scrapeMiddleware` chooses the provider (SCRAPE_PROVIDER) rather than naming one
+// here, so both hosts reach the same implementation without a code change in each.
+api.post('/api/crawl', h(guard([paid, perm('crawl', 'execute'), scrapeMiddleware])))
+
+// ── the job surface ──────────────────────────────────────────────────────────
+// Playground, `/operations` and crawl packs all need a job, and none of them had
+// one on this host. Two path spellings are registered per operation: the one the
+// client calls today (`/api/job/stream/...`) and the transposed one the old
+// commented-out Express block intended (`/api/crawl/stream/job/...`), so a client
+// on either spelling reaches the same handler.
+//
+// The two GETs stream. `toResponse` in `bridge.ts` now returns a streamed body
+// whenever a handler wrote through `res.write`, because the client's SSE readers
+// take their text from `partialText` and ignore a buffered final response — so
+// these would 200 with nothing in them otherwise. Auth is unaffected: `runChain`
+// runs `guard([...])` before the handler and returns a refusal as soon as one
+// fires, so an unauthenticated call still gets a 401 rather than a 200 stream.
+api.post(
+  '/api/crawl/stream/job',
+  h(guard([paid, perm('crawl', 'execute'), webrainJobs.multiCrawlEnqueue])),
+)
+
+api.get(
+  '/api/job/stream/status/:taskId',
+  h(guard([paid, perm('crawl', 'execute'), webrainJobs.getTaskStatus])),
+)
+api.get(
+  '/api/crawl/stream/job/status/:taskId',
+  h(guard([paid, perm('crawl', 'execute'), webrainJobs.getTaskStatus])),
+)
+
+api.get(
+  '/api/job/stream/:taskId',
+  h(guard([paid, perm('crawl', 'execute'), webrainJobs.streamTaskResults])),
+)
+api.get(
+  '/api/crawl/stream/job/:taskId',
+  h(guard([paid, perm('crawl', 'execute'), webrainJobs.streamTaskResults])),
+)
+
+api.put(
+  '/api/job/:taskId/cancel',
+  h(guard([paid, perm('crawl', 'execute'), webrainJobs.cancelTask])),
+)
+api.put(
+  '/api/crawl/job/:tempTaskId/cancel',
+  h(guard([paid, perm('crawl', 'execute'), webrainJobs.cancelTask])),
+)
 
 // `/jina/:url` keeps the URL as a single path segment, as Express did.
 api.get(
@@ -192,6 +240,20 @@ api.post(
       paid,
       perm('machine', 'deploy'),
       bind(arachnefly.deployMachine, arachnefly),
+    ]),
+  ),
+)
+
+// Running a task mutates a live machine, so it takes the same `update` action
+// its start/stop/suspend siblings use — the authz `machine` resource has no
+// `execute` action and inventing one would mean a policy migration.
+api.post(
+  '/api/machines/execute-task/:machineId',
+  h(
+    guard([
+      paid,
+      perm('machine', 'update'),
+      bind(arachnefly.executeTask, arachnefly),
     ]),
   ),
 )

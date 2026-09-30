@@ -33,6 +33,20 @@ export type BridgedResponse = {
   cookies: string[]
   /** True once a handler has produced a body — otherwise we 500 rather than hang. */
   sent: boolean
+  /**
+   * SSE frames written through `res.write`, in order.
+   *
+   * Collected rather than discarded because this streaming surface is not live:
+   * every job it serves is already terminal by the time it is read, so there is
+   * nothing to interleave. What the client needs is a STREAMED BODY — both of its
+   * SSE readers take their text from `partialText` on a progress event and ignore
+   * the final response, so a single buffered body reaches them as nothing at all.
+   * A future provider with real live progress would need a genuine controller
+   * here instead of this accumulation.
+   */
+  chunks: string[]
+  /** True once a handler wrote SSE frames, which decides how the body is returned. */
+  streaming: boolean
 }
 
 const serializeCookie = (
@@ -99,6 +113,8 @@ export const createBridge = (
     headers: {},
     cookies: [],
     sent: false,
+    chunks: [],
+    streaming: false,
   }
 
   const headerBag: Record<string, string> = {}
@@ -162,6 +178,62 @@ export const createBridge = (
      */
     setHeader(key: string, value: unknown) {
       state.headers[key] = String(value)
+      return res
+    },
+    /**
+     * flushHeaders
+     *
+     * Express sends the headers here. We cannot, because the Response is built
+     * after the chain finishes — but a handler that believes it has committed its
+     * headers must not be told otherwise, so the call is accepted and recorded.
+     * The SSE content type it was preceded by is what actually decides the body.
+     * @return {*}
+     */
+    flushHeaders() {
+      state.streaming = true
+      return res
+    },
+    /**
+     * writeHead
+     * @param {*} code
+     * @param {*} headers
+     * @return {*}
+     */
+    writeHead(code: number, headers?: Record<string, string>) {
+      state.status = code
+      state.streaming = true
+      for (const [key, value] of Object.entries(headers ?? {})) {
+        state.headers[key] = String(value)
+      }
+      return res
+    },
+    /**
+     * write
+     *
+     * `sent` is set on the first write, not only on `end`. Express leaves the
+     * response open here, but this bridge finalises once at the end of the chain:
+     * a handler that streamed and then forgot `end()` would otherwise be reported
+     * as "produced no response" — a 500 over a body that was actually complete.
+     * @param {*} chunk
+     * @return {*}
+     */
+    write(chunk: unknown) {
+      state.chunks.push(String(chunk))
+      state.streaming = true
+      state.sent = true
+      return true
+    },
+    /**
+     * end
+     * @param {*} chunk
+     * @return {*}
+     */
+    end(chunk?: unknown) {
+      if (chunk !== undefined && chunk !== null) {
+        state.chunks.push(String(chunk))
+      }
+      state.streaming = true
+      state.sent = true
       return res
     },
     /**
@@ -241,6 +313,36 @@ export const toResponse = (state: BridgedResponse): Response => {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     })
+  }
+
+  /**
+   * A streamed handler gets a streamed body.
+   *
+   * This is not cosmetic. Both of the client's SSE readers take their text from
+   * `partialText` on a `DownloadProgress` event and never look at the final
+   * response, so returning the frames as one buffered string delivers NOTHING to
+   * them — the request succeeds, the UI never updates, and no error is raised
+   * anywhere. Enqueuing per frame keeps the body a transfer rather than a buffer,
+   * which is what produces those progress events.
+   */
+  if (state.streaming) {
+    const frames = state.chunks
+
+    const body = new ReadableStream<Uint8Array>({
+      /**
+       * start
+       * @param {*} controller
+       */
+      start(controller) {
+        const encoder = new TextEncoder()
+        for (const frame of frames) {
+          controller.enqueue(encoder.encode(frame))
+        }
+        controller.close()
+      },
+    })
+
+    return new Response(body, { status: state.status, headers })
   }
 
   const payload =

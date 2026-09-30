@@ -5,8 +5,8 @@
 /* eslint-disable max-len */
 import { NextFunction, Request, Response, Router } from "express"
 import {
-    anthropicAICore, openaiAICore, groqAICore, crawl4aiCore, jinaAICrawl,
-    arachnefly,
+    anthropicAICore, openaiAICore, groqAICore, jinaAICrawl,
+    arachnefly, scrapeMiddleware, webrainJobs,
 } from "../handlers"
 import { auth, db } from "../app/config"
 import { BillingSnapshot, getBillingAccessMode, resolveBillingPricingPolicy } from "../domain"
@@ -106,7 +106,13 @@ class ReverseAPIProxy {
             const decodedToken = await auth.verifyIdToken(token, true)
             if (decodedToken) {
                 req.user = decodedToken
-                req.app.locals["user"] = token // Add user info to the request
+                // Per-REQUEST. `req.app.locals` is the Express application's locals
+                // object — process-wide and shared by every concurrent request — so
+                // `req.app.locals["user"] = token` published this caller's Firebase
+                // ID token to whichever request read it next. The readers are the
+                // two relays that need the raw token: `handlers/machines.ts` (to
+                // Arachnefly) and `heartbeat` (identity fallback).
+                req.authToken = token
                 next()
             } else {
                 throw new Error("Invalid token")
@@ -139,6 +145,9 @@ class ReverseAPIProxy {
 
         if (isPlatformAdminRequest(req)) {
             res.setHeader("x-billing-bypass", "platform_admin")
+            // Stashed so the scrape-provider resolver reads the SAME access decision
+            // rather than re-reading billing and potentially disagreeing with it.
+            req.accessMode = "admin"
             next()
             return
         }
@@ -151,6 +160,10 @@ class ReverseAPIProxy {
             if (billingSnap.exists) {
                 const billing = billingSnap.data() as BillingSnapshot
                 const accessMode = getBillingAccessMode(billing, now)
+
+                // Same reason as the admin branch above: one read, one decision,
+                // shared with the middleware that runs after this one.
+                req.accessMode = accessMode
 
                 if (accessMode !== "free") {
                     const policy = resolveBillingPricingPolicy(req.method, req.path)
@@ -896,17 +909,29 @@ class ReverseAPIProxy {
          * Crawler by crawlagent
          */
 
-        // Get New Temporary Task Id
-        // this.router.get("/crawl/job/temp-task-id", crawlagent.getTempTaskId)
+        /**
+         * The job surface — playground, `/operations`, crawl packs.
+         *
+         * All four verbs are registered together because they are one surface
+         * backed by one store, and splitting them across the method groups is how
+         * the earlier version ended up with `job` and `stream` transposed between
+         * the client and the server. Each route is registered twice: the path the
+         * client calls today, and the transposed path the old comment block
+         * intended, so any older client keeps working.
+         *
+         * Every route is paid-gated and permission-gated exactly as `/crawl` is —
+         * a job is the same capability spent in a batch.
+         */
+        this.router.post("/crawl/stream/job", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.multiCrawlEnqueue)
 
-        // // Get the Task Id
-        // this.router.get("/crawl/job/:tempTaskId", crawlagent.getTaskId)
+        this.router.get("/job/stream/status/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.getTaskStatus)
+        this.router.get("/crawl/stream/job/status/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.getTaskStatus)
 
-        // // Get the Task Status
-        // this.router.get("/crawl/stream/job/status/:taskId", crawlagent.getTaskStatus)
+        this.router.get("/job/stream/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.streamTaskResults)
+        this.router.get("/crawl/stream/job/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.streamTaskResults)
 
-        // // Stream the Task Results
-        // this.router.get("/crawl/stream/job/:taskId", crawlagent.streamTaskResults)
+        this.router.put("/job/:taskId/cancel", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.cancelTask)
+        this.router.put("/crawl/job/:tempTaskId/cancel", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.cancelTask)
     }
 
     /**
@@ -929,7 +954,9 @@ class ReverseAPIProxy {
          * Crawler Management by crawlagent
         */
 
-        this.router.post("/crawl", this.requirePaidAccess, requirePermission("crawl", "execute"), crawl4aiCore)
+        // `scrapeMiddleware` picks the provider from SCRAPE_PROVIDER, so this route
+        // no longer names crawl4ai — switching to webrain is config, not an edit here.
+        this.router.post("/crawl", this.requirePaidAccess, requirePermission("crawl", "execute"), scrapeMiddleware)
 
         // Enqueue a stream Crawl Task
         // this.router.post("/crawl/stream/job", crawlagent.multiCrawlEnqueue)

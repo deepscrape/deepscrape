@@ -36,38 +36,41 @@
  * one.
  */
 
-/** The vendors the platform integrates. Grounded in `AiApiService`'s four endpoints. */
+/**
+ * The vendors the platform integrates. Grounded in `AiApiService`'s four
+ * endpoints.
+ */
 export type AiVendorId = "anthropic" | "openai" | "groq" | "jina"
 
 export interface AiVendorDescriptor {
-    id: AiVendorId
-    /** i18n key for the display name, so this catalogue carries no English. */
-    labelKey: string
-    /**
-     * Whether the platform holds its own credential for this vendor.
-     *
-     * `false` means the platform cannot serve this vendor at all — BYOK is the
-     * only route, and a plan does not change that. Reporting it honestly is
-     * what
-     * lets the UI say "bring a key", instead of offering a plan-gated option
-     * that
-     * would fail at the vendor.
-     */
-    internalKey: boolean
-    /** Minimum access mode required to spend the PLATFORM key. */
-    minAccess: "free" | "paid"
-    /** Whether a user-supplied key is accepted for this vendor. */
-    byok: boolean
-    /**
-     * The env variable holding the platform key — a NAME, never a value.
-     *
-     * Named so the resolver can distinguish "you are not entitled to this" from
-     * "this deployment has no key configured", which are different problems
-     * with
-     * different remedies and should not read as the same error.
-     */
-    envKeyName: string
-    notes: string
+  id: AiVendorId
+  /** i18n key for the display name, so this catalogue carries no English. */
+  labelKey: string
+  /**
+   * Whether the platform holds its own credential for this vendor.
+   *
+   * `false` means the platform cannot serve this vendor at all — BYOK is the
+   * only route, and a plan does not change that. Reporting it honestly is
+   * what
+   * lets the UI say "bring a key", instead of offering a plan-gated option
+   * that
+   * would fail at the vendor.
+   */
+  internalKey: boolean
+  /** Minimum access mode required to spend the PLATFORM key. */
+  minAccess: "free" | "paid"
+  /** Whether a user-supplied key is accepted for this vendor. */
+  byok: boolean
+  /**
+   * The env variable holding the platform key — a NAME, never a value.
+   *
+   * Named so the resolver can distinguish "you are not entitled to this" from
+   * "this deployment has no key configured", which are different problems
+   * with
+   * different remedies and should not read as the same error.
+   */
+  envKeyName: string
+  notes: string
 }
 
 /**
@@ -86,7 +89,8 @@ export const AI_VENDORS: readonly AiVendorDescriptor[] = [
     minAccess: "paid",
     byok: true,
     envKeyName: "CLAUDE_API_KEY",
-    notes: "Chat and streaming completions. Platform key is a plan entitlement.",
+    notes:
+      "Chat and streaming completions. Platform key is a plan entitlement.",
   },
   {
     id: "openai",
@@ -95,7 +99,8 @@ export const AI_VENDORS: readonly AiVendorDescriptor[] = [
     minAccess: "paid",
     byok: true,
     envKeyName: "OPENAI_API_KEY",
-    notes: "Chat and streaming completions. Platform key is a plan entitlement.",
+    notes:
+      "Chat and streaming completions. Platform key is a plan entitlement.",
   },
   {
     id: "groq",
@@ -121,16 +126,19 @@ export const AI_VENDORS: readonly AiVendorDescriptor[] = [
 export type AiKeySource = "user" | "platform" | "none"
 
 /** Why a vendor is unavailable, when it is. */
-export type AiKeyRefusal = "unknown-vendor" | "plan-required" | "byok-required" | "unsupported"
+export type AiKeyRefusal =
+  "unknown-vendor" | "plan-required" | "byok-required" | "unsupported"
 
 export interface AiKeyResolution {
-    vendor: AiVendorDescriptor | null
-    source: AiKeySource
-    allowed: boolean
-    refusal?: AiKeyRefusal
+  vendor: AiVendorDescriptor | null
+  source: AiKeySource
+  allowed: boolean
+  refusal?: AiKeyRefusal
 }
 
-/** Anything that is not explicitly free counts as paid — see `scrape-providers.domain.ts`.
+/**
+ * Anything that is not explicitly free counts as paid — see
+ * `scrape-providers.domain.ts`.
  * @param {*} accessMode
  * @return {*}
  */
@@ -166,9 +174,11 @@ export const aiVendorDescriptor = (id: AiVendorId): AiVendorDescriptor => {
  */
 export const availableVendors = (
   accessMode: string | undefined,
-  mappedKeys: readonly AiVendorId[],
+  mappedKeys: readonly AiVendorId[]
 ): AiKeyResolution[] =>
-  AI_VENDORS.map((vendor) => resolveAiKeySource(vendor.id, accessMode, mappedKeys.includes(vendor.id)))
+  AI_VENDORS.map((vendor) =>
+    resolveAiKeySource(vendor.id, accessMode, mappedKeys.includes(vendor.id))
+  )
 
 /**
  * Resolves where the key for a call to `vendorId` would come from.
@@ -187,10 +197,15 @@ export const availableVendors = (
 export const resolveAiKeySource = (
   vendorId: unknown,
   accessMode: string | undefined,
-  hasUserKey: boolean,
+  hasUserKey: boolean
 ): AiKeyResolution => {
   if (!isAiVendorId(vendorId)) {
-    return { vendor: null, source: "none", allowed: false, refusal: "unknown-vendor" }
+    return {
+      vendor: null,
+      source: "none",
+      allowed: false,
+      refusal: "unknown-vendor",
+    }
   }
 
   const vendor = aiVendorDescriptor(vendorId)
@@ -228,4 +243,6 @@ export const resolveAiKeySource = (
  * @return {*}
  */
 export const isPlausibleApiKey = (value: unknown): value is string =>
-  typeof value === "string" && value.trim().length >= 16 && value.trim().length <= 512
+  typeof value === "string" &&
+  value.trim().length >= 16 &&
+  value.trim().length <= 512

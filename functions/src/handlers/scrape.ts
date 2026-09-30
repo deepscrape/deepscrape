@@ -37,40 +37,41 @@ import { readStoredProvider } from "../infrastructure/scrape-provider.store"
  * than raw markup.
  */
 interface WebrainScrapeResult {
-    url: string
-    ok: boolean
-    /**
-     * The worker's own typed JSON, passed through unchanged.
-     *
-     * This is the plan's "return typed JSON, never raw markup" rule: the
-     * payload
-     * is whatever `webrain_scrape` produced, not a blob we re-shape here. A
-     * gate is
-     * read out of it structurally, so a provider that reports one differently
-     * still
-     * surfaces the state.
-     */
-    data?: unknown
-    /**
-     * Anti-bot gate, when the tool reports one, else null.
-     *
-     * `webrain_scrape` is a plain-HTTP fetch and carries no `challenge` field
-     * at
-     * all — that signal belongs to `webrain_navigate` / `observe(what=state)` /
-     * `search` (webrain-core/src/browser.rs:23, emitted at
-     * tools.rs:948/1244/1926).
-     * It is read here rather than assumed, so switching this handler to a
-     * browser-backed tool starts reporting gates with no change to the UI.
-     */
-    challenge: string | null
-    /** Response size stamp — an estimate, and the basis for per-tenant accounting. */
-    tokens?: { chars?: number; est_tokens?: number }
-    ms?: number
-    error?: string
-    /** The shared worker refused this tool because it is stateful. */
-    noStateRefused?: boolean
-    /** The worker could not be reached, or `WEBRAIN_MCP_URL` is unset. */
-    transportError?: boolean
+  url: string
+  ok: boolean
+  /**
+   * The worker's own typed JSON, passed through unchanged.
+   *
+   * This is the plan's "return typed JSON, never raw markup" rule: the
+   * payload
+   * is whatever `webrain_scrape` produced, not a blob we re-shape here. A
+   * gate is
+   * read out of it structurally, so a provider that reports one differently
+   * still
+   * surfaces the state.
+   */
+  data?: unknown
+  /**
+   * Anti-bot gate, when the tool reports one, else null.
+   *
+   * `webrain_scrape` is a plain-HTTP fetch and carries no `challenge` field
+   * at
+   * all — that signal belongs to `webrain_navigate` / `observe(what=state)` /
+   * `search` (webrain-core/src/browser.rs:23, emitted at
+   * tools.rs:948/1244/1926).
+   * It is read here rather than assumed, so switching this handler to a
+   * browser-backed tool starts reporting gates with no change to the UI.
+   */
+  challenge: string | null
+  /** Response size stamp — an estimate, and the basis
+   * for per-tenant accounting. */
+  tokens?: { chars?: number; est_tokens?: number }
+  ms?: number
+  error?: string
+  /** The shared worker refused this tool because it is stateful. */
+  noStateRefused?: boolean
+  /** The worker could not be reached, or `WEBRAIN_MCP_URL` is unset. */
+  transportError?: boolean
 }
 
 /** Reads `challenge` out of whatever shape the tool returned.
@@ -98,8 +99,13 @@ const challengeOf = (data: unknown): string | null => {
  * @param {*} req
  * @param {*} res
  */
-export const webrainCrawl = async (req: Request, res: Response): Promise<void> => {
-  const safeUrls = safeTargetUrls((req.body as { urls?: unknown } | undefined)?.urls)
+export const webrainCrawl = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const safeUrls = safeTargetUrls(
+    (req.body as { urls?: unknown } | undefined)?.urls
+  )
 
   if (!safeUrls.length) {
     res.status(400).json({ error: "Invalid target URLs" })
@@ -127,7 +133,8 @@ export const webrainCrawl = async (req: Request, res: Response): Promise<void> =
 
   res.status(failed === results.length ? 502 : 200).json({
     provider: "webrain",
-    status: failed === 0 ? "ok" : (failed === results.length ? "error" : "partial"),
+    status:
+      failed === 0 ? "ok" : failed === results.length ? "error" : "partial",
     count: results.length,
     failed,
     results,
@@ -154,7 +161,10 @@ export const webrainCrawl = async (req: Request, res: Response): Promise<void> =
  * @param {*} req
  * @param {*} res
  */
-export const scrapeMiddleware = async (req: Request, res: Response): Promise<void> => {
+export const scrapeMiddleware = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const uid = req.user?.uid
   const stored = uid ? await readStoredProvider(uid) : undefined
   const resolution = resolveProvider(stored, req.accessMode)

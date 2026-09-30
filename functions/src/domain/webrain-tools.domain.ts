@@ -88,9 +88,9 @@ export const PAID_ONLY_TOOLS: readonly string[] = [
 export type WebrainToolRefusal = "unknown-tool" | "tier"
 
 export interface WebrainToolDecision {
-    allowed: boolean
-    tier: WebrainTier
-    refusal?: WebrainToolRefusal
+  allowed: boolean
+  tier: WebrainTier
+  refusal?: WebrainToolRefusal
 }
 
 /**
@@ -125,7 +125,7 @@ export const webrainTierFor = (accessMode: string | undefined): WebrainTier => {
  */
 export const decideWebrainTool = (
   accessMode: string | undefined,
-  toolName: unknown,
+  toolName: unknown
 ): WebrainToolDecision => {
   const tier = webrainTierFor(accessMode)
 
@@ -142,7 +142,9 @@ export const decideWebrainTool = (
   }
 
   if (PAID_ONLY_TOOLS.includes(toolName)) {
-    return tier === "paid" ? { allowed: true, tier } : { allowed: false, tier, refusal: "tier" }
+    return tier === "paid" ?
+      { allowed: true, tier } :
+      { allowed: false, tier, refusal: "tier" }
   }
 
   return { allowed: false, tier, refusal: "unknown-tool" }
@@ -158,9 +160,11 @@ export const decideWebrainTool = (
  * @param {*} refusal
  * @return {*}
  */
-export const webrainToolRefusalMessage = (refusal: WebrainToolRefusal): string => {
+export const webrainToolRefusalMessage = (
+  refusal: WebrainToolRefusal
+): string => {
   if (refusal === "tier") {
-    return "This tool needs a private worker; the shared pool serves stateless work only"
+    return "Needs a private worker; the shared pool serves stateless work"
   }
   return "That tool is not available through the platform gateway"
 }

@@ -16,7 +16,8 @@
 import { db } from "../app/config"
 import type { ScrapeProviderId } from "../domain/scrape-providers.domain"
 
-const PREFERENCE_DOC = (uid: string): string => `users/${uid}/settings/preferences`
+const preferenceDoc = (uid: string): string =>
+  `users/${uid}/settings/preferences`
 
 export const SCRAPE_PROVIDER_FIELD = "scrapeProvider"
 
@@ -33,13 +34,18 @@ export const SCRAPE_PROVIDER_FIELD = "scrapeProvider"
  */
 export const readStoredProvider = async (uid: string): Promise<unknown> => {
   try {
-    const snapshot = await db.doc(PREFERENCE_DOC(uid)).get()
+    const snapshot = await db.doc(preferenceDoc(uid)).get()
     if (!snapshot.exists) {
       return undefined
     }
-    return (snapshot.data() as Record<string, unknown> | undefined)?.[SCRAPE_PROVIDER_FIELD]
+    return (snapshot.data() as Record<string, unknown> | undefined)?.[
+      SCRAPE_PROVIDER_FIELD
+    ]
   } catch (error) {
-    console.warn("scrape-provider: preference read failed, using the platform default:", error)
+    console.warn(
+      "scrape-provider: preference read failed, using the platform default:",
+      error
+    )
     return undefined
   }
 }
@@ -58,6 +64,11 @@ export const readStoredProvider = async (uid: string): Promise<unknown> => {
  * @param {*} uid
  * @param {*} provider
  */
-export const writeStoredProvider = async (uid: string, provider: ScrapeProviderId): Promise<void> => {
-  await db.doc(PREFERENCE_DOC(uid)).set({ [SCRAPE_PROVIDER_FIELD]: provider }, { merge: true })
+export const writeStoredProvider = async (
+  uid: string,
+  provider: ScrapeProviderId
+): Promise<void> => {
+  await db
+    .doc(preferenceDoc(uid))
+    .set({ [SCRAPE_PROVIDER_FIELD]: provider }, { merge: true })
 }

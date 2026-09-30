@@ -64,30 +64,31 @@ import { db } from "../app/config"
  * functions package does not compile `src/`. The strings are the contract — the
  * dashboard compares them, so a typo here is a tracker that never advances.
  */
-export type WebrainJobStatus = "In Progress" | "Completed" | "Failed" | "Canceled"
+export type WebrainJobStatus =
+  "In Progress" | "Completed" | "Failed" | "Canceled"
 
 /** One target's outcome, in the shape the result view already renders. */
 interface WebrainJobItem {
-    url: string
-    status: "ok" | "error"
-    message: string
-    challenge: string | null
-    data?: unknown
-    tokens?: { chars?: number; est_tokens?: number }
-    ms?: number
+  url: string
+  status: "ok" | "error"
+  message: string
+  challenge: string | null
+  data?: unknown
+  tokens?: { chars?: number; est_tokens?: number }
+  ms?: number
 }
 
 interface WebrainJobRecord {
-    id: string
-    uid: string
-    status: WebrainJobStatus
-    message: string
-    urls: string[]
-    items: WebrainJobItem[]
-    total: number
-    failed: number
-    createdAt: number
-    updatedAt: number
+  id: string
+  uid: string
+  status: WebrainJobStatus
+  message: string
+  urls: string[]
+  items: WebrainJobItem[]
+  total: number
+  failed: number
+  createdAt: number
+  updatedAt: number
 }
 
 const JOB_COLLECTION = "crawljobs"
@@ -120,9 +121,13 @@ const challengeOf = (data: unknown): string | null => {
  * @param {*} result
  * @return {*}
  */
-const failureMessage = (result: { error?: string; noStateRefused?: boolean; transportError?: boolean }): string => {
+const failureMessage = (result: {
+  error?: string
+  noStateRefused?: boolean
+  transportError?: boolean
+}): string => {
   if (result.noStateRefused) {
-    return "This tool needs a private worker (the shared pool holds no sessions)"
+    return "Needs a private worker (the shared pool holds no sessions)"
   }
   if (result.transportError) {
     return "The scraping worker is unreachable"
@@ -163,8 +168,10 @@ const sseDone = (res: Response): void => {
  * @param {*} req
  * @param {*} res
  */
-const requireWebrain = async (req: Request, res: Response):
-    Promise<boolean> => {
+const requireWebrain = async (
+  req: Request,
+  res: Response
+): Promise<boolean> => {
   const uid = req.user?.uid
   const stored = uid ? await readStoredProvider(uid) : undefined
   const resolution = resolveProvider(stored, req.accessMode)
@@ -179,7 +186,8 @@ const requireWebrain = async (req: Request, res: Response):
   res.status(501).json({
     error: "Job pipeline unavailable for this provider",
     provider: resolution.provider,
-    message: "The batch job surface is served by the embedded engine only. Select it to use jobs.",
+    message:
+      "Jobs are served by the embedded engine only. Select it to use jobs.",
   })
   return false
 }
@@ -199,7 +207,7 @@ export const webrainJobs = {
    * @param {*} res
    */
   async multiCrawlEnqueue(req: Request, res: Response): Promise<void> {
-    if (!await requireWebrain(req, res)) {
+    if (!(await requireWebrain(req, res))) {
       return
     }
 
@@ -209,8 +217,15 @@ export const webrainJobs = {
       return
     }
 
-    const body = req.body as { urls?: unknown; operation_data?: { 
-        id?: unknown }; operation_id?: unknown } | undefined
+    const body = req.body as
+      | {
+          urls?: unknown
+          operation_data?: {
+            id?: unknown
+          }
+          operation_id?: unknown
+        }
+      | undefined
     const urls = safeTargetUrls(body?.urls)
     if (!urls.length) {
       res.status(400).json({ error: "Invalid target URLs" })
@@ -218,9 +233,12 @@ export const webrainJobs = {
     }
 
     const taskId = randomUUID()
-    const operationId = typeof body?.operation_data?.id === "string" ?
-      body.operation_data.id :
-      (typeof body?.operation_id === "string" ? body.operation_id : taskId)
+    const operationId =
+      typeof body?.operation_data?.id === "string" ?
+        body.operation_data.id :
+        typeof body?.operation_id === "string" ?
+          body.operation_id :
+          taskId
 
     const started = Date.now()
     const items: WebrainJobItem[] = []
@@ -243,9 +261,10 @@ export const webrainJobs = {
       id: taskId,
       uid,
       status: failed === items.length ? "Failed" : "Completed",
-      message: failed === 0 ?
-        `${items.length} target(s) scraped` :
-        `${items.length - failed} of ${items.length} target(s) scraped`,
+      message:
+        failed === 0 ?
+          `${items.length} target(s) scraped` :
+          `${items.length - failed} of ${items.length} target(s) scraped`,
       urls,
       items,
       total: items.length,
@@ -303,7 +322,10 @@ export const webrainJobs = {
       // reported as the frame the client already knows how to read.
       sseSend(res, {
         status: "Failed",
-        result: { status: "Failed", message: "Unknown task id for this account" },
+        result: {
+          status: "Failed",
+          message: "Unknown task id for this account",
+        },
         error: "Unknown task id",
       })
       sseDone(res)
@@ -356,7 +378,10 @@ export const webrainJobs = {
     const total = record.items.length
 
     record.items.forEach((item, index) => {
-      const dump = typeof item.data === "string" ? item.data : JSON.stringify(item.data ?? null)
+      const dump =
+        typeof item.data === "string" ?
+          item.data :
+          JSON.stringify(item.data ?? null)
       sseSend(res, {
         status: item.status === "ok" ? "ok" : "error",
         message: item.message,
@@ -369,7 +394,12 @@ export const webrainJobs = {
     })
 
     sseSend(res, {
-      status: record.status === "Canceled" ? "canceled" : (record.failed === total ? "error" : "completed"),
+      status:
+        record.status === "Canceled" ?
+          "canceled" :
+          record.failed === total ?
+            "error" :
+            "completed",
       message: record.message,
       type: "batch_chunk",
       chunk_index: String(total),
@@ -414,12 +444,22 @@ export const webrainJobs = {
         task_id: taskId,
         canceled: false,
         status: record.status,
-        message: "The job had already finished; there was nothing in flight to stop",
+        message:
+          "The job had already finished; there was nothing in flight to stop",
       })
       return
     }
 
-    await reference.set({ status: "Canceled", message: "Canceled by the user", updatedAt: Date.now() }, { merge: true })
-    res.status(200).json({ task_id: taskId, canceled: true, status: "Canceled" })
+    await reference.set(
+      {
+        status: "Canceled",
+        message: "Canceled by the user",
+        updatedAt: Date.now(),
+      },
+      { merge: true }
+    )
+    res
+      .status(200)
+      .json({ task_id: taskId, canceled: true, status: "Canceled" })
   },
 }

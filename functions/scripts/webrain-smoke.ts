@@ -40,19 +40,24 @@ interface Check {
 const checks: Check[] = []
 const record = (name: string, ok: boolean, detail = ""): void => {
   checks.push({name, ok, detail})
-  console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`)
+  console.log(
+    `  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`
+  )
 }
 
 const main = async (): Promise<void> => {
   const url = process.env["WEBRAIN_MCP_URL"]
   if (!url) {
-    console.error("WEBRAIN_MCP_URL is not set. See this file's header for the run recipe.")
+    console.error(
+      "WEBRAIN_MCP_URL is not set. See this file's header for the run recipe."
+    )
     process.exit(2)
   }
 
   // Imported here, not at the top: the env module reads process.env on first
   // import, so the variables above must already be in place.
-  const {webrainHealth, webrainTool} = await import("../src/infrastructure/webrain-mcp")
+  const {webrainHealth, webrainTool} =
+    await import("../src/infrastructure/webrain-mcp")
 
   console.log(`\nwebrain wiring smoke test -> ${url}\n`)
 
@@ -66,21 +71,31 @@ const main = async (): Promise<void> => {
   // stateful tools?) and the gateway allowlist would refuse first, making the
   // worker's behaviour unobservable. Admin is the tier the gateway does not
   // filter.
-  const scrape = await webrainTool("webrain_scrape", "admin", {url: "https://example.com"})
-  record("webrain_scrape succeeds", scrape.ok, scrape.ok ? "" : String(scrape.error).slice(0, 120))
+  const scrape = await webrainTool("webrain_scrape", "admin", {
+    url: "https://example.com",
+  })
+  record(
+    "webrain_scrape succeeds",
+    scrape.ok,
+    scrape.ok ? "" : String(scrape.error).slice(0, 120)
+  )
   record(
     "the result carries a size stamp",
     typeof scrape.tokens?.est_tokens === "number",
-    `est_tokens=${scrape.tokens?.est_tokens} chars=${scrape.tokens?.chars}`,
+    `est_tokens=${scrape.tokens?.est_tokens} chars=${scrape.tokens?.chars}`
   )
-  record("the result parses as JSON", scrape.json !== undefined, `bytes=${scrape.text.length}`)
+  record(
+    "the result parses as JSON",
+    scrape.json !== undefined,
+    `bytes=${scrape.text.length}`
+  )
 
   console.log("\nstateful work (must be refused on a shared instance)")
   const refused = await webrainTool("webrain_profiles", "admin", {})
   record(
     "webrain_profiles is refused with the no_state error",
     !refused.ok && refused.noStateRefused === true,
-    `noStateRefused=${refused.noStateRefused}`,
+    `noStateRefused=${refused.noStateRefused}`
   )
 
   // The known gap from ADR-2026-09-CRAWL-PROVIDER-ABSTRACTION.md 9a: this
@@ -93,8 +108,9 @@ const main = async (): Promise<void> => {
   console.log(
     gap.noStateRefused ?
       "  NOTE  gap CLOSED: webrain_session(op=list) is now refused" :
-      "  NOTE  gap OPEN: webrain_session(op=list) is served on a shared instance" +
-        " => gateway allowlist is load-bearing",
+      "  NOTE  gap OPEN: webrain_session(op=list) is served on a" +
+      " shared instance" +
+          " => gateway allowlist is load-bearing"
   )
 
   console.log("\nshared URL guard (the same module ai_handler now uses)")
@@ -108,10 +124,12 @@ const main = async (): Promise<void> => {
   record(
     "only the public https target survives",
     metadata.length === 1 && metadata[0] === "https://example.com/ok",
-    `survivors=${metadata.length}`,
+    `survivors=${metadata.length}`
   )
 
-  console.log("\n/api/crawl on the webrain branch (the route the playground calls)")
+  console.log(
+    "\n/api/crawl on the webrain branch (the route the playground calls)"
+  )
   // The real handler, with a minimal Express-Response stand-in. Driving the
   // handler rather than the client is the point: it proves the route + the
   // guard +
@@ -132,18 +150,33 @@ const main = async (): Promise<void> => {
   await webrainCrawl(
     // A public target AND a metadata one, so the guard is exercised in the same
     // call.
-    {body: {urls: ["https://example.com", "http://169.254.169.254/latest/meta-data/"]}} as never,
-    res as never,
+    {
+      body: {
+        urls: [
+          "https://example.com",
+          "http://169.254.169.254/latest/meta-data/",
+        ],
+      },
+    } as never,
+    res as never
   )
 
   const crawl = JSON.parse(captured.body)
-  record("the shared guard dropped the metadata target", crawl.count === 1, `count=${crawl.count}`)
-  record("the response names the provider", crawl.provider === "webrain", `provider=${crawl.provider}`)
+  record(
+    "the shared guard dropped the metadata target",
+    crawl.count === 1,
+    `count=${crawl.count}`
+  )
+  record(
+    "the response names the provider",
+    crawl.provider === "webrain",
+    `provider=${crawl.provider}`
+  )
   record("the call succeeded", crawl.status === "ok", `status=${crawl.status}`)
   record(
     "the result carries the worker's typed JSON",
     typeof crawl.results?.[0]?.data === "object",
-    `challenge=${JSON.stringify(crawl.results?.[0]?.challenge)}`,
+    `challenge=${JSON.stringify(crawl.results?.[0]?.challenge)}`
   )
 
   const failed = checks.filter((c) => !c.ok).length

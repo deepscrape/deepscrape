@@ -38,13 +38,16 @@ export const MAX_TARGETS = 50
  * link-local (which is where cloud metadata lives — `169.254.169.254`), IPv6
  * loopback and unique-local, and the internal-only TLDs.
  */
-export const BLOCKED_HOST = /^(localhost|\.?0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|.*\.local$|.*\.internal$)/i
+export const BLOCKED_HOST =
+  // eslint-disable-next-line max-len -- a regex literal cannot be wrapped
+  /^(localhost|\.?0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|.*\.local$|.*\.internal$)/i
 
 /** True when the host resolves into space we must not be able to read.
  * @param {*} hostname
  * @return {*}
  */
-export const isBlockedHost = (hostname: string): boolean => BLOCKED_HOST.test(hostname)
+export const isBlockedHost = (hostname: string): boolean =>
+  BLOCKED_HOST.test(hostname)
 
 /**
  * True when a single candidate is a target we are willing to hand to a worker:
@@ -57,14 +60,19 @@ export const isBlockedHost = (hostname: string): boolean => BLOCKED_HOST.test(ho
  * @return {*}
  */
 export const isSafeTargetUrl = (candidate: unknown): candidate is string => {
-  if (typeof candidate !== "string" || candidate.length > TARGET_URL_MAX_LENGTH) {
+  if (
+    typeof candidate !== "string" ||
+    candidate.length > TARGET_URL_MAX_LENGTH
+  ) {
     return false
   }
 
   try {
     const parsed = new URL(candidate)
-    return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-            !isBlockedHost(parsed.hostname)
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      !isBlockedHost(parsed.hostname)
+    )
   } catch {
     return false
   }

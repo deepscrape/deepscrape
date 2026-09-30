@@ -39,51 +39,53 @@
 
 import fetch, { RequestInit } from "node-fetch"
 import { env } from "../config/env"
-import { decideWebrainTool,
-  webrainToolRefusalMessage } from "../domain/webrain-tools.domain"
+import {
+  decideWebrainTool,
+  webrainToolRefusalMessage,
+} from "../domain/webrain-tools.domain"
 
 /** A tool result, normalised out of webrain's MCP envelope. */
 export interface WebrainToolResult {
-    ok: boolean
-    /** The tool's payload as text — webrain puts it in `content[0].text`. */
-    text: string
-    /** The same payload when it parsed as JSON. Most tools
-     * return typed JSON. */
-    json?: unknown
-    /**
-     * The response's size stamp: `{chars, est_tokens}`. An ESTIMATE, and an
-     * object
-     * rather than a number — see this file's header. Present only when the
-     * worker
-     * stamped the result.
-     */
-    tokens?: { chars?: number; est_tokens?: number }
-    /** Server-side duration the worker reported. */
-    ms?: number
-    /** Human-readable failure reason; absent when `ok`. */
-    error?: string
-    /** The shared-instance guard refused this tool. */
-    noStateRefused?: boolean
-    /**
-     * The GATEWAY's allowlist refused this tool for the caller's tier.
-     *
-     * Distinct from `noStateRefused` on purpose, and the distinction is the
-     * point:
-     * that one is webrain refusing three tools it happens to know are stateful,
-     * while this is US refusing before the worker is reached — including the
-     * tools
-     * webrain does not protect, since `webrain_session(op=list)` is served on a
-     * shared worker. A caller that conflates the two would believe the worker
-     * was
-     * guarding them when it was the gateway.
-     */
-    toolRefused?: boolean
-    /** Why the gateway refused it, when it did. */
-    refusal?: "unknown-tool" | "tier"
-    /** The worker could not be reached (or no URL is configured). */
-    transportError?: boolean
-    /** HTTP status, or 0 when the connection itself failed. */
-    status: number
+  ok: boolean
+  /** The tool's payload as text — webrain puts it in `content[0].text`. */
+  text: string
+  /** The same payload when it parsed as JSON. Most tools
+   * return typed JSON. */
+  json?: unknown
+  /**
+   * The response's size stamp: `{chars, est_tokens}`. An ESTIMATE, and an
+   * object
+   * rather than a number — see this file's header. Present only when the
+   * worker
+   * stamped the result.
+   */
+  tokens?: { chars?: number; est_tokens?: number }
+  /** Server-side duration the worker reported. */
+  ms?: number
+  /** Human-readable failure reason; absent when `ok`. */
+  error?: string
+  /** The shared-instance guard refused this tool. */
+  noStateRefused?: boolean
+  /**
+   * The GATEWAY's allowlist refused this tool for the caller's tier.
+   *
+   * Distinct from `noStateRefused` on purpose, and the distinction is the
+   * point:
+   * that one is webrain refusing three tools it happens to know are stateful,
+   * while this is US refusing before the worker is reached — including the
+   * tools
+   * webrain does not protect, since `webrain_session(op=list)` is served on a
+   * shared worker. A caller that conflates the two would believe the worker
+   * was
+   * guarding them when it was the gateway.
+   */
+  toolRefused?: boolean
+  /** Why the gateway refused it, when it did. */
+  refusal?: "unknown-tool" | "tier"
+  /** The worker could not be reached (or no URL is configured). */
+  transportError?: boolean
+  /** HTTP status, or 0 when the connection itself failed. */
+  status: number
 }
 
 const baseUrl = (): string => (env.WEBRAIN_MCP_URL || "").replace(/\/+$/, "")
@@ -125,9 +127,7 @@ const extractText = (result: { content?: unknown } | undefined): string => {
 const transportFailure = (message: string): WebrainToolResult => ({
   ok: false,
   text: "",
-  error: baseUrl() ?
-    message :
-    "WEBRAIN_MCP_URL is not configured",
+  error: baseUrl() ? message : "WEBRAIN_MCP_URL is not configured",
   transportError: true,
   status: 0,
 })
@@ -159,7 +159,7 @@ const transportFailure = (message: string): WebrainToolResult => ({
 export const webrainTool = async (
   name: string,
   accessMode: string | undefined,
-  args: Record<string, unknown> = {},
+  args: Record<string, unknown> = {}
 ): Promise<WebrainToolResult> => {
   const decision = decideWebrainTool(accessMode, name)
   if (!decision.allowed) {
@@ -211,28 +211,44 @@ export const webrainTool = async (
       text: "",
       // The worker answers a bare 401 with an empty body; naming the cause
       // is more useful than echoing nothing.
-      error: status === 401 ?
-        "webrain rejected the worker token (WEBRAIN_HTTP_TOKEN)" :
-        `webrain answered ${status}`,
+      error:
+        status === 401 ?
+          "webrain rejected the worker token (WEBRAIN_HTTP_TOKEN)" :
+          `webrain answered ${status}`,
       status,
     }
   }
 
   let payload: {
-        result?: { content?: unknown; isError?: boolean; tokens?: {
-             chars?: number; est_tokens?: number }; ms?: number }
-        error?: { message?: string }
+    result?: {
+      content?: unknown
+      isError?: boolean
+      tokens?: {
+        chars?: number
+        est_tokens?: number
+      }
+      ms?: number
     }
+    error?: { message?: string }
+  }
   try {
     payload = JSON.parse(unwrapTransport(raw))
   } catch {
-    return { ok: false, text: "", error:
-        "webrain returned a body that is not JSON", status }
+    return {
+      ok: false,
+      text: "",
+      error: "webrain returned a body that is not JSON",
+      status,
+    }
   }
 
   if (payload.error) {
-    return { ok: false, text: "", error: payload.error.message ||
-         "webrain JSON-RPC error", status }
+    return {
+      ok: false,
+      text: "",
+      error: payload.error.message || "webrain JSON-RPC error",
+      status,
+    }
   }
 
   const text = extractText(payload.result)
@@ -270,7 +286,9 @@ const toJson = (text: string): unknown => {
  * this is safe to use as the 6PN-only readiness probe behind a gateway.
  */
 export const webrainHealth = async (): Promise<{
-    ok: boolean; status: number }> => {
+  ok: boolean
+  status: number
+}> => {
   const url = baseUrl()
   if (!url) {
     return { ok: false, status: 0 }
@@ -278,7 +296,9 @@ export const webrainHealth = async (): Promise<{
 
   try {
     const response = await fetch(`${url}/health`, {
-      method: "GET", compress: true })
+      method: "GET",
+      compress: true,
+    })
     return { ok: response.status === 200, status: response.status }
   } catch {
     return { ok: false, status: 0 }

@@ -38,8 +38,14 @@ import { HttpsError } from "firebase-functions/v2/https"
 import { guardedOnCall as onCall } from "../infrastructure/callable-limiter"
 import { db } from "../app/config"
 import { getBillingAccessMode } from "../domain/billing.domain"
-import { readStoredProvider, writeStoredProvider } from "../infrastructure/scrape-provider.store"
-import { isScrapeProviderId, selectableProviders } from "../domain/scrape-providers.domain"
+import {
+  readStoredProvider,
+  writeStoredProvider,
+} from "../infrastructure/scrape-provider.store"
+import {
+  isScrapeProviderId,
+  selectableProviders,
+} from "../domain/scrape-providers.domain"
 import {
   type AiVendorId,
   availableVendors,
@@ -71,7 +77,12 @@ const requireUid = (request: { auth?: { uid?: string } }): string => {
  * @param {*} uid
  */
 const accessModeOf = async (uid: string): Promise<string> => {
-  const snapshot = await db.collection("users").doc(uid).collection("billing").doc("current").get()
+  const snapshot = await db
+    .collection("users")
+    .doc(uid)
+    .collection("billing")
+    .doc("current")
+    .get()
   if (!snapshot.exists) {
     return getBillingAccessMode(undefined)
   }
@@ -82,7 +93,8 @@ const accessModeOf = async (uid: string): Promise<string> => {
  * @param {*} uid
  * @return {*}
  */
-const aiKeysRef = (uid: string) => db.collection("users").doc(uid).collection("private").doc("ai")
+const aiKeysRef = (uid: string) =>
+  db.collection("users").doc(uid).collection("private").doc("ai")
 
 /**
  * The vendor ids the caller has a key stored for.
@@ -112,7 +124,10 @@ const mappedVendorIds = async (uid: string): Promise<AiVendorId[]> => {
  * @param {*} uid
  * @param {*} vendor
  */
-export const readUserAiKey = async (uid: string, vendor: AiVendorId): Promise<string | null> => {
+export const readUserAiKey = async (
+  uid: string,
+  vendor: AiVendorId
+): Promise<string | null> => {
   const snapshot = await aiKeysRef(uid).get()
   if (!snapshot.exists) {
     return null
@@ -155,7 +170,9 @@ export const getMySettings = onCall(OPTIONS, async (request) => {
         allowed: resolution.allowed,
         source: resolution.source,
         refusal: resolution.refusal ?? null,
-        hasKey: resolution.vendor ? keyed.includes(resolution.vendor.id) : false,
+        hasKey: resolution.vendor ?
+          keyed.includes(resolution.vendor.id) :
+          false,
       })),
     },
   }
@@ -173,7 +190,8 @@ export const getMySettings = onCall(OPTIONS, async (request) => {
  */
 export const setMyScrapeProvider = onCall(OPTIONS, async (request) => {
   const uid = requireUid(request)
-  const providerId = (request.data as { provider?: unknown } | undefined)?.provider
+  const providerId = (request.data as { provider?: unknown } | undefined)
+    ?.provider
 
   if (!isScrapeProviderId(providerId)) {
     throw new HttpsError("invalid-argument", "Unknown scraping provider.")
@@ -186,7 +204,10 @@ export const setMyScrapeProvider = onCall(OPTIONS, async (request) => {
     // route": the distinction is already in the catalogue, and telling a free
     // user
     // which paid provider exists would be advertising they did not ask for.
-    throw new HttpsError("permission-denied", "That provider is not available on your current plan.")
+    throw new HttpsError(
+      "permission-denied",
+      "That provider is not available on your current plan."
+    )
   }
 
   await writeStoredProvider(uid, providerId)
@@ -218,7 +239,7 @@ export const setMyAiKey = onCall(OPTIONS, async (request) => {
     // No value in the message, and none in any log line: it is a credential.
     throw new HttpsError(
       "invalid-argument",
-      "That does not look like an API key.",
+      "That does not look like an API key."
     )
   }
 

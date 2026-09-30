@@ -793,6 +793,7 @@
     "TOTAL_TIME": "Total Active Time"
   },
   "CNT": {
+    "RUN_TASK": "Run task",
     "DEFAULT": "Default",
     "DESTROYED": "destroyed",
     "DESTROY": "Destroy",
@@ -814,6 +815,23 @@
   },
   "CPACK": {
     "CONFIG": "Configuration:"
+  },
+  "SCRAPE_PROVIDER": {
+    "TITLE": "Scraping engine",
+    "CRAWL4AI": "Crawl4AI (frozen)",
+    "JINAAI": "Jina Reader",
+    "WEBRAIN": "WebRain (embedded)"
+  },
+  "AI_VENDOR": {
+    "TITLE": "AI providers",
+    "ANTHROPIC": "Anthropic",
+    "OPENAI": "OpenAI",
+    "GROQ": "Groq",
+    "JINA": "Jina AI",
+    "SOURCE_PLATFORM": "Included in your plan",
+    "SOURCE_USER": "Your own API key",
+    "REFUSAL_PLAN": "Not included in your current plan",
+    "REFUSAL_BYOK": "Requires your own API key"
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Overview",
@@ -846,6 +864,15 @@
     "MHTML": "MHTML:",
     "MHTML_AVAILABLE": "MHTML content available (not rendered).",
     "NO_MHTML": "No MHTML available.",
+    "OUTCOME_CHALLENGE_TITLE": "This page was blocked",
+    "OUTCOME_CHALLENGE_BLOCKED_TITLE": "Access denied by the site",
+    "OUTCOME_CHALLENGE_CAPTCHA_TITLE": "CAPTCHA challenge",
+    "OUTCOME_CHALLENGE_BODY": "The site returned an anti-bot gate instead of the page. Nothing from it was extracted — a gate page is not the target content.",
+    "OUTCOME_CHALLENGE_ACTION": "Retry with a real browser session, or attach one of your saved browser profiles.",
+    "OUTCOME_EMPTY_TITLE": "No content returned",
+    "OUTCOME_EMPTY_BODY": "The page loaded but produced no readable content. The selector or the content filter may be too narrow.",
+    "OUTCOME_FAILED_TITLE": "This URL failed",
+    "OUTCOME_FAILED_BODY": "The request did not complete. The reason is in the overview below.",
     "SELECT_TAB": "Select a tab to view content."
   },
   "SHELL": {
@@ -1105,6 +1132,10 @@
     "PRESET_VALIDATION_DESC": "Verify URL accessibility with HEAD requests and extract metadata"
   },
   "MACHINES": {
+    "TASK_TITLE": "Run task in container",
+    "TASK_HINT": "The JSON body is forwarded unchanged to the container's /crawl endpoint. The container must be running.",
+    "TASK_RUN": "Run",
+    "TASK_CANCEL": "Cancel",
     "TITLE": "Machines",
     "SUBTITLE": "Manage and monitor your machines 🚀",
     "INTRO_1": "This page covers installation, configuration, and usage of",

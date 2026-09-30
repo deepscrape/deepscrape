@@ -793,6 +793,7 @@
     "TOTAL_TIME": "Temps actif total"
   },
   "CNT": {
+    "RUN_TASK": "Exécuter une tâche",
     "DEFAULT": "Par défaut",
     "DESTROYED": "détruit",
     "DESTROY": "Détruire",
@@ -814,6 +815,23 @@
   },
   "CPACK": {
     "CONFIG": "Configuration :"
+  },
+  "SCRAPE_PROVIDER": {
+    "TITLE": "Moteur d'extraction",
+    "CRAWL4AI": "Crawl4AI (figé)",
+    "JINAAI": "Jina Reader",
+    "WEBRAIN": "WebRain (intégré)"
+  },
+  "AI_VENDOR": {
+    "TITLE": "Fournisseurs d'IA",
+    "ANTHROPIC": "Anthropic",
+    "OPENAI": "OpenAI",
+    "GROQ": "Groq",
+    "JINA": "Jina AI",
+    "SOURCE_PLATFORM": "Inclus dans votre offre",
+    "SOURCE_USER": "Votre propre clé API",
+    "REFUSAL_PLAN": "Non inclus dans votre offre actuelle",
+    "REFUSAL_BYOK": "Nécessite votre propre clé API"
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Aperçu",
@@ -846,6 +864,15 @@
     "MHTML": "MHTML :",
     "MHTML_AVAILABLE": "Contenu MHTML disponible (non rendu).",
     "NO_MHTML": "Aucun MHTML disponible.",
+    "OUTCOME_CHALLENGE_TITLE": "Cette page a été bloquée",
+    "OUTCOME_CHALLENGE_BLOCKED_TITLE": "Accès refusé par le site",
+    "OUTCOME_CHALLENGE_CAPTCHA_TITLE": "Défi CAPTCHA",
+    "OUTCOME_CHALLENGE_BODY": "Le site a renvoyé une barrière anti-bot à la place de la page. Rien n'en a été extrait : une page de barrière n'est pas le contenu cible.",
+    "OUTCOME_CHALLENGE_ACTION": "Réessayez avec une vraie session de navigateur, ou joignez un profil de navigateur enregistré.",
+    "OUTCOME_EMPTY_TITLE": "Aucun contenu renvoyé",
+    "OUTCOME_EMPTY_BODY": "La page s'est chargée mais n'a produit aucun contenu lisible. Le sélecteur ou le filtre de contenu est peut-être trop restrictif.",
+    "OUTCOME_FAILED_TITLE": "Cette URL a échoué",
+    "OUTCOME_FAILED_BODY": "La requête ne s'est pas terminée. La raison figure dans l'aperçu ci-dessous.",
     "SELECT_TAB": "Sélectionnez un onglet pour afficher le contenu."
   },
   "SHELL": {
@@ -1105,6 +1132,10 @@
     "PRESET_VALIDATION_DESC": "Vérifier l'accessibilité des URL avec des requêtes HEAD et extraire les métadonnées"
   },
   "MACHINES": {
+    "TASK_TITLE": "Exécuter une tâche dans le conteneur",
+    "TASK_HINT": "Le corps JSON est transmis tel quel à l'endpoint /crawl du conteneur. Le conteneur doit être démarré.",
+    "TASK_RUN": "Exécuter",
+    "TASK_CANCEL": "Annuler",
     "TITLE": "Machines",
     "SUBTITLE": "Gérez et surveillez vos machines 🚀",
     "INTRO_1": "Cette page couvre l'installation, la configuration et l'utilisation de",

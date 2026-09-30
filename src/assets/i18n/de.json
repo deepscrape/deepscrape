@@ -793,6 +793,7 @@
     "TOTAL_TIME": "Gesamte aktive Zeit"
   },
   "CNT": {
+    "RUN_TASK": "Task ausführen",
     "DEFAULT": "Standard",
     "DESTROYED": "zerstört",
     "DESTROY": "Zerstören",
@@ -814,6 +815,23 @@
   },
   "CPACK": {
     "CONFIG": "Konfiguration:"
+  },
+  "SCRAPE_PROVIDER": {
+    "TITLE": "Scraping-Engine",
+    "CRAWL4AI": "Crawl4AI (eingefroren)",
+    "JINAAI": "Jina Reader",
+    "WEBRAIN": "WebRain (integriert)"
+  },
+  "AI_VENDOR": {
+    "TITLE": "KI-Anbieter",
+    "ANTHROPIC": "Anthropic",
+    "OPENAI": "OpenAI",
+    "GROQ": "Groq",
+    "JINA": "Jina AI",
+    "SOURCE_PLATFORM": "In Ihrem Tarif enthalten",
+    "SOURCE_USER": "Eigener API-Schlüssel",
+    "REFUSAL_PLAN": "Nicht in Ihrem aktuellen Tarif enthalten",
+    "REFUSAL_BYOK": "Erfordert einen eigenen API-Schlüssel"
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Übersicht",
@@ -846,6 +864,15 @@
     "MHTML": "MHTML:",
     "MHTML_AVAILABLE": "MHTML-Inhalt verfügbar (nicht gerendert).",
     "NO_MHTML": "Kein MHTML verfügbar.",
+    "OUTCOME_CHALLENGE_TITLE": "Diese Seite wurde blockiert",
+    "OUTCOME_CHALLENGE_BLOCKED_TITLE": "Zugriff von der Website verweigert",
+    "OUTCOME_CHALLENGE_CAPTCHA_TITLE": "CAPTCHA-Herausforderung",
+    "OUTCOME_CHALLENGE_BODY": "Die Website hat anstelle der Seite eine Anti-Bot-Sperre zurückgegeben. Daraus wurde nichts extrahiert — eine Sperrseite ist nicht der Zielinhalt.",
+    "OUTCOME_CHALLENGE_ACTION": "Erneut mit einer echten Browser-Sitzung versuchen oder ein gespeichertes Browser-Profil anhängen.",
+    "OUTCOME_EMPTY_TITLE": "Kein Inhalt zurückgegeben",
+    "OUTCOME_EMPTY_BODY": "Die Seite wurde geladen, lieferte aber keinen lesbaren Inhalt. Der Selektor oder der Inhaltsfilter ist möglicherweise zu eng.",
+    "OUTCOME_FAILED_TITLE": "Diese URL ist fehlgeschlagen",
+    "OUTCOME_FAILED_BODY": "Die Anfrage wurde nicht abgeschlossen. Der Grund steht in der Übersicht unten.",
     "SELECT_TAB": "Wählen Sie einen Tab aus, um den Inhalt anzuzeigen."
   },
   "SHELL": {
@@ -1105,6 +1132,10 @@
     "PRESET_VALIDATION_DESC": "Überprüfen Sie die Erreichbarkeit von URLs mit HEAD-Anfragen und extrahieren Sie Metadaten"
   },
   "MACHINES": {
+    "TASK_TITLE": "Task im Container ausführen",
+    "TASK_HINT": "Der JSON-Body wird unverändert an den /crawl-Endpunkt des Containers weitergegeben. Der Container muss laufen.",
+    "TASK_RUN": "Ausführen",
+    "TASK_CANCEL": "Abbrechen",
     "TITLE": "Maschinen",
     "SUBTITLE": "Verwalten und überwachen Sie Ihre Maschinen 🚀",
     "INTRO_1": "Diese Seite behandelt Installation, Konfiguration und Verwendung von",

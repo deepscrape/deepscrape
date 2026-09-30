@@ -4,12 +4,47 @@
 import { Request, Response } from "express"
 import { JinaHeader } from "../types"
 import fetch, { RequestInit } from "node-fetch"
-// import { pipeline } from "node:stream"
-// import { promisify } from "node:util"
+import { pipeline } from "node:stream/promises"
 import { customUrlDecoder } from "../gfunctions"
 import { env } from "../config/env"
+import { safeTargetUrls } from "../domain/url-guard.domain"
+import { AiVendorId } from "../domain/user-ai-settings.domain"
+import { readUserAiKey } from "../gfunctions/user-settings"
 
-// const streamPipeline = promisify(pipeline)
+/**
+ * The key to call `vendorId` with: the caller's own if they stored one, else the
+ * platform's.
+ *
+ * One function for all four vendors, because the rule is identical and four copies
+ * is four chances for one of them to keep spending the platform's key after a user
+ * has supplied their own — a mistake that shows up as a bill, not as an error.
+ *
+ * It reads the user's key FIRST on purpose: someone who brought a key asked to
+ * spend their own quota, and charging them to ours is both a surprise and, at
+ * scale, our cost.
+ *
+ * ponytail: the caller passes the platform key, so a vendor with no platform key
+ * still works when the user has stored one. Note the ceiling — a FREE plan cannot
+ * reach these routes at all, because they are `paid`-gated in the route table and
+ * that runs before this. So BYOK today means "your own quota on a paid plan", not
+ * "free access with your own key". Lifting that means teaching `requirePaidAccess`
+ * about vendor keys, which is a change to the entitlement guard, not to this file.
+ * @param {*} req
+ * @param {*} vendorId
+ * @param {*} platformKey
+ */
+const keyFor = async (
+    req: Request,
+    vendorId: AiVendorId,
+    platformKey: string,
+): Promise<string> => {
+    const uid = req.user?.uid
+    if (!uid) {
+        return platformKey
+    }
+    return (await readUserAiKey(uid, vendorId)) ?? platformKey
+}
+
 const toSingleParam = (value: string | string[] | undefined): string =>
     Array.isArray(value) ? (value[0] || "") : (value || "")
 
@@ -20,68 +55,19 @@ const toHeaderValue = (value: string | string[] | undefined, fallback = ""): str
     return value || fallback
 }
 
-// Utility function to handle API requests and streaming
-/* const handleStreamedApiResponse = async (
-    apiUrl: string,
-    fetchOptions: RequestInit,
-    res: Response,
-    apiName: string,
-    contentType = "text/event-stream"
-) => {
-    try {
-        const apiResponse = await fetch(apiUrl, fetchOptions)
-
-        if (!apiResponse.ok) {
-            throw new Error(`API error: ${apiResponse.statusText}`)
-        }
-
-        if (!apiResponse.body) {
-            throw new Error("API response body is empty")
-        }
-
-        res.writeHead(200, {
-            "Content-Type": contentType,
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Connection": "keep-alive",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        })
-
-        // Use pipeline to directly pipe the API's response stream to the client's response stream
-        await streamPipeline(apiResponse.body, res)
-    } catch (error) {
-        console.error("Error:", error)
-        res.status(500).json({ error: `Failed to connect to ${apiName} API` })
-    }
-}
- */
 export const crawl4aiCore = async (req: Request, res: Response) => {
     // const decodedUrl = decodeURIComponent(url) // decode the URL
     const apiUrl = `${env.API_CRAWL4AI_URL}/crawl`
     const { urls, priority } = req.body
 
     // ponytail: the crawler agent egresses on our behalf and nothing downstream
-    // blocks private space (no RFC1918 / link-local / metadata guard exists
-    // anywhere in this repo), so an unvalidated list here is an internal-read
+    // blocks private space, so an unvalidated list here is an internal-read
     // primitive — POST /api/crawl {"urls":["http://169.254.169.254/latest/meta-data/iam/"]}
-    // returns the metadata body to the caller. Scheme allowlist + host blocklist
-    // is the cheap half; the agent needs the same list re-checked after redirects,
-    // which is the half this repo cannot do for it.
-    const BLOCKED_HOST = /^(localhost|\.?0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|.*\.local$|.*\.internal$)/i
-    const safeUrls = Array.isArray(urls) ?
-        urls.filter((candidate: unknown): candidate is string => {
-            if (typeof candidate !== "string" || candidate.length > 2048) {
-                return false
-            }
-            try {
-                const parsed = new URL(candidate)
-                return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-                    !BLOCKED_HOST.test(parsed.hostname)
-            } catch {
-                return false
-            }
-        }).slice(0, 50) :
-        []
+    // returns the metadata body to the caller. That guard now lives in
+    // `domain/url-guard.domain.ts`, so the webrain path cannot grow a second copy
+    // of the regex; read that module for what it covers and for the redirect half
+    // it cannot.
+    const safeUrls = safeTargetUrls(urls)
 
     if (!safeUrls.length) {
         res.status(400).json({ error: "Invalid target URLs" })
@@ -93,8 +79,28 @@ export const crawl4aiCore = async (req: Request, res: Response) => {
         priority,
     }
 
+    // ponytail: this used to relay the CALLER's own `authorization` header to the
+    // crawl worker. Two things were wrong with it. It pushed every tenant's
+    // Firebase ID token into a shared, multi-tenant process; and it could not
+    // authenticate, because a worker started with WEBRAIN_HTTP_TOKEN wants
+    // `Authorization: Bearer <secret>` (webrain-mcp/src/lib.rs) and answers 401 to
+    // anything else. Verified against the real binary: no auth -> 401, relayed
+    // user token -> 401, server-held secret -> 200.
+    //
+    // This credential is ours — BFF to our own worker. It is neither the end
+    // user's nor a provider's: JinaAI stays a separate provider with its own key
+    // on `jinaAICrawl` below, and crawl4ai stays a separate provider too. Only the
+    // pattern is shared, never the upstream.
+    //
+    // ponytail: still crawl4ai-shaped. `POST /crawl` with `{urls, priority}` and
+    // the `X-*` option headers are crawl4ai's contract, and the response is read
+    // as `response.data.{title,url,usage.tokens,content}`. When the webrain binary
+    // serves these features as API + MCP, the path, the request shape and the
+    // response shape all move to webrain's typed JSON + `challenge` contract. This
+    // function is where that swap lands, so keep the provider shape here and the
+    // webrain shape out of the client types.
     const headers: JinaHeader = {
-        "Authorization": `${req.headers["authorization"] as string || "Bearer "}`,
+        "Authorization": `Bearer ${env.CRAWL4AI_API_KEY}`,
         "Accept": req.headers["accept"] as string || "application/json",
         "X-With-Iframe": req.headers["x-with-iframe"] as string || "false",
         "X-Return-Format": req.headers["x-return-format"] as string || "markdown",
@@ -124,23 +130,36 @@ export const crawl4aiCore = async (req: Request, res: Response) => {
         }
 
 
-        const buffer = await apiResponse.arrayBuffer()
-        res.writeHead(200, {
-            "Content-Type": "application/octet-stream",
-            "Content-Length": buffer.byteLength, // Add Content-Length header
+        // One path for both shapes: pipe what the worker sends and report the
+        // worker's own content-type. This used to buffer the whole body, hard-code
+        // `application/octet-stream`, and force the client into
+        // `JSON.parse(arrayBufferToString(...))` on an arraybuffer — a content-type
+        // that lied about the payload, with a second half-written streaming helper
+        // sitting commented out beside it.
+        //
+        // No Content-Length: the length is unknown until the upstream finishes, and
+        // declaring one would truncate or hang the response.
+        res.writeHead(apiResponse.status, {
+            "Content-Type": apiResponse.headers.get("content-type") || "application/json",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
         })
 
-        // await streamPipeline(apiResponse.body, res);
-        res.end(Buffer.from(buffer))
+        // `node:stream/promises` exports pipeline directly; the shim this replaces
+        // existed only because the import came from `node:stream`.
+        await pipeline(apiResponse.body, res)
     } catch (error) {
         console.error("Error:", error)
-        res.status(500).json({ error: "Failed to stream on crawl API" })
+        // A pipe can fail after the headers are already on the wire; calling
+        // `res.status()` then throws inside the catch and takes the request down.
+        if (!res.headersSent) {
+            res.status(500).json({ error: "Failed to stream on crawl API" })
+        }
     }
 }
 
 export const jinaAICrawl = async (req: Request, res: Response) => {
     const url = toSingleParam(req.params.url as string | string[] | undefined)
-    const apiKey = env.JINAAI_API_KEY
+    const apiKey = await keyFor(req, "jina", env.JINAAI_API_KEY)
 
     const headers: JinaHeader = {
         "Authorization": `Bearer ${apiKey}`,
@@ -197,7 +216,7 @@ export const jinaAICrawl = async (req: Request, res: Response) => {
 
 export const anthropicAICore = async (req: Request, res: Response) => {
     const apiUrl = "https://api.anthropic.com/v1/messages"
-    const apiKey = env.ANTHROPIC_API_KEY
+    const apiKey = await keyFor(req, "anthropic", env.ANTHROPIC_API_KEY)
     // console.log(apiKey,)
     try {
         const fetchOptions: RequestInit = {
@@ -276,7 +295,7 @@ export const anthropicAICore = async (req: Request, res: Response) => {
 
 export const openaiAICore = async (req: Request, res: Response) => {
     const apiUrl = env.OPENAI_API_URL
-    const apiKey = env.OPENAI_API_KEY
+    const apiKey = await keyFor(req, "openai", env.OPENAI_API_KEY)
     try {
         const fetchOptions: RequestInit = {
             method: "POST",
@@ -348,7 +367,7 @@ export const openaiAICore = async (req: Request, res: Response) => {
 
 export const groqAICore = async (req: Request, res: Response) => {
     const apiUrl = "https://api.groq.com/openai/v1/chat/completions"
-    const apiKey = env.GROQ_API_KEY
+    const apiKey = await keyFor(req, "groq", env.GROQ_API_KEY)
     try {
         const fetchOptions: RequestInit = {
             method: "POST",

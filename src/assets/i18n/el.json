@@ -793,6 +793,7 @@
     "TOTAL_TIME": "Συνολικός Ενεργός Χρόνος"
   },
   "CNT": {
+    "RUN_TASK": "Εκτέλεση εργασίας",
     "DEFAULT": "Προεπιλογή",
     "DESTROYED": "καταστράφηκε",
     "DESTROY": "Καταστροφή",
@@ -814,6 +815,23 @@
   },
   "CPACK": {
     "CONFIG": "Διαμόρφωση:"
+  },
+  "SCRAPE_PROVIDER": {
+    "TITLE": "Μηχανή συλλογής",
+    "CRAWL4AI": "Crawl4AI (παγωμένη)",
+    "JINAAI": "Jina Reader",
+    "WEBRAIN": "WebRain (ενσωματωμένη)"
+  },
+  "AI_VENDOR": {
+    "TITLE": "Πάροχοι AI",
+    "ANTHROPIC": "Anthropic",
+    "OPENAI": "OpenAI",
+    "GROQ": "Groq",
+    "JINA": "Jina AI",
+    "SOURCE_PLATFORM": "Περιλαμβάνεται στο πλάνο σας",
+    "SOURCE_USER": "Το δικό σας κλειδί API",
+    "REFUSAL_PLAN": "Δεν περιλαμβάνεται στο τρέχον πλάνο σας",
+    "REFUSAL_BYOK": "Απαιτείται δικό σας κλειδί API"
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Επισκόπηση",
@@ -846,6 +864,15 @@
     "MHTML": "MHTML:",
     "MHTML_AVAILABLE": "Υπάρχει διαθέσιμο περιεχόμενο MHTML (δεν εμφανίζεται).",
     "NO_MHTML": "Δεν υπάρχει διαθέσιμο MHTML.",
+    "OUTCOME_CHALLENGE_TITLE": "Η σελίδα αποκλείστηκε",
+    "OUTCOME_CHALLENGE_BLOCKED_TITLE": "Ο ιστότοπος αρνήθηκε την πρόσβαση",
+    "OUTCOME_CHALLENGE_CAPTCHA_TITLE": "Πρόκληση CAPTCHA",
+    "OUTCOME_CHALLENGE_BODY": "Ο ιστότοπος επέστρεψε σελίδα προστασίας anti-bot αντί για τη σελίδα. Δεν εξήχθη τίποτα από αυτήν — μια σελίδα προστασίας δεν είναι το περιεχόμενο-στόχος.",
+    "OUTCOME_CHALLENGE_ACTION": "Δοκιμάστε ξανά με πραγματική συνεδρία browser ή επισυνάψτε ένα αποθηκευμένο προφίλ browser.",
+    "OUTCOME_EMPTY_TITLE": "Δεν επιστράφηκε περιεχόμενο",
+    "OUTCOME_EMPTY_BODY": "Η σελίδα φορτώθηκε αλλά δεν παρήγαγε αναγνώσιμο περιεχόμενο. Ο επιλογέας ή το φίλτρο περιεχομένου ίσως είναι πολύ στενό.",
+    "OUTCOME_FAILED_TITLE": "Αυτό το URL απέτυχε",
+    "OUTCOME_FAILED_BODY": "Το αίτημα δεν ολοκληρώθηκε. Ο λόγος βρίσκεται στην επισκόπηση παρακάτω.",
     "SELECT_TAB": "Επιλέξτε μια καρτέλα για να δείτε το περιεχόμενο."
   },
   "SHELL": {
@@ -1105,6 +1132,10 @@
     "PRESET_VALIDATION_DESC": "Έλεγχος προσβασιμότητας URL με αιτήματα HEAD και εξαγωγή μεταδεδομένων"
   },
   "MACHINES": {
+    "TASK_TITLE": "Εκτέλεση εργασίας στο container",
+    "TASK_HINT": "Το σώμα JSON προωθείται ως έχει στο endpoint /crawl του container. Ο container πρέπει να είναι σε λειτουργία.",
+    "TASK_RUN": "Εκτέλεση",
+    "TASK_CANCEL": "Άκυρο",
     "TITLE": "Μηχανές",
     "SUBTITLE": "Διαχειριστείτε και παρακολουθήστε τις μηχανές σας 🚀",
     "INTRO_1": "Αυτή η σελίδα καλύπτει την εγκατάσταση, τη διαμόρφωση και τη χρήση του",

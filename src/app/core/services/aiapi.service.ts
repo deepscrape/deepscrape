@@ -56,8 +56,16 @@ export class AiAPIService {
     const jinaAiReaderEndpoint: string = this.jinaAiEndpoint + encodedUrl
     const cookie = options.forwardCookies && cookies && cookies?.length ? { "X-Set-Cookie": cookies } : null // If cookies are provided, append them to the headers, )
     const headers = new HttpHeaders({
-      'api-key': `Bearer ${this.authService.token}`, // Replace with your actual API key`,
-      'Authorization': `Bearer ${'JINAAI_API_KEY'}`, // Replace with your actual API key
+      // The BFF's `/api/jina/:url` route is behind `isJwtAuth`, which reads the
+      // `authorization` header — so the CALLER's Firebase token belongs there.
+      //
+      // This used to send `Authorization: Bearer 'JINAAI_API_KEY'` — the literal
+      // quoted string, not the value of any variable — from the browser. Since
+      // the route is `isJwtAuth`-guarded, every call was a 401. The provider key
+      // itself must never come from the browser anyway: `jinaAICrawl` holds it
+      // server-side (`env.JINAAI_API_KEY`) and is the only thing that dials
+      // r.jina.ai.
+      'Authorization': `Bearer ${this.authService.token}`,
       'Accept': 'application/json',
       // "X-With-Links-Summary": "true",
       "X-With-Iframe": options.iframe,

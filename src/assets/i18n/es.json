@@ -793,6 +793,7 @@
     "TOTAL_TIME": "Tiempo activo total"
   },
   "CNT": {
+    "RUN_TASK": "Ejecutar tarea",
     "DEFAULT": "Predeterminado",
     "DESTROYED": "destruido",
     "DESTROY": "Destruir",
@@ -814,6 +815,23 @@
   },
   "CPACK": {
     "CONFIG": "Configuración:"
+  },
+  "SCRAPE_PROVIDER": {
+    "TITLE": "Motor de extracción",
+    "CRAWL4AI": "Crawl4AI (congelado)",
+    "JINAAI": "Jina Reader",
+    "WEBRAIN": "WebRain (integrado)"
+  },
+  "AI_VENDOR": {
+    "TITLE": "Proveedores de IA",
+    "ANTHROPIC": "Anthropic",
+    "OPENAI": "OpenAI",
+    "GROQ": "Groq",
+    "JINA": "Jina AI",
+    "SOURCE_PLATFORM": "Incluido en tu plan",
+    "SOURCE_USER": "Tu propia clave de API",
+    "REFUSAL_PLAN": "No incluido en tu plan actual",
+    "REFUSAL_BYOK": "Requiere tu propia clave de API"
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Resumen",
@@ -846,6 +864,15 @@
     "MHTML": "MHTML:",
     "MHTML_AVAILABLE": "Contenido MHTML disponible (no renderizado).",
     "NO_MHTML": "No hay MHTML disponible.",
+    "OUTCOME_CHALLENGE_TITLE": "Esta página fue bloqueada",
+    "OUTCOME_CHALLENGE_BLOCKED_TITLE": "El sitio denegó el acceso",
+    "OUTCOME_CHALLENGE_CAPTCHA_TITLE": "Desafío CAPTCHA",
+    "OUTCOME_CHALLENGE_BODY": "El sitio devolvió una barrera anti-bot en lugar de la página. No se extrajo nada de ella: una página de barrera no es el contenido objetivo.",
+    "OUTCOME_CHALLENGE_ACTION": "Vuelve a intentarlo con una sesión de navegador real o adjunta uno de tus perfiles guardados.",
+    "OUTCOME_EMPTY_TITLE": "No se devolvió contenido",
+    "OUTCOME_EMPTY_BODY": "La página se cargó pero no produjo contenido legible. El selector o el filtro de contenido pueden ser demasiado estrechos.",
+    "OUTCOME_FAILED_TITLE": "Esta URL falló",
+    "OUTCOME_FAILED_BODY": "La solicitud no se completó. El motivo está en el resumen de abajo.",
     "SELECT_TAB": "Selecciona una pestaña para ver el contenido."
   },
   "SHELL": {
@@ -1105,6 +1132,10 @@
     "PRESET_VALIDATION_DESC": "Verifica la accesibilidad de las URL con solicitudes HEAD y extrae metadatos"
   },
   "MACHINES": {
+    "TASK_TITLE": "Ejecutar tarea en el contenedor",
+    "TASK_HINT": "El cuerpo JSON se reenvía sin cambios al endpoint /crawl del contenedor. El contenedor debe estar en ejecución.",
+    "TASK_RUN": "Ejecutar",
+    "TASK_CANCEL": "Cancelar",
     "TITLE": "Máquinas",
     "SUBTITLE": "Gestiona y supervisa tus máquinas 🚀",
     "INTRO_1": "Esta página cubre la instalación, configuración y uso de",

@@ -157,6 +157,7 @@
     "@types/jest": "^29.5.14",
     "@types/readable-stream": "^4.0.24",
     "@types/stream-buffers": "^3.0.8",
+    "@upstash/box": "^0.7.7",
     "autoprefixer": "^10.5.5",
     "commitizen": "^4.3.2",
     "conventional-changelog-cli": "^5.0.0",

@@ -1,0 +1,8 @@
+/**
+ * The result envelope is deliberately unstyled here.
+ *
+ * Its surface, border and text colours come from the global theme tokens
+ * (`src/styles.scss`) through Tailwind classes in the template, so it follows
+ * the light and dark palettes from one place. A local rule would be the second
+ * place the panel's background is decided, and the first place it goes stale.
+ */

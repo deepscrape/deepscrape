@@ -1,0 +1,73 @@
+<section
+  class="w-full rounded-2xl border border-gray-200 bg-slate-50/30 p-4 shadow-sm transition-shadow dark:border-gray-700 dark:bg-gray7/80">
+  @if (hasHeader) {
+    <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      @if (title) {
+        <h3 class="text-sm font-semibold text-gray6 dark:text-white">
+          {{ title | translate }}
+        </h3>
+      }
+
+      <div class="flex flex-wrap items-center gap-2">
+        @for (item of meta; track $index) {
+          @if (item.value) {
+            <span
+              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+              [ngClass]="toneClass(item.tone)">
+              {{ item.label | translate }}
+              <span class="font-semibold">{{ item.value }}</span>
+            </span>
+          }
+        }
+
+        @if (showRetry) {
+          <button
+            type="button"
+            (click)="retry.emit()"
+            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:text-cyan-300 dark:hover:bg-cyan-950/40">
+            <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">refresh</mat-icon>
+            {{ 'RESULT_ENVELOPE.RETRY' | translate }}
+          </button>
+        }
+      </div>
+    </header>
+  }
+
+  @switch (state) {
+    @case ('loading') {
+      <div class="flex items-center gap-2 py-6 text-sm text-gray-500 dark:text-gray-400" role="status" aria-live="polite">
+        <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent"></span>
+        {{ loadingMessage | translate }}
+      </div>
+    }
+
+    @case ('error') {
+      <div
+        class="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300"
+        role="alert">
+        <mat-icon class="!h-5 !w-5 text-lg leading-5" aria-hidden="true">error_outline</mat-icon>
+        <div class="flex flex-col">
+          <span class="font-semibold">{{ 'RESULT_ENVELOPE.ERROR_TITLE' | translate }}</span>
+          <span>{{ errorMessage }}</span>
+        </div>
+      </div>
+    }
+
+    @case ('empty') {
+      <div class="flex items-center gap-2 py-6 text-sm text-gray-500 dark:text-gray-400">
+        <mat-icon class="!h-5 !w-5 text-lg leading-5" aria-hidden="true">search_off</mat-icon>
+        {{ emptyMessage | translate }}
+      </div>
+    }
+
+    @case ('idle') {
+      <div class="py-6 text-sm text-gray-500 dark:text-gray-400">
+        {{ idleMessage | translate }}
+      </div>
+    }
+
+    @case ('ready') {
+      <ng-content></ng-content>
+    }
+  }
+</section>

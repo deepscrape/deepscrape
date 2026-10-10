@@ -1,0 +1,144 @@
+<div class="flex w-full flex-col gap-6">
+  <header class="flex flex-col gap-1">
+    <h2 class="text-lg font-semibold text-gray6 dark:text-white">
+      {{ 'STORAGE.SETTINGS_TITLE' | translate }}
+    </h2>
+    <p class="text-sm text-gray-500 dark:text-gray-400">
+      {{ 'STORAGE.SETTINGS_SUB' | translate }}
+    </p>
+  </header>
+
+  @if (loading()) {
+    <div
+      class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"
+      role="status"
+      aria-live="polite">
+      <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent"></span>
+      {{ 'STORAGE.LOADING' | translate }}
+    </div>
+  } @else {
+    <section
+      class="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-slate-50/30 p-4 dark:border-gray-700 dark:bg-gray7/80">
+      <app-dropdown
+        [options]="modeOptions"
+        [control]="modeControl | formControl"
+        dropDownName="STORAGE.MODE"
+        padding="py-3 pl-3 pr-4"></app-dropdown>
+
+      <p class="text-xs text-gray-500 dark:text-gray-400">
+        {{ (mode() === 'byob' ? 'STORAGE.MODE_BYOB_HINT' : 'STORAGE.MODE_PLATFORM_HINT') | translate }}
+      </p>
+
+      @if (mode() === 'platform') {
+        <p class="text-xs italic text-gray-500 dark:text-gray-400">
+          {{ 'STORAGE.PLATFORM_NO_CREDENTIALS' | translate }}
+        </p>
+      } @else {
+        <div class="flex flex-col gap-4 pt-1">
+          <app-stinput
+            [control]="bucketControl | formControl"
+            [label]="'STORAGE.BUCKET' | translate"
+            leftIcon="inventory_2"></app-stinput>
+
+          <app-stinput
+            [control]="endpointControl | formControl"
+            [label]="'STORAGE.ENDPOINT' | translate"
+            leftIcon="link"></app-stinput>
+
+          <!--
+            WRITE-ONLY FIELDS.
+            `type="password"` and a label that is not the literal `Password`, so
+            the shared input's reveal heuristic never activates. The controls are
+            never read back, never interpolated, and cleared after a successful
+            send. There is deliberately no "show" affordance.
+          -->
+          <app-stinput
+            [control]="accessKeyControl | formControl"
+            [label]="'STORAGE.ACCESS_KEY' | translate"
+            leftIcon="key"
+            type="password"></app-stinput>
+
+          <app-stinput
+            [control]="secretKeyControl | formControl"
+            [label]="'STORAGE.SECRET_KEY' | translate"
+            leftIcon="key"
+            type="password"></app-stinput>
+
+          <p class="text-xs italic text-gray-500 dark:text-gray-400">
+            {{ 'STORAGE.WRITE_ONLY_NOTE' | translate }}
+          </p>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <span
+              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+              [ngClass]="hasCredentials()
+                ? 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'">
+              <mat-icon class="!h-3.5 !w-3.5 text-[0.875rem] leading-[0.875rem]" aria-hidden="true">
+                {{ hasCredentials() ? 'lock' : 'lock_open' }}
+              </mat-icon>
+              {{ (hasCredentials() ? 'STORAGE.CREDENTIALS_SET' : 'STORAGE.CREDENTIALS_UNSET') | translate }}
+            </span>
+
+            @if (hasCredentials() && !confirmClear()) {
+              <button
+                type="button"
+                (click)="requestClear()"
+                class="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-950/60">
+                <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">delete_outline</mat-icon>
+                {{ 'STORAGE.CLEAR_CREDENTIALS' | translate }}
+              </button>
+            }
+          </div>
+
+          <!-- Two-step removal: the question and the action are separate presses. -->
+          @if (confirmClear()) {
+            <div
+              class="flex flex-wrap items-center gap-2 rounded-lg bg-rose-50/70 p-2 text-xs text-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
+              role="alertdialog"
+              aria-live="polite">
+              <span class="font-medium">{{ 'STORAGE.CLEAR_CONFIRM' | translate }}</span>
+              <button
+                type="button"
+                [disabled]="saving()"
+                (click)="clearCredentials()"
+                class="rounded-full bg-rose-600 px-3 py-1 font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60">
+                {{ 'STORAGE.CLEAR_CONFIRM_YES' | translate }}
+              </button>
+              <button
+                type="button"
+                (click)="cancelClear()"
+                class="rounded-full bg-gray-100 px-3 py-1 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                {{ 'STORAGE.CANCEL' | translate }}
+              </button>
+            </div>
+          }
+        </div>
+      }
+
+      <div class="flex flex-wrap items-center gap-3 pt-1">
+        <button
+          type="button"
+          [disabled]="saving()"
+          (click)="saveSettings()"
+          class="inline-flex items-center gap-2 rounded-full bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-cyan-500 dark:text-gray7 dark:hover:bg-cyan-400">
+          <mat-icon
+            class="!h-4 !w-4 text-base leading-4"
+            [ngClass]="{ 'animate-spin': saving() }"
+            aria-hidden="true">{{ saving() ? 'sync' : 'save' }}</mat-icon>
+          {{ 'STORAGE.SAVE_SETTINGS' | translate }}
+        </button>
+
+        @if (statusKey()) {
+          <span
+            class="text-xs font-medium"
+            [ngClass]="statusTone() === 'error' ? 'text-rose-700 dark:text-rose-300' : 'text-cyan-700 dark:text-cyan-300'"
+            role="status"
+            aria-live="polite">{{ statusKey() | translate }}</span>
+        }
+      </div>
+    </section>
+  }
+
+  <app-saved-files-list></app-saved-files-list>
+</div>

@@ -1,0 +1,28 @@
+<div class="inline-flex flex-wrap items-center gap-2">
+  <button
+    type="button"
+    [disabled]="state() === 'saving' || !url"
+    (click)="save()"
+    [ngClass]="buttonClass()"
+    class="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-60">
+    <mat-icon
+      class="!h-4 !w-4 text-base leading-4"
+      [ngClass]="{ 'animate-spin': state() === 'saving' }"
+      aria-hidden="true">{{ iconName() }}</mat-icon>
+    <span>{{ labelKey() | translate }}</span>
+  </button>
+
+  <!-- The scope the server chose. Rendered only once a save has landed, because
+       before that there is no fact to report and a default would read as one. -->
+  @if (state() === 'saved') {
+    <span
+      class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+      [ngClass]="scopeClass()"
+      [attr.title]="scopeHintKey() | translate">
+      <mat-icon class="!h-3.5 !w-3.5 text-[0.875rem] leading-[0.875rem]" aria-hidden="true">
+        {{ scope() === 'shared' ? 'groups' : 'lock' }}
+      </mat-icon>
+      {{ scopeLabelKey() | translate }}
+    </span>
+  }
+</div>

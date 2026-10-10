@@ -508,12 +508,41 @@ export type CrawlOperationMetrics = {
 }
 
 export type CrawlJobType = 'playground' | 'operation'
-export type CrawlPackType = 'crawl4ai' | 'spider'
+
+/**
+ * The engine that executes a pack.
+ *
+ * `crawl4ai` is the original provider; `webrain` is the platform's own engine and
+ * is now a builtin alongside it. This name exists so that a provider is a
+ * deliberate choice: the cart used to take the provider as a parameter DEFAULT of
+ * `'crawl4ai'`, so any call site that omitted it was silently branded crawl4ai.
+ *
+ * `crawlagent` is deliberately absent. It is legacy and may return, but nothing in
+ * this codebase executes it today and a union entry would imply otherwise.
+ */
+export type CrawlProvider = 'crawl4ai' | 'webrain'
+
+/** Iterable form, for a picker. Keep in step with {@link CrawlProvider}. */
+export const CRAWL_PROVIDERS: readonly CrawlProvider[] = ['crawl4ai', 'webrain']
+
+/**
+ * A pack's kind. Wider than {@link CrawlProvider} on purpose: pack documents already
+ * exist that carry `spider`, which this union has to keep accepting.
+ */
+export type CrawlPackType = CrawlProvider | 'spider'
 
 export type CrawlPackConfigs = {
     crawlResultconfig?: CrawlResult
     crawlConfig?: CrawlerRunConfig
     browserProfile?: BrowserProfile
+    /**
+     * Compiled extraction schema, owned by the Extraction Strategies tab.
+     *
+     * Its own key rather than a field inside `crawlConfig`, matching how the
+     * other three tabs each own one disjoint key and write none of the others'
+     * -- so filling in a schema cannot clobber a form the user is mid-edit in.
+     */
+    extractionStrategy?: JsonCssExtractionStrategy
 }
 export type CartPack = {
     uid: string,

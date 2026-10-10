@@ -23,10 +23,12 @@ describe('ExtractStrategyComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('should render placeholder copy', () => {
-    const text = fixture.nativeElement.textContent as string;
+  it('should render the compiler form', () => {
+    // Translation-independent on purpose: the labels come from the i18n bundle,
+    // so asserting on copy would fail whenever the bundle is not loaded.
+    const form = fixture.nativeElement.querySelector('form') as HTMLFormElement | null;
 
-    expect(text).toContain('extract-strategy works!');
+    expect(form).not.toBeNull();
   });
 
   it('should compile as standalone component', () => {

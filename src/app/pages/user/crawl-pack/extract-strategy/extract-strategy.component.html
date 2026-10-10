@@ -1,1 +1,118 @@
-<p>extract-strategy works!</p>
+<!-- extract-strategy.component.html -->
+<section class="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
+
+  <header class="mb-6">
+    <h2 class="font-display text-2xl text-gray6 dark:text-white">
+      {{ 'CRAWL_PACK_EXTRACTION.TITLE' | translate }}
+    </h2>
+    <p class="mt-1 max-w-3xl text-sm text-gray4">
+      {{ 'CRAWL_PACK_EXTRACTION.SUBTITLE' | translate }}
+    </p>
+  </header>
+
+  <form [formGroup]="form"
+        (ngSubmit)="compile()"
+        class="rounded-2xl border border-gray2/60 bg-slate-50/30 p-4 dark:border-gray5/40 dark:bg-gray7/80 sm:p-6">
+
+    <div class="grid gap-4 sm:grid-cols-2">
+      <label class="block">
+        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">
+          {{ 'CRAWL_PACK_EXTRACTION.URL' | translate }}
+        </span>
+        <input formControlName="url" type="url" autocomplete="off"
+               placeholder="https://"
+               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">
+          {{ 'CRAWL_PACK_EXTRACTION.MODEL' | translate }}
+        </span>
+        <input formControlName="model" type="text" autocomplete="off"
+               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+      </label>
+
+      <label class="block sm:col-span-2">
+        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">
+          {{ 'CRAWL_PACK_EXTRACTION.INTENT' | translate }}
+        </span>
+        <input formControlName="intent" type="text" autocomplete="off"
+               [placeholder]="'CRAWL_PACK_EXTRACTION.INTENT_PLACEHOLDER' | translate"
+               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+      </label>
+    </div>
+
+    <div class="mt-5 flex flex-wrap items-center gap-3">
+      <button type="submit"
+              [disabled]="compiling() || form.invalid"
+              class="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
+        <mat-icon class="!h-4 !w-4 !text-base">{{ compiling() ? 'hourglass_top' : 'auto_awesome' }}</mat-icon>
+        {{ 'CRAWL_PACK_EXTRACTION.COMPILE' | translate }}
+      </button>
+
+      @if (result()) {
+        <button type="button"
+                (click)="addToPack()"
+                class="inline-flex items-center gap-2 rounded-lg border border-cyan-600 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-600/10 dark:text-cyan-300">
+          <mat-icon class="!h-4 !w-4 !text-base">playlist_add</mat-icon>
+          {{ 'CRAWL_PACK_EXTRACTION.ADD' | translate }}
+        </button>
+        <button type="button"
+                (click)="clearFromPack()"
+                class="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray4 hover:text-gray6 dark:hover:text-white">
+          {{ 'CRAWL_PACK_EXTRACTION.CLEAR' | translate }}
+        </button>
+      }
+    </div>
+  </form>
+
+  @if (failure()) {
+    <p class="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-600 dark:text-rose-300"
+       role="alert">
+      {{ failure() }}
+    </p>
+  }
+
+  <!-- Shown only on a compile that produced rows, because that is the only
+       answer the route treats as a schema at all. -->
+  @if (result(); as compiled) {
+    <div class="mt-6 rounded-2xl border border-gray2/60 bg-slate-50/30 p-4 dark:border-gray5/40 dark:bg-gray7/80 sm:p-6">
+
+      <div class="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+        <p class="text-sm text-gray5 dark:text-gray2">
+          {{ 'CRAWL_PACK_EXTRACTION.ROWS' | translate }}:
+          <span class="font-medium text-gray6 dark:text-white">{{ compiled.rows }}</span>
+        </p>
+        <p class="text-xs text-gray4">
+          {{ 'CRAWL_PACK_EXTRACTION.SELECTOR' | translate }}:
+          <code class="rounded bg-gray6/10 px-1.5 py-0.5 text-gray6 dark:bg-white/10 dark:text-gray2">{{ compiled.schema?.baseSelector }}</code>
+        </p>
+      </div>
+
+      @if (compiled.sample_rows?.length) {
+        <div class="mt-4 overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead>
+              <tr class="border-b border-gray2/60 dark:border-gray5/40">
+                @for (column of columns(); track column) {
+                  <th class="px-2 py-1.5 font-medium text-gray5 dark:text-gray2">{{ column }}</th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of compiled.sample_rows; track $index) {
+                <tr class="border-b border-gray2/30 dark:border-gray5/20">
+                  @for (column of columns(); track column) {
+                    <td class="px-2 py-1.5 text-gray6 dark:text-gray3">{{ cell(row, column) }}</td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+      <pre class="mt-4 max-h-64 overflow-auto rounded-lg bg-gray7/90 p-3 text-xs text-gray1">{{ compiled.schema | json }}</pre>
+    </div>
+  }
+</section>

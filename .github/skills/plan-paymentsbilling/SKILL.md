@@ -1,3 +1,8 @@
+---
+name: plan-paymentsbilling
+description: plan-paymentsBilling
+disable-model-invocation: true
+---
 ## Plan: Billing and Entitlements (Implemented Baseline + Hardening)
 
 This prompt is updated to the **current implementation state** in this repository. The system already runs a Firebase Functions-first Stripe integration with hybrid monetization (subscriptions + credit packs), Firestore user billing state, Angular billing UI orchestration, and layered paywall controls.

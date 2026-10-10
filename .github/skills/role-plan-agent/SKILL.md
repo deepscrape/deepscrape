@@ -1,6 +1,7 @@
 ---
-name: Role Plan Agent
+name: role-plan-agent
 description: Describe when to use this prompt
+disable-model-invocation: true
 ---
 Create an implementation plan for this platform codebase to introduce a production-ready authorization architecture.
 

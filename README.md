@@ -23,45 +23,50 @@
 ## Table of Contents
 
 - [🕷️ deepscrape](#️-deepscrape)
-- [📸 Product preview](#-product-preview)
-- [🤔 What is deepscrape?](#-what-is-deepscrape)
-- [✨ Highlights](#-highlights)
-- [🧩 What it does for you](#-what-it-does-for-you)
-- [🧱 Tech stack](#-tech-stack)
-- [🏗️ Architecture](#️-architecture)
-  - [Repository layout](#repository-layout)
-  - [Request lifecycle](#request-lifecycle)
-  - [The BFF (Bun + Elysia on Cloud Run)](#the-bff-bun--elysia-on-cloud-run)
-  - [Backend functions](#backend-functions)
-  - [Auth, sessions & authorization](#auth-sessions--authorization)
-  - [Notifications](#notifications)
-  - [Analytics & geo enrichment](#analytics--geo-enrichment)
-  - [Billing (Stripe)](#billing-stripe)
-  - [Data stores](#data-stores)
-- [⚡ Prerequisites](#-prerequisites)
-- [🚀 Getting started](#-getting-started)
-- [🌍 Environment variables](#-environment-variables)
-  - [Root `.env` (app)](#root-env-app)
-  - [`functions/.env.local` (backend)](#functionsenvlocal-backend)
-  - [Secret Manager (production)](#secret-manager-production)
-- [🧰 Available scripts](#-available-scripts)
-  - [App (root)](#app-root)
-  - [Functions (`functions/`)](#functions-functions)
-  - [BFF (`bff/`)](#bff-bff)
-  - [Make targets](#make-targets)
-- [🧪 Testing](#-testing)
-- [🚢 Deployment](#-deployment)
-  - [What runs where](#what-runs-where)
-  - [The BFF image → Cloud Run](#the-bff-image--cloud-run)
-  - [Hosting](#hosting)
-  - [Functions](#functions)
-  - [One‑command releases](#onecommand-releases)
-  - [CI/CD workflows](#cicd-workflows)
-  - [Release process](#release-process)
-- [🛟 Troubleshooting](#-troubleshooting)
-- [🤝 Contributing](#-contributing)
-- [📚 Further reading](#-further-reading)
-- [📄 License](#-license)
+    - [The AI‑powered web scraping \& crawl‑orchestration API for AI agents 🤖](#the-aipowered-web-scraping--crawlorchestration-api-for-ai-agents-)
+  - [Table of Contents](#table-of-contents)
+  - [📸 Product preview](#-product-preview)
+  - [🤔 What is deepscrape?](#-what-is-deepscrape)
+  - [✨ Highlights](#-highlights)
+  - [🧩 What it does for you](#-what-it-does-for-you)
+  - [🧱 Tech stack](#-tech-stack)
+  - [🏗️ Architecture](#️-architecture)
+    - [Repository layout](#repository-layout)
+    - [Request lifecycle](#request-lifecycle)
+    - [The BFF (Bun + Elysia on Cloud Run)](#the-bff-bun--elysia-on-cloud-run)
+    - [Backend functions](#backend-functions)
+    - [Auth, sessions \& authorization](#auth-sessions--authorization)
+    - [Notifications](#notifications)
+    - [Analytics \& geo enrichment](#analytics--geo-enrichment)
+    - [Billing (Stripe)](#billing-stripe)
+    - [Data stores](#data-stores)
+  - [⚡ Prerequisites](#-prerequisites)
+  - [🚀 Getting started](#-getting-started)
+    - [Running the whole stack locally](#running-the-whole-stack-locally)
+    - [Testing Stripe locally](#testing-stripe-locally)
+    - [Builds](#builds)
+  - [🌍 Environment variables](#-environment-variables)
+    - [Root `.env` (app)](#root-env-app)
+    - [`functions/.env.local` (backend)](#functionsenvlocal-backend)
+    - [Secret Manager (production)](#secret-manager-production)
+  - [🧰 Available scripts](#-available-scripts)
+    - [App (root)](#app-root)
+    - [Functions (`functions/`)](#functions-functions)
+    - [BFF (`bff/`)](#bff-bff)
+    - [Make targets](#make-targets)
+  - [🧪 Testing](#-testing)
+  - [🚢 Deployment](#-deployment)
+    - [What runs where](#what-runs-where)
+    - [The BFF image → Cloud Run](#the-bff-image--cloud-run)
+    - [Hosting](#hosting)
+    - [Functions](#functions)
+    - [One‑command releases](#onecommand-releases)
+    - [CI/CD workflows](#cicd-workflows)
+    - [Release process](#release-process)
+  - [🛟 Troubleshooting](#-troubleshooting)
+  - [🤝 Contributing](#-contributing)
+  - [📚 Further reading](#-further-reading)
+  - [📄 License](#-license)
 
 ---
 
@@ -123,6 +128,33 @@ all three.
 - **Answers, not just pages** 💬 — ask in plain language and a live research agent searches, navigates and reads for you, returning structured answers to your dashboard.
 - **Your infrastructure, your way** 🏗️ — deploy your own crawls with CrawlPack machines, watch everything from the dashboard, and manage billing, plans and API keys in one place.
 - **Fast & reliable by default** ⚡ — Angular 20 zoneless, prerendered marketing pages for instant first paint and SEO, a CSR shell for the authenticated app, and a Bun + Elysia BFF that serves both.
+
+---
+
+## ⚖️ How this differs from crawl4ai / Crawl4AI-style agents
+
+**The short version: our model is a compiler, not an extractor.**
+
+A CSS extraction schema is compiled **once** from a plain-language intent — *"every product: name, price, link"* — and then executed against every page, forever. The model runs **once per schema, not once per row**:
+
+| | Per-run LLM extraction (e.g. crawl4ai's `LLMExtractionStrategy`) | deepscrape's compiled schema |
+| --- | --- | --- |
+| Model calls | one per page, every run | **one per schema, ever** |
+| Output | varies run to run | **identical on run 1 and run 1,000** |
+| Cacheable | no — the model is in the row loop | **yes — it is a static artifact** |
+| Reusable | no | **yes — stored on the crawl pack** |
+| Cost at scale | grows with pages | grows with *schemas*, then flat |
+
+That is the efficient shape, and it is strictly better **for repeat extraction**: the compiled artifact is
+deterministic, testable, cacheable, and behaves identically on the thousandth run. A schema that parses
+but selects nothing never reaches you — it is executed against the real page before it is returned, and
+retried once rather than handed over as an empty winner.
+
+**Where crawl4ai is the better choice**, and we would rather you know: it is a mature Python library you
+can import straight into your own process, it can extract with **no schema at all** by letting the model
+read the page directly, and it has a large strategy and plugin ecosystem. If you want a library inside
+your pipeline, use it. If you want a service that compiles the schema once, then runs it without a
+browser on shared infrastructure, this is what this is.
 
 ---
 
@@ -522,7 +554,7 @@ Read by the emulator, by `dotenvx` runs, and — in production — merged into t
 | `STRIPE_PRICE_*` (14) | Fallback price ids; the catalog is normally resolved by lookup key |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Transactional email for alerts |
 | `IPREGISTRY_API_KEY`, `IP_INTEL_REFRESH_INTERVAL_MS` | Geo/IP intelligence |
-| `UPSTASH_REDIS_*`, `UPSTASH_REDIS_TCP_ENABLED` | Redis REST credentials (+ legacy TCP toggle) |
+| `UPSTASH_REDIS_*` | Redis REST credentials |
 | `DB_NAME` | Firestore named database (`easyscrape`) |
 | `COOKIE_SECRET`, `CSRF_COOKIE_SECRET` | Session/CSRF signing secrets |
 | `AUTHZ_STRICT_ORG_MODE` | `true` disables the lenient org fallback |

@@ -379,6 +379,34 @@ Graphify also provides Python helper scripts in `graphify-out/`:
 
 Type `/graphify` in Copilot Chat to rebuild or update the knowledge graph.
 
+## Service exposure — Copilot questions and Copilot tasks
+
+Full plan, mermaid diagram, phases and risks: `docs/ADR-2026-09-MCP-SERVICE-EXPOSURE.md`.
+
+**Decision of record:** the code graph is exposed as a **published artifact** (`.codebase-memory/graph.db.zst`)
+for free users and as a **per-tenant container** for paid users. Never a shared daemon, and never a fork of
+the engine for multi-tenancy — `codebase-memory-mcp` is stdio-only, 100% local, and enforces *one account,
+one build, one canonical cache root* via an OS admission barrier.
+
+**Copilot questions (answer these before implementation):**
+
+1. Free tier = artifact download (static, cheap) or hosted queries (compute per user)?
+2. Index deepscrape-owned repos only, or arbitrary user repos? The latter needs a queue, storage budget and abuse story.
+3. Gate the graph with the existing `perm('machine','read')` or a new `graph` resource in `functions/src/domain/authz.domain.ts`?
+4. Do graph queries spend **credits** (like crawl credits) or sit under the plan cap reported by `getBillingUsage`?
+5. Isolation unit: container-per-user, or container-per-**crawl-pack** (already the project boundary in the UI)?
+6. Who owns the stdio↔HTTP bridge — a Go service beside Arachnefly, or an Elysia route in the BFF?
+7. Do we contribute containerisation upstream (MIT) or vendor the fork and carry the merge?
+
+**Copilot tasks:**
+
+- [ ] Publish one graph artifact to R2 on push to `main`; prove it imports on a clean clone (phase 0).
+- [ ] `bff/graph.ts` + `/api/graph/*`, following the existing `bff/api.ts` + `guard([...])` + `bind(...)` pattern used by `machines` — no new pattern.
+- [ ] Arachnefly: add the graph container as a second machine class behind `POST /deploy` + `POST /execute-task/:id`; document cache-root-per-tenant.
+- [ ] Angular: graph surface in the playground or a crawl-pack tab, keyed by the existing project selector.
+- [ ] Meter graph usage through `applyBillingCreditMutation` with the same idempotency-key discipline.
+- [ ] Keep the graph artifact out of git history churn (upstream measured ~6 GB from one path); publish per release/milestone or use LFS.
+
 # RTK PROXY
 A high-performance CLI proxy designed to filter and summarize system outputs before they reach your LLM context.
 
@@ -480,3 +508,10 @@ Options:
 
   -V, --version
           Print version
+
+<!-- mermaid-ai-skills:start -->
+## Mermaid Diagrams
+
+When the user asks to create, edit, or visualize a diagram, follow the
+instructions in `.github/instructions/mermaid.instructions.md`.
+<!-- mermaid-ai-skills:end -->

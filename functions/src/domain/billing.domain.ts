@@ -238,3 +238,18 @@ export const getBillingAccessMode = (billing: BillingSnapshot | undefined, now =
 export const hasBillingAccess = (billing: BillingSnapshot | undefined, now = Date.now()): boolean => {
   return getBillingAccessMode(billing, now) !== "free"
 }
+
+/**
+ * Whether an entitlement is one the platform BILLS.
+ *
+ * `requirePaidAccess` decides this while charging, and the pricing estimate has
+ * to answer the same question before a call, so the predicate lives here rather
+ * than being re-spelled as `accessMode === "credits" || accessMode === "plan"` in
+ * more than one place. `free` and `grace` are deliberately excluded: neither has
+ * credits to spend, so charging them would drive a wallet negative.
+ * @param {string|undefined} accessMode The mode `resolveAccess` resolved.
+ * @return {boolean} True when a call under this mode is charged.
+ */
+export const isChargeableAccessMode = (accessMode: string | undefined): boolean => {
+  return accessMode === "credits" || accessMode === "plan"
+}

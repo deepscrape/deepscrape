@@ -1,0 +1,15 @@
+// No rules, on purpose.
+//
+// The file exists because `styleUrl` pointing at a missing file is a build error,
+// and it is empty rather than deleted because the sibling billing pages each carry
+// one and a missing sibling reads as an oversight.
+//
+// Everything this page needs is a Tailwind utility, including the column
+// separators, the `sr-only` captions and `tabular-nums` on the credit counts. The
+// only thing worth writing down is that `tabular-nums` is load-bearing rather than
+// decorative: proportional figures make two credit amounts in a column differ in
+// width, and a price list is read down the numbers.
+//
+// There is no entry animation to define. A list of prices that fades in is motion
+// a customer reading numbers did not ask for, and it would then need suppressing
+// under `prefers-reduced-motion`.

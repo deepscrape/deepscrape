@@ -1,0 +1,114 @@
+<!--
+  The price list, rendered from the server's table.
+
+  There is no number in this file, and that is the point: every credit count comes
+  from the response, so a rate changed in the pricing table appears here by
+  existing. Surfaces use the repository's own neutral tokens at partial opacity
+  (gray3/gray5/gray7) so this page sits in the same family as the other billing
+  surfaces.
+
+  Each group is its own table with its own `caption`, rather than one long table
+  with a heading row in the middle. A screen reader announces a table by its
+  caption, so three captioned tables read as three labelled sections, while one
+  table with a bold row in the middle reads as a long unlabelled list.
+-->
+<section class="space-y-6">
+  <header>
+    <h2 class="text-2xl font-bold text-gray5 dark:text-gray-100">
+      {{ 'PRICING_RATES.TITLE' | translate }}
+    </h2>
+    <p class="mt-1 text-sm text-gray5/70 dark:text-gray-300">
+      {{ 'PRICING_RATES.SUBTITLE' | translate }}
+    </p>
+  </header>
+
+  <!--
+    Stated plainly, because it is the guarantee the page is built to give. A
+    customer who knows the page is generated from the charging table is being told
+    something true about the pricing, not shown a badge.
+  -->
+  <p
+    class="rounded-lg border border-gray3/55 bg-white/60 p-3 text-xs text-gray5/80 dark:border-gray5/60 dark:bg-gray7/40 dark:text-gray-300"
+  >
+    {{ 'PRICING_RATES.DERIVED_NOTE' | translate }}
+  </p>
+
+  <app-result-envelope
+    [state]="state()"
+    [errorMessage]="errorKey() | translate"
+    [loadingMessage]="'PRICING_RATES.LOADING'"
+    [idleMessage]="'PRICING_RATES.IDLE'"
+    [emptyMessage]="'PRICING_RATES.EMPTY'"
+    [showRetry]="state() === 'error'"
+    (retry)="load()"
+  >
+    <div class="space-y-6">
+      @for (group of groups(); track group.group) {
+        <section>
+          <h3
+            class="text-xs font-semibold uppercase tracking-wider text-gray5/70 dark:text-gray-300"
+          >
+            {{ groupLabelKey(group.group) | translate }}
+          </h3>
+
+          <table class="mt-2 w-full border-collapse text-left text-sm">
+            <caption class="sr-only">
+              {{ groupLabelKey(group.group) | translate }}
+            </caption>
+            <thead>
+              <tr
+                class="border-b border-gray3/55 text-xs uppercase tracking-wider text-gray5/70 dark:border-gray5/60 dark:text-gray-300"
+              >
+                <th scope="col" class="py-2 pr-4 font-semibold">
+                  {{ 'PRICING_RATES.COL_ACTION' | translate }}
+                </th>
+                <th scope="col" class="py-2 text-right font-semibold">
+                  {{ 'PRICING_RATES.COL_COST' | translate }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of group.rows; track row.action) {
+                <tr
+                  class="border-b border-gray3/35 last:border-b-0 dark:border-gray5/40"
+                >
+                  <td class="py-2 pr-4 text-gray5 dark:text-gray-100">
+                    <!--
+                      A rate with no translation yet shows its action id. That is
+                      deliberate: a machine-readable name beside a correct number
+                      beats a correct name beside a number nobody has checked, and
+                      it makes an unlabelled rate obvious rather than silent.
+                    -->
+                    @if (row.labelKey) {
+                      {{ 'PRICING_RATES.ACTION_' + row.labelKey | translate }}
+                    } @else {
+                      <span class="font-mono">{{ row.action }}</span>
+                    }
+                  </td>
+                  <td class="py-2 text-right tabular-nums text-gray5 dark:text-gray-100">
+                    {{ row.credits }} {{ creditUnitKey(row.credits) | translate }}
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </section>
+      }
+
+      <!--
+        Separate from the sections, because it states something different: not an
+        action a customer can buy, but the price of anything unlisted.
+      -->
+      @if (fallback(); as other) {
+        <p
+          class="rounded-lg border border-gray3/55 bg-white/60 p-3 text-sm text-gray5/80 dark:border-gray5/60 dark:bg-gray7/40 dark:text-gray-300"
+        >
+          {{ 'PRICING_RATES.FALLBACK_LABEL' | translate }}:
+          <span class="tabular-nums">
+            {{ other.credits }} {{ creditUnitKey(other.credits) | translate }}
+          </span>
+        </p>
+      }
+    </div>
+  </app-result-envelope>
+</section>

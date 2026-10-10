@@ -1,0 +1,193 @@
+<div class="flex w-full max-w-3xl flex-col gap-3 mt-8">
+  <!--
+    Tool rail. The same segmented surface as the settings and playground shells, so
+    the three read as one system rather than three. The active state is driven by
+    Tailwind's `aria-selected:` variant rather than by a class binding, so the visual
+    state and the announced state cannot disagree: one attribute drives both.
+  -->
+  <div
+    class="flex snap-x flex-nowrap items-center gap-1 overflow-x-auto rounded-xl border border-gray-200/70 bg-gray-100/70 p-1 scrollbar-hidden backdrop-blur dark:border-gray-700/60 dark:bg-gray6/60"
+    role="tablist"
+    [attr.aria-label]="'TOOLS.TABS_LABEL' | translate">
+    @for (tool of descriptors; track tool.id) {
+      <button
+        type="button"
+        role="tab"
+        [attr.aria-selected]="active().id === tool.id"
+        (click)="selectTool(tool)"
+        class="inline-flex flex-shrink-0 items-center rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-all duration-200 hover:bg-white/70 hover:text-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:text-gray-400 dark:hover:bg-gray6/60 dark:hover:text-cyan-300 aria-selected:bg-white aria-selected:text-cyan-700 aria-selected:shadow-sm aria-selected:ring-1 aria-selected:ring-inset aria-selected:ring-cyan-500/25 dark:aria-selected:bg-cyan-950/40 dark:aria-selected:text-cyan-300 dark:aria-selected:ring-cyan-400/25">
+        {{ tool.label | translate }}
+      </button>
+    }
+  </div>
+
+  <!--
+    What this tool cannot do. Stated before the call rather than discovered in a
+    502: for `extract`, `pdf` and `vision` the blocker is a property of the worker, not
+    of anything the user typed, so no form change can fix it.
+  -->
+  <p
+    role="note"
+    class="rounded-xl border border-amber-200/70 bg-amber-50/70 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+    {{ active().note | translate }}
+  </p>
+
+  <!--
+    What the tool needs and what it costs. `requires` is the axis that actually
+    gates `extract`/`pdf` -- a private worker, not a tier -- so it is shown BESIDE
+    the credit price rather than folded into it. The price alone would read as
+    "free, so it works", which is the 502 this panel exists to pre-empt.
+  -->
+  @if (costs[active().id]; as cost) {
+    <div class="flex flex-wrap items-center gap-2 text-xs">
+      @if (cost.requires === 'free') {
+        <span
+          class="inline-flex items-center rounded-full bg-cyan-50 px-2.5 py-1 font-semibold text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300">
+          {{ 'TOOLS.REQ_FREE' | translate }}
+        </span>
+      } @else {
+        <span
+          class="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-1 font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+          {{ 'TOOLS.REQ_LEASE' | translate }}
+        </span>
+      }
+      <span class="text-gray-600 dark:text-gray-300">
+        {{ 'TOOLS.COST_LABEL' | translate }}: {{ cost.credits }}
+      </span>
+    </div>
+
+    @if (cost.requires === 'lease') {
+      <p class="text-xs text-gray-600 dark:text-gray-300">
+        {{ 'TOOLS.LEASE_COST' | translate }}
+      </p>
+    }
+  }
+
+  <!--
+    The form replays on every switch: `smoothfadeAnimation` is the repository's own
+    `* <=> *` trigger, so binding the active tool id re-runs it when the tool changes.
+    The fields are swapped wholesale rather than morphed, which is exactly what the
+    animation has to make legible -- without it the panel looks like it glitched.
+  -->
+  <div
+    class="flex flex-col gap-3"
+    [@routeChildAnimation]="active().id">
+    @for (field of visibleFields(); track field.name) {
+      @switch (field.kind) {
+        @case ('select') {
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
+              {{ field.label | translate }}
+              @if (isRequired(field)) {
+                <span class="text-rose-600 dark:text-rose-300" aria-hidden="true">*</span>
+              }
+            </span>
+            <select
+              [formControl]="controlFor(field.name)"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray6 transition-colors focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7 dark:text-white">
+              <option value="">{{ 'TOOLS.OPTION_UNSET' | translate }}</option>
+              @for (option of field.options; track option) {
+                <option [value]="option">{{ option }}</option>
+              }
+            </select>
+            @if (hintFor(field); as hint) {
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ hint | translate }}</span>
+            }
+          </label>
+        }
+
+        @case ('json') {
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
+              {{ field.label | translate }}
+            </span>
+            <textarea
+              rows="4"
+              spellcheck="false"
+              [formControl]="controlFor(field.name)"
+              [attr.placeholder]="'TOOLS.PLACEHOLDER_JSON' | translate"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray6 transition-colors focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7 dark:text-white"></textarea>
+            @if (hintFor(field); as hint) {
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ hint | translate }}</span>
+            }
+          </label>
+        }
+
+        <!--
+          A flag gets the same two-row treatment as a setting in the settings page: the
+          label and the switch on one surface, the hint under it. The control is the
+          repository's shared toggle rather than a bare checkbox.
+        -->
+        @case ('flag') {
+          <div class="flex flex-col gap-1">
+            <div
+              class="flex items-center justify-between gap-3 rounded-xl border border-gray-200/70 bg-slate-50/40 px-3 py-2 dark:border-gray-700/60 dark:bg-gray7/50">
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ field.label | translate }}</span>
+              <input
+                type="checkbox"
+                [checked]="isFlagOn(field.name)"
+                (change)="setFlag(field.name, $any($event.target).checked)"
+                [attr.aria-label]="field.label | translate"
+                class="h-5 w-5 flex-shrink-0 rounded border-gray-300 text-cyan-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7" />
+            </div>
+            @if (hintFor(field); as hint) {
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ hint | translate }}</span>
+            }
+          </div>
+        }
+
+        @default {
+          <div class="flex flex-col gap-1">
+            <app-stinput
+              class="block w-full"
+              [control]="controlFor(field.name)"
+              [label]="field.label | translate"
+              [type]="field.kind === 'number' ? 'number' : 'text'"
+              [errorLabel]="field.kind === 'number' ? ('TOOLS.FORM_BAD_NUMBER' | translate) : ''"></app-stinput>
+            @if (hintFor(field); as hint) {
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ hint | translate }}</span>
+            }
+          </div>
+        }
+      }
+    }
+  </div>
+
+  @if (formError()) {
+    <p class="text-sm text-red-700 dark:text-red-300" role="alert">
+      {{ formError() | translate }}
+    </p>
+  }
+
+  <!-- Action row: clear on the left, run on the right, as the other modes place it. -->
+  <div class="flex items-center justify-end gap-2">
+    <button
+      type="button"
+      [disabled]="busy"
+      (click)="clear()"
+      class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-100/60 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-transparent disabled:text-gray-400 dark:bg-gray-100/[0.08] dark:text-gray-300 dark:hover:bg-gray5/60 dark:disabled:bg-transparent">
+      <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">clear</mat-icon>
+      <span class="sr-only">{{ 'TOOLS.CLEAR' | translate }}</span>
+    </button>
+
+    <button
+      type="button"
+      [disabled]="busy"
+      (click)="submit()"
+      class="inline-flex items-center gap-2 rounded-full bg-cyan-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400">
+      <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">play_arrow</mat-icon>
+      {{ 'TOOLS.RUN' | translate }}
+    </button>
+  </div>
+
+  <app-result-envelope
+    [state]="state()"
+    [title]="active().label"
+    [meta]="meta()"
+    [errorMessage]="errorMessage() | translate"
+    [showRetry]="showRetry"
+    (retry)="retry()">
+    <pre
+      class="max-h-96 overflow-auto rounded-lg bg-slate-100/60 p-3 text-xs leading-5 text-gray6 dark:bg-gray7/90 dark:text-gray-100">{{ pretty() }}</pre>
+  </app-result-envelope>
+</div>

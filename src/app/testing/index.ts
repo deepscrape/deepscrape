@@ -12,7 +12,7 @@
 // This ensures console.error spy is set up in beforeEach for all tests
 import 'src/test-setup';
 
-import { EnvironmentProviders, PLATFORM_ID, Provider } from '@angular/core';
+import { ChangeDetectorRef, EnvironmentProviders, PLATFORM_ID, Provider } from '@angular/core';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideHttpClient, withFetch } from '@angular/common/http';
@@ -35,7 +35,6 @@ import { Performance } from '@angular/fire/performance';
 import { WindowToken } from '../core/services/window.service';
 import { BrowserToken } from '../core/services/browser.service';
 import { LocalStorage, SessionStorage, NoopStorage } from '../core/services/storage.service';
-import { PLUTO_ID } from '../core/services/pluto.service';
 import { NAVIGATOR } from '../core/providers';
 import { CONTROL_NAME } from '../core/services/pack.service';
 
@@ -171,6 +170,8 @@ const mockApiKeyService = {
 
 const mockAppUserLayout = {
   onCloseAsideBar: () => {},
+  // AppSidebarNavLinkComponent reads this as a signal; mirrors the real component's `selectedOrgId`.
+  selectedOrgId: () => null,
 };
 
 /** Minimal SwUpdate stub (service worker disabled in tests) */
@@ -251,7 +252,6 @@ export function getTestProviders(): (Provider | EnvironmentProviders)[] {
     { provide: BrowserToken, useValue: {} },
     { provide: LocalStorage, useValue: noopStorage },
     { provide: SessionStorage, useValue: noopStorage },
-    { provide: PLUTO_ID, useValue: 'test-pluto-id' },
     { provide: CONTROL_NAME, useValue: 'test-control' },
 
     // --- Third-party service mocks ---
@@ -272,5 +272,11 @@ export function getTestProviders(): (Provider | EnvironmentProviders)[] {
     { provide: SeedingService, useValue: mockSeedingService },
     { provide: OperationStatusService, useValue: mockOperationStatusService },
     { provide: AppUserLayoutComponent, useValue: mockAppUserLayout },
+
+    // ChangeDetectorRef is a VIEW-level provider. A spec that builds a component with
+    // `new X()` inside runInInjectionContext sees only the environment injector, so it
+    // would throw NG0201. This no-op covers exactly that case; components created via
+    // TestBed.createComponent still get the real one from their own view injector.
+    { provide: ChangeDetectorRef, useValue: { markForCheck: () => {}, detectChanges: () => {} } },
   ];
 }

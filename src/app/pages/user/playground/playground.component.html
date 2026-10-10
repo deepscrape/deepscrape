@@ -4,51 +4,107 @@
       <div
         [@routeChildAnimation]="mode"
         class="flex min-w-0 max-w-3xl w-full flex-col mt-4 lg:mt-0">
+        <!--
+          The strip is a rail of pills on the shared surface token, matching the cards
+          the crawl and seeder modes render below it. It previously carried its own
+          blue/pink palette, which is why the shell read as a different product from
+          the modes it frames: `cyan` is the primary token and `rose` the accent, and
+          neither blue nor pink appears anywhere in the theme map.
+        -->
         <div
-          class="relative rounded-lg overflow-hidden dark:bg-gray6 bg-gray-200 shadow-md">
+          class="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white/60 shadow-sm backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
           <div
             #modeScrollContainer
-            class="overflow-x-hidden scrollbar-thin overscroll-contain touch-pan-x py-2 px-2"
+            class="overflow-x-hidden scrollbar-thin overscroll-contain touch-pan-x px-2 py-2"
             appHiddenDragScroll
             (scroll)="onModeScroll($event)">
-            <div class="flex gap-3 whitespace-nowrap min-w-max cursor-grab active:cursor-grabbing">
-              @for (mode of ['llm-scrape', 'crawl', 'seeder']; track mode) {
+            <div class="flex min-w-max gap-2 whitespace-nowrap cursor-grab active:cursor-grabbing">
+              @for (m of modes; track m.id) {
+                @let blocked = isModeBlocked(m.id);
+                @let lockHint = blocked ? (modeHintKey(m.id) | translate) : null;
+                @let active = currentMode === m.id;
                 <button
-                  class="group py-2 px-3 text-base font-normal text-center transition-all duration-100 ease-in-out rounded-lg focus:outline-none"
+                  class="group inline-flex items-center rounded-xl px-3 py-2 text-center text-base font-normal transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                  [attr.aria-disabled]="blocked ? 'true' : null"
+                  [attr.aria-current]="active ? 'true' : null"
+                  [attr.data-active]="active ? 'true' : null"
+                  [attr.title]="lockHint"
                   [ngClass]="{
-                    'text-blue-600 dark:text-blue-400 shadow-md shadow-gray-300 dark:shadow-blue-400 bg-blue-50/50 dark:bg-gray-800/50 ':
-                      currentMode === mode,
-                    'text-gray-600 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800':
-                      currentMode !== mode
+                    'bg-cyan-50/80 text-cyan-700 shadow-sm ring-1 ring-inset ring-cyan-500/25 dark:bg-cyan-950/40 dark:text-cyan-300 dark:ring-cyan-400/25':
+                      active,
+                    'text-gray-600 hover:bg-gray-100/80 hover:text-cyan-700 dark:text-gray-400 dark:hover:bg-gray6/60 dark:hover:text-cyan-300':
+                      !active,
+                    'cursor-not-allowed opacity-50': blocked
                   }"
-                  (click)="changeMode(mode)">
-                  {{ mode === 'llm-scrape' ? 'LLM Scrape' : (mode === 'crawl' ? 'Crawl' : 'Seeder') }}
+                  (click)="changeMode(m.id)">
+                  {{ m.label }}
                   <span
+                    class="ml-1 text-sm font-semibold text-gray-400 transition-colors group-hover:text-gray-500 dark:group-hover:text-gray-300"
                     [ngClass]="{
-                      'dark:text-gray2': currentMode == mode
-                    }"
-                    class="text-sm text-gray-400  group-hover:text-pink-100 dark:group-hover:text-gray2 font-semibold">
-                    /{{ mode }}
+                      'text-cyan-600/70 dark:text-cyan-300/70': active
+                    }">
+                    /{{ m.id }}
                   </span>
+                  @if (blocked) {
+                    <mat-icon
+                      aria-hidden="true"
+                      class="mode-lock ml-1 align-middle text-rose-600 dark:text-rose-300">
+                      lock
+                    </mat-icon>
+                  }
                 </button>
               }
             </div>
           </div>
-        </div>        <!-- Use [@fadeinCartItems] on each child component container to animate transitions -->
-        @if (currentMode === 'llm-scrape') {
-          <div class="w-full">
-            <app-llm-scrape></app-llm-scrape>
-          </div>
-        }
-        @if (currentMode === 'crawl') {
-          <div class="w-full">
-            <app-crawl></app-crawl>
-          </div>
-        }
-        @if (currentMode === 'seeder') {
-          <div class="w-full">
-            <app-domain-seeder></app-domain-seeder>
-          </div>
+        </div>
+        <!-- Use [@fadeinCartItems] on each child component container to animate transitions -->
+        <!--
+          A mode this caller cannot run renders the gate panel in place of the child, so the
+          child never mounts and nothing can be submitted from it. The panel states the
+          reason and, when a plan is the only blocker, links to the existing plans page.
+        -->
+        @if (activeGate && !activeGate.allowed) {
+          <app-feature-gate [state]="activeGate" [roleKey]="roleKey()"></app-feature-gate>
+        } @else {
+          @if (currentMode === 'llm-scrape') {
+            <div class="w-full">
+              <app-llm-scrape></app-llm-scrape>
+            </div>
+          }
+          @if (currentMode === 'crawl') {
+            <div class="w-full">
+              <app-crawl></app-crawl>
+            </div>
+          }
+          @if (currentMode === 'seeder') {
+            <div class="w-full">
+              <app-domain-seeder></app-domain-seeder>
+            </div>
+          }
+          @if (currentMode === 'search') {
+            <div class="w-full">
+              <app-search></app-search>
+            </div>
+          }
+          @if (currentMode === 'monitor') {
+            <div class="w-full">
+              <app-monitor></app-monitor>
+            </div>
+          }
+          @if (currentMode === 'tools') {
+            <div class="w-full">
+              <app-tools-panel></app-tools-panel>
+            </div>
+          }
+          <!--
+            A real component, never a bare `@if`: a mode arm with no child renders an
+            empty pane, which is worse than not offering the tab at all.
+          -->
+          @if (currentMode === 'browser') {
+            <div class="w-full">
+              <app-browser-session-panel></app-browser-session-panel>
+            </div>
+          }
         }
       </div>
     }

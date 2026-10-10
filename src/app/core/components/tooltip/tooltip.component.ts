@@ -1,5 +1,5 @@
 import { Component, OnInit, ChangeDetectionStrategy, ChangeDetectorRef, OnDestroy } from '@angular/core';
-import { CommonModule, NgClass } from '@angular/common';
+import { NgClass } from '@angular/common';
 import { TooltipPosition, TooltipTheme } from '../../enum';
 import { AnimationEvent } from '@angular/animations';
 import { animate, state, style, transition, trigger } from '@angular/animations';
@@ -8,7 +8,7 @@ import { takeUntil } from 'rxjs/operators';
 
 @Component({
   selector: 'tooltip',
-  imports: [CommonModule],
+  imports: [NgClass],
   templateUrl: './tooltip.component.html',
   styleUrl: './tooltip.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

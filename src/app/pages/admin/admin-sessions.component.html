@@ -1,0 +1,154 @@
+<!--
+  The live-session table.
+
+  Surfaces use the repository's own neutral tokens (gray3/gray5/gray7) at partial
+  opacity rather than Tailwind's default gray scale, so this page sits in the same
+  family as the machine fleet view beside it.
+
+  The read-only note is a deliberate piece of interface, not a TODO banner.
+  Reclaiming a session moves the idle deadline the Go reaper reads, which
+  suspends a customer's live, still-billing machine — a destructive act on
+  another tenant's money. One sentence explaining why there is no button is a
+  better answer than a button that spends someone else's credits.
+-->
+<section class="space-y-6">
+  <header class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div>
+      <h2 class="text-2xl font-bold text-gray5 dark:text-gray-100">
+        {{ 'ADMIN_SESSIONS.TITLE' | translate }}
+      </h2>
+      <p class="mt-1 text-sm text-gray5/70 dark:text-gray-300">
+        {{ 'ADMIN_SESSIONS.SUBTITLE' | translate }}
+      </p>
+    </div>
+
+    <button
+      type="button"
+      [disabled]="state() === 'loading'"
+      class="self-start rounded-md border border-gray3/55 bg-white/75 px-3 py-1.5 text-sm font-medium text-gray5 hover:border-gray4 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray5/60 dark:bg-gray7/55 dark:text-gray-200"
+      (click)="load()"
+    >
+      {{ 'ADMIN_SESSIONS.REFRESH' | translate }}
+    </button>
+  </header>
+
+  <!--
+    A summary that says what it counts. "3 sessions, 42 minutes" is a statement
+    about the LOADED page, and the caption below is what keeps a capped page from
+    reading as the whole platform.
+  -->
+  @if (state() === 'ready') {
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <p class="text-sm text-gray5 dark:text-gray-200">
+        {{
+          'ADMIN_SESSIONS.TOTAL'
+            | translate: { count: sessions().length, minutes: billedMinutes() }
+        }}
+      </p>
+      @if (truncated()) {
+        <p role="status" class="text-sm font-medium text-rose-700 dark:text-rose-300">
+          {{ 'ADMIN_SESSIONS.TRUNCATED' | translate }}
+        </p>
+      }
+    </div>
+  }
+
+  <p
+    class="rounded-lg border border-gray3/55 bg-white/60 p-3 text-xs text-gray5/80 dark:border-gray5/60 dark:bg-gray7/40 dark:text-gray-300"
+  >
+    {{ 'ADMIN_SESSIONS.READ_ONLY_NOTE' | translate }}
+  </p>
+
+  <app-result-envelope
+    [state]="state()"
+    [errorMessage]="errorKey() | translate"
+    [loadingMessage]="'ADMIN_SESSIONS.LOADING'"
+    [idleMessage]="'ADMIN_SESSIONS.IDLE'"
+    [emptyMessage]="'ADMIN_SESSIONS.EMPTY'"
+    [showRetry]="state() === 'error'"
+    (retry)="load()"
+  >
+    <!--
+      A real table, because this is tabular data and a screen reader should be
+      able to navigate it by row and column. The caption is `sr-only`: the heading
+      above already names this for anyone who can see it, and the caption is what
+      makes the columns announce themselves for anyone who cannot.
+    -->
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-left text-sm">
+        <caption class="sr-only">
+          {{ 'ADMIN_SESSIONS.TITLE' | translate }}
+        </caption>
+        <thead>
+          <tr
+            class="border-b border-gray3/55 text-xs uppercase tracking-wider text-gray5/70 dark:border-gray5/60 dark:text-gray-300"
+          >
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_SESSIONS.COL_SESSION' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_SESSIONS.COL_OWNER' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_SESSIONS.COL_MODE' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_SESSIONS.COL_KIND' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_SESSIONS.COL_STATE' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_SESSIONS.COL_IDLE' | translate }}
+            </th>
+            <th scope="col" class="py-2 font-semibold">
+              {{ 'ADMIN_SESSIONS.COL_BILLED' | translate }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.session.id) {
+            <tr class="border-b border-gray3/35 last:border-b-0 dark:border-gray5/40">
+              <td class="py-2 pr-4 font-mono text-xs text-gray5 dark:text-gray-200">
+                {{ row.session.id }}
+              </td>
+              <td class="py-2 pr-4 font-mono text-xs text-gray5/80 dark:text-gray-300">
+                {{ row.session.uid }}
+              </td>
+              <td class="py-2 pr-4 text-gray5 dark:text-gray-200">
+                {{ row.session.mode }}
+              </td>
+              <td class="py-2 pr-4 text-gray5 dark:text-gray-200">
+                {{ row.session.kind }}
+              </td>
+              <td class="py-2 pr-4">
+                <!-- Raw, because nothing enforces that this page knows every state. -->
+                <span
+                  class="rounded-full bg-gray2/60 px-2 py-0.5 text-xs font-medium text-gray5 dark:bg-gray5/40 dark:text-gray-200"
+                >
+                  {{ row.session.state }}
+                </span>
+              </td>
+              <td class="py-2 pr-4 tabular-nums text-gray5 dark:text-gray-200">
+                <!--
+                  A dash, not a zero, when the stamp did not parse. "Unknown" and
+                  "just used" must not look the same to an operator looking for a
+                  session that is stuck.
+                -->
+                @if (row.idleMinutes === null) {
+                  <span aria-hidden="true">-</span>
+                  <span class="sr-only">{{ 'ADMIN_SESSIONS.IDLE_UNKNOWN' | translate }}</span>
+                } @else {
+                  {{ row.idleMinutes }}
+                }
+              </td>
+              <td class="py-2 tabular-nums text-gray5 dark:text-gray-200">
+                {{ row.session.minutesBilled }}
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </app-result-envelope>
+</section>

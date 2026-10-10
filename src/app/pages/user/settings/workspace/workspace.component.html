@@ -28,6 +28,25 @@
         {{ 'SHELL.NO_WORKSPACES' | translate }}
       </p>
     }
+
+    <!--
+      Role and workspace context. This is the same membership role the backend's POLICIES
+      table resolves against, so it is what explains a refusal on a run surface.
+    -->
+    <div class="mt-4 space-y-1 border-t border-gray-200 pt-3 dark:border-gray6">
+      <p class="text-sm font-medium text-gray-700 dark:text-gray-200">
+        {{ 'SETTINGS_WORKSPACE.ACCESS_TITLE' | translate }}
+      </p>
+      <p class="text-sm text-gray-600 dark:text-gray-300">
+        {{ 'SETTINGS_WORKSPACE.YOUR_ROLE' | translate }}:
+        <span class="font-semibold">
+          {{ (activeRoleKey() || 'SETTINGS_WORKSPACE.ROLE_SELF') | translate }}
+        </span>
+      </p>
+      <p class="text-xs text-gray-600 dark:text-gray-400">
+        {{ activeAccessKey() | translate }}
+      </p>
+    </div>
   </div>
 
   <div class="grid gap-6 lg:grid-cols-2">

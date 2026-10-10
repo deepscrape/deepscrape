@@ -8,6 +8,7 @@ import { AppCrawlComponent } from './app-crawl.component';
 import { CrawlOperationStatus } from '../../enum';
 import { CrawlPack } from '../../types';
 import { AuthService, CrawlAPIService, FirestoreService, OperationStatusService, SnackbarService } from '../../services';
+import { PricingRatesService } from '../../services/pricing-rates.service';
 import { getTestProviders } from 'src/app/testing';
 
 describe('AppCrawlComponent', () => {
@@ -28,7 +29,25 @@ describe('AppCrawlComponent', () => {
   const crawlServiceStub = {
     multiCrawlEnqueue: () => of(),
     streamTaskResults: () => of(),
+    // The component prices the run it is about to submit, and it reads the path
+    // from here so the estimate cannot name a different route than the submit.
+    jobEnqueuePath: '/api/crawl/stream/job',
   } as unknown as CrawlAPIService;
+
+  const pricingServiceStub = {
+    estimate: () => of({
+      status: 'ok',
+      estimate: {
+        method: 'POST',
+        path: '/api/crawl/stream/job',
+        action: 'api.paid.default',
+        credits: 1,
+        accessMode: 'plan',
+        chargeable: true,
+        effectiveCredits: 1,
+      },
+    }),
+  } as unknown as PricingRatesService;
 
   const operationStatusStub = {} as OperationStatusService;
   const snackbarServiceStub = { showSnackbar: jasmine.createSpy('showSnackbar') } as unknown as SnackbarService;
@@ -43,6 +62,10 @@ describe('AppCrawlComponent', () => {
       providers: [
         ...getTestProviders(),
         FormBuilder,
+        // Stubbed rather than left to the real service: the point of the assertion
+        // below is that the component READS the estimate, and a live HTTP call
+        // would leave an unflushed request behind instead.
+        { provide: PricingRatesService, useValue: pricingServiceStub },
       ],
     });
 
@@ -111,5 +134,15 @@ describe('AppCrawlComponent', () => {
     component.submitCrawlJob();
 
     expect(component.crawlEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('should read what the next run costs, for the route it will submit to', () => {
+    // The price has to be visible BEFORE the button that spends it, and it has to
+    // describe the route the submit actually uses.
+    const estimate = component['costEstimate']();
+
+    expect(estimate).toBeTruthy();
+    expect(estimate?.effectiveCredits).toBe(1);
+    expect(estimate?.path).toBe('/api/crawl/stream/job');
   });
 });

@@ -1,0 +1,6 @@
+// The host is a custom element, which the browser lays out inline by default.
+// The component's own layout is Tailwind, applied through `@HostBinding`, so
+// the only thing needed here is that the element takes part in block flow.
+:host {
+  display: block;
+}

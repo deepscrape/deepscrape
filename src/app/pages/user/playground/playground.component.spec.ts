@@ -48,6 +48,17 @@ describe('PlaygroundComponent', () => {
     expect(component.currentMode).toBe('llm-scrape');
   });
 
+  it('should accept the browser mode from query params', () => {
+    // Regression, found 2026-10-03: `browser` was missing from the accept-list
+    // in `ngOnInit` while the `modes` array, the gate record and the template arm
+    // all had it. So `?mode=browser` fell through to the default and the Browser
+    // tab looked selected while rendering the LLM Scrape pane.
+    component.ngOnInit();
+    queryParams$.next({ mode: 'browser' });
+
+    expect(component.currentMode).toBe('browser');
+  });
+
   it('should navigate with merged query params when mode changes', () => {
     component.changeMode('crawl');
 
@@ -81,5 +92,25 @@ describe('PlaygroundComponent', () => {
     tick(0);
 
     expect(container.scrollLeft).toBe(10);
+  }));
+
+  it('locates the active tab by its data attribute, not by a visual class', fakeAsync(() => {
+    // Regression guard, 2026-10-10: the lookup was `button.shadow-md`. The active
+    // styling moved from a shadow to a ring, so the selector matched nothing, the
+    // strip stopped scrolling to the selected mode, and every spec still passed --
+    // the stub above returns its button whatever the selector is, so only an
+    // assertion on the selector itself can catch this.
+    const querySelector = jasmine.createSpy('querySelector').and.returnValue(null);
+    const container = {
+      clientWidth: 300,
+      scrollLeft: 0,
+      querySelector,
+    };
+
+    component.modeScrollContainer = { nativeElement: container } as unknown as PlaygroundComponent['modeScrollContainer'];
+    component.ngAfterViewInit();
+    tick(0);
+
+    expect(querySelector).toHaveBeenCalledWith('button[data-active="true"]');
   }));
 });

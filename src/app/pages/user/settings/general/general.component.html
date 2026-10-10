@@ -39,12 +39,12 @@
       <lucide-angular [img]="icons['mail']" class="mt-0.5 h-5 w-5 flex-shrink-0 text-cyan-600 dark:text-cyan-400 fill-none"></lucide-angular>
       <div class="min-w-0">
         <h2 class="text-sm font-semibold text-gray6 dark:text-gray1">{{ 'SETTINGS_GENERAL.RECEIVE_NOTIFICATIONS' | translate }}</h2>
-        <p class="mt-0.5 text-xs leading-relaxed text-gray4 dark:text-gray3">{{ statusLabel() }}</p>
+        <p class="mt-0.5 text-xs leading-relaxed text-gray4 dark:text-gray3">{{ statusLabel() | translate }}</p>
         @if (notification.devices() > 0) {
           <p class="mt-1 text-xs text-gray4 dark:text-gray3">{{ notification.devices() }} {{ 'SETTINGS_GENERAL.DEVICES' | translate }}</p>
         }
         @if (notification.error(); as pushError) {
-          <p class="mt-1 text-xs text-rose-600 dark:text-rose-400">{{ pushError }}</p>
+          <p class="mt-1 text-xs text-rose-600 dark:text-rose-400">{{ pushError | translate }}</p>
         }
       </div>
     </div>
@@ -62,6 +62,99 @@
         (click)="sendTestPush()">
         {{ 'SETTINGS_GENERAL.SEND_TEST' | translate }}
       </button>
+    }
+  </section>
+
+  <!--
+    Engines — the scraping and AI backend choices. Both halves arrive in ONE
+    `getMySettings` reply, which is why a single component renders them: the
+    server composes the plan check once, so the two cannot disagree about which
+    plan they were answered under.
+
+    Mounted here rather than inside the playground because these are
+    ACCOUNT-level choices: a stored engine is resolved by `scrapeMiddleware` for
+    `/api/crawl` from anywhere, not only from the surface that set it.
+  -->
+  <section class="rounded-2xl border border-gray2/60 bg-white/70 p-5 shadow-sm dark:border-gray5/40 dark:bg-gray6/40">
+    <app-ai-keys />
+  </section>
+
+  <!--
+    Alerts — account-level notifications, as opposed to the device-level push
+    control above. The distinction is not cosmetic: push needs a browser
+    permission and belongs to THIS device, while an email preference belongs to
+    the ACCOUNT and is honoured server-side. Merging them would make "off" mean
+    two different things.
+
+    Reuses `app-radiotoggle` rather than the checkbox used elsewhere, so this row
+    matches the PUSH row directly above it rather than introducing a second
+    control idiom on the same page.
+  -->
+  <section class="rounded-2xl border border-gray2/60 bg-white/70 p-5 shadow-sm dark:border-gray5/40 dark:bg-gray6/40">
+    <div class="flex items-start gap-3">
+      <lucide-angular [img]="icons['bell']" class="mt-0.5 h-5 w-5 flex-shrink-0 text-cyan-600 dark:text-cyan-400 fill-none"></lucide-angular>
+      <div class="min-w-0">
+        <h2 class="text-sm font-semibold text-gray6 dark:text-gray1">{{ 'SETTINGS_ALERTS.EMAIL_TITLE' | translate }}</h2>
+        <p class="mt-0.5 text-xs leading-relaxed text-gray4 dark:text-gray3">{{ 'SETTINGS_ALERTS.EMAIL_SUB' | translate }}</p>
+      </div>
+    </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4 rounded-xl border border-gray2/60 bg-slate-50/40 px-4 py-3 dark:border-gray5/40 dark:bg-gray7/60">
+      <div class="min-w-0">
+        <span class="text-sm font-medium text-gray6 dark:text-gray2">{{ 'SETTINGS_ALERTS.SPEND_CAP_EMAIL' | translate }}</span>
+        <p class="mt-0.5 text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_ALERTS.SPEND_CAP_EMAIL_HINT' | translate }}</p>
+      </div>
+      @if (alertsLoading()) {
+        <span class="flex-shrink-0 text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_ALERTS.LOADING' | translate }}</span>
+      } @else {
+        <app-radiotoggle [control]="spendCapEmailControl" [showLabel]="false" identity="settings-spend-cap-email"></app-radiotoggle>
+      }
+    </div>
+
+    <!--
+      The cap itself, and it belongs directly under the email toggle because that
+      toggle notifies about THIS value. A notification about a limit the customer
+      has no way to set is a promise with no way to keep it.
+
+      Rendered only once the policy read SUCCEEDS: an empty box means "no cap", so
+      showing one after a failed read would state a limit the account may well have.
+    -->
+    <div class="mt-3 rounded-xl border border-gray2/60 bg-slate-50/40 px-4 py-3 dark:border-gray5/40 dark:bg-gray7/60">
+      <span class="text-sm font-medium text-gray6 dark:text-gray2">{{ 'SETTINGS_ALERTS.SPEND_CAP_TITLE' | translate }}</span>
+      <p class="mt-0.5 text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_ALERTS.SPEND_CAP_HINT' | translate }}</p>
+
+      @if (alertsLoading()) {
+        <span class="mt-2 block text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_ALERTS.LOADING' | translate }}</span>
+      } @else if (spendCapReady()) {
+        <div class="mt-3 flex items-end gap-2">
+          <label class="min-w-0 flex-1">
+            <span class="block text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_ALERTS.SPEND_CAP_LABEL' | translate }}</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              class="mt-1 w-full rounded-lg border border-gray2/60 bg-white px-3 py-2 text-sm text-gray6 dark:border-gray5/40 dark:bg-gray6 dark:text-gray1"
+              [formControl]="spendCapControl" />
+          </label>
+          <button
+            type="button"
+            class="flex-shrink-0 rounded-lg bg-cyan-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60 dark:bg-cyan-500 dark:text-gray7"
+            [disabled]="spendCapSaving()"
+            (click)="saveSpendCap()">
+            {{ (spendCapSaved() ? 'SETTINGS_ALERTS.SPEND_CAP_SAVED' : 'SETTINGS_ALERTS.SPEND_CAP_SAVE') | translate }}
+          </button>
+        </div>
+        @let spent = spendCapSpent();
+        @if (spent !== null) {
+          <p class="mt-2 text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_ALERTS.SPEND_CAP_SPENT' | translate: { spent: spent } }}</p>
+        }
+      }
+    </div>
+
+    <!-- Text, not just a colour, so the failure survives greyscale. -->
+    @if (alertsError()) {
+      <p class="mt-2 text-xs text-rose-600 dark:text-rose-400">{{ alertsError() | translate }}</p>
     }
   </section>
 </div>

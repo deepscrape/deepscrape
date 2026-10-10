@@ -132,7 +132,10 @@ export class NotificationService {
     }
     if (!vapidKey) {
       this.state.set('unconfigured');
-      this.errorState.set('Push is not configured for this build (FIREBASE_VAPID_KEY is missing).');
+      // A KEY, not a sentence: this string is rendered under the push toggle, so
+      // it has to be translatable. It also named the environment variable that
+      // is missing, which is an operator's detail and not the customer's.
+      this.errorState.set('SETTINGS_GENERAL.PUSH_ERR_UNCONFIGURED');
       return false;
     }
 
@@ -147,7 +150,7 @@ export class NotificationService {
       const token = await this.requestToken();
       if (!token) {
         this.state.set('error');
-        this.errorState.set('The browser did not return a push token.');
+        this.errorState.set('SETTINGS_GENERAL.PUSH_ERR_NO_TOKEN');
         return false;
       }
 
@@ -347,7 +350,11 @@ export class NotificationService {
   }
 
   private describe(error: unknown): string {
+    // A browser `Error.message` is whatever that browser wrote, in that browser's
+    // own language, so it is passed through untranslated on purpose -- the
+    // template pipes this through `translate`, which returns a non-key unchanged.
+    // Only the fallback is ours, and that one is a key.
     if (error instanceof Error) return error.message;
-    return 'Push notifications could not be updated.';
+    return 'SETTINGS_GENERAL.PUSH_ERROR';
   }
 }

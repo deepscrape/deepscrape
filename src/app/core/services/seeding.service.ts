@@ -3,8 +3,7 @@ import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { catchError, map, Observable, tap, throwError } from 'rxjs';
 import { CrawlOperation, CrawlPack, CrawlTask, SeederRequest, SeederResult } from '../types';
 import { AuthService } from './auth.service';
-import { API_CRAWL4AI_URL } from '../variables';
-import { environment } from 'src/environments/environment'
+import { API_BASE_URL } from '../variables';
 import { CrawlAPIService } from './crawlapi.service';
 
 @Injectable({ providedIn: 'root' })
@@ -13,8 +12,10 @@ export class SeedingService {
 
   constructor(private http: HttpClient, private authService: AuthService, private crawlService: CrawlAPIService) {
 
-    this.crawl4AiEndpoint = (environment.production ? environment.API_CRAWL4AI_URL + '/api/v1' :
-      API_CRAWL4AI_URL) + '/seeder' // API_CRAWL4AI // Updated URL
+    // ponytail: same-origin, matching CrawlAPIService. This had the identical
+    // production branch pointing at the crawl agent, so fixing only that file
+    // would have left this one still sending the caller's ID token off-origin.
+    this.crawl4AiEndpoint = API_BASE_URL + '/seeder'
   }
   cancelTask(taskId: string): Observable<any> {
     return this.crawlService.cancelTask(taskId)

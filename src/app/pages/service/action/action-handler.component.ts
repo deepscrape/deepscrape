@@ -6,7 +6,7 @@ import { ThemeService, FirestoreService, AuthService, WindowToken } from 'src/ap
 import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
 import { checkPasswordStrength, getErrorMessage, isStrongPassword } from 'src/app/core/functions';
 import { Observable } from 'rxjs';
-import { CommonModule } from '@angular/common';
+import { AsyncPipe } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { TranslateModule } from '@ngx-translate/core';
@@ -18,7 +18,7 @@ import { MatIconModule } from '@angular/material/icon';
 @Component({
   selector: 'app-reset-password-handler',
   imports: [
-    CommonModule,
+    AsyncPipe,
     RouterModule,
     FormsModule,
     TranslateModule,
@@ -40,7 +40,9 @@ export class ActionHandlerComponent implements OnInit {
   successMessage = '';
   protected isDarkMode$: Observable<boolean>;
   /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
-  protected readonly apexUrl: string = ORIGINS.marketing;
+  // ponytail: was ORIGINS.marketing — see app-service-layout: prerendered, so the origin is
+  // named rather than derived, and it is the app one so the logo cannot surface the landing page.
+  protected readonly homeUrl: string = ORIGINS.app + '/dashboard';
   emailVerificationMode: boolean = false;
   verificationSuccess: boolean = false;
   constructor(

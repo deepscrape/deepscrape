@@ -1,0 +1,101 @@
+<div class="flex w-full max-w-3xl flex-col gap-3 mt-8">
+  <!--
+    The form sits on the same surface card the crawl and seeder modes use, so all
+    three read with the same weight inside the playground shell. It was previously a
+    bare stack of inputs on the page background, which is what made this mode look
+    unfinished next to its neighbours.
+  -->
+  <section
+    class="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-slate-50/30 p-4 shadow-sm transition-shadow dark:border-gray-700 dark:bg-gray7/80">
+  <!-- Query -->
+  <app-stinput
+    class="block w-full"
+    leftIcon="search"
+    [control]="queryControl"
+    [label]="'SEARCH.QUERY' | translate"
+    [errorLabel]="'SEARCH.QUERY_HINT' | translate"></app-stinput>
+
+  <!-- Engine, page size and region. One row on wide screens, stacked on phones,
+       which is the same shape the crawl-pack configuration forms use. -->
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-center">
+    <app-dropdown
+      [options]="engineOptions"
+      [control]="engineControl"
+      [padding]="'p-2'"
+      [dropDownName]="'SEARCH.ENGINE' | translate"></app-dropdown>
+
+    <app-stinput
+      leftIcon="list"
+      type="number"
+      [min]="limits.minLimit"
+      [max]="limits.maxLimit"
+      [control]="limitControl"
+      [label]="'SEARCH.LIMIT' | translate"
+      [errorLabel]="'SEARCH.LIMIT_HINT' | translate"></app-stinput>
+
+    <app-stinput
+      leftIcon="public"
+      [control]="regionControl"
+      [label]="'SEARCH.REGION' | translate"
+      [errorLabel]="'SEARCH.REGION_HINT' | translate"></app-stinput>
+  </div>
+
+  <!-- Action row: clear on the left, submit on the right. The same placement as
+       the crawl and seeder modes, so the eye does not have to hunt for it. -->
+  <div class="flex items-center justify-between gap-3">
+    <div class="flex items-center gap-2">
+      <app-radiotoggle
+        [control]="safeControl"
+        [showLabel]="false"
+        identity="serp-safe"></app-radiotoggle>
+      <span class="text-sm text-gray-600 dark:text-gray-300">{{ 'SEARCH.SAFE' | translate }}</span>
+    </div>
+
+    <!--
+      Only `bing` honours `browser`: google/brave need a browser whatever it says,
+      and duckduckgo has no browser path yet. Shown only for the engine it can
+      actually change — a toggle that did nothing for four of the five engine
+      choices reads as broken, which is worse than not offering it.
+    -->
+    @if (engine().code === 'bing') {
+      <div class="flex items-center gap-2">
+        <app-radiotoggle
+          [control]="browserControl"
+          [showLabel]="false"
+          identity="serp-browser"></app-radiotoggle>
+        <span class="text-sm text-gray-600 dark:text-gray-300">{{ 'SEARCH.BROWSER' | translate }}</span>
+      </div>
+    }
+
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        [disabled]="clearDisabled"
+        (click)="clear()"
+        class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-100/60 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-transparent disabled:text-gray-400 dark:bg-gray-100/[0.08] dark:text-gray-300 dark:hover:bg-gray5/60 dark:disabled:bg-transparent">
+        <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">clear</mat-icon>
+        <span class="sr-only">{{ 'SEARCH.CLEAR' | translate }}</span>
+      </button>
+
+      <button
+        type="button"
+        [disabled]="submitDisabled"
+        (click)="submit()"
+        class="inline-flex items-center gap-2 rounded-full bg-cyan-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400">
+        @if (searchState() === 'loading') {
+          <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+        }
+        {{ (searchState() === 'loading' ? 'SEARCH.SEARCHING' : 'SEARCH.SUBMIT') | translate }}
+      </button>
+    </div>
+  </div>
+  </section>
+
+  <!-- Output -->
+  <app-serp-results
+    [response]="response()"
+    [state]="searchState()"
+    [errorMessage]="errorMessage()"
+    [showRetry]="showRetry"
+    (retry)="retry()"></app-serp-results>
+</div>

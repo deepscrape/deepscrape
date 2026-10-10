@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, in
 import { animate, state, style, transition, trigger } from '@angular/animations';
 import { MatIcon } from '@angular/material/icon';
 import { NgClass } from '@angular/common'; // Added NgFor for iterating over icons
+import { TranslateModule } from '@ngx-translate/core';
 import { WindowToken } from '../../services';
 import { RippleDirective } from '../../directives';
 import { Subscription } from 'rxjs/internal/Subscription';
@@ -25,7 +26,7 @@ export enum SnackBarPosition {
 
 @Component({
   selector: 'app-snackbar',
-  imports: [NgClass, MatIcon, RippleDirective],
+  imports: [NgClass, MatIcon, RippleDirective, TranslateModule],
   templateUrl: './snackbar.component.html',
   styleUrl: './snackbar.component.scss',
   animations: [

@@ -1,0 +1,173 @@
+<!--
+  The fleet table.
+
+  Surfaces use the repository's own neutral tokens at partial opacity
+  (gray3/gray5/gray7) rather than Tailwind's default gray scale, so this page sits
+  in the same family as the other admin surfaces.
+
+  The read-only note below the header is a deliberate piece of interface, not a
+  TODO banner. Arachnefly's ownership middleware admits only a machine's owner and
+  has no admin bypass, so lifecycle actions for another tenant's machine cannot be
+  performed from here. Four buttons that each answer 403 would be a worse answer
+  than one sentence that explains why there are none.
+-->
+<section class="space-y-6">
+  <header class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div>
+      <h2 class="text-2xl font-bold text-gray5 dark:text-gray-100">
+        {{ 'ADMIN_MACHINES.TITLE' | translate }}
+      </h2>
+      <p class="mt-1 text-sm text-gray5/70 dark:text-gray-300">
+        {{ 'ADMIN_MACHINES.SUBTITLE' | translate }}
+      </p>
+    </div>
+
+    <button
+      type="button"
+      [disabled]="state() === 'loading'"
+      class="self-start rounded-md border border-gray3/55 bg-white/75 px-3 py-1.5 text-sm font-medium text-gray5 hover:border-gray4 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray5/60 dark:bg-gray7/55 dark:text-gray-200"
+      (click)="load()"
+    >
+      {{ 'ADMIN_MACHINES.REFRESH' | translate }}
+    </button>
+  </header>
+
+  <!--
+    A summary, and it says what it counts. "12 of 340" is a different statement
+    from "12 machines exist", and the caption under it is what keeps a capped
+    page from reading as the whole platform.
+  -->
+  @if (state() === 'ready') {
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <p class="text-sm text-gray5 dark:text-gray-200">
+        {{
+          'ADMIN_MACHINES.TOTAL'
+            | translate: { count: machines().length, running: running() }
+        }}
+      </p>
+      @if (truncated()) {
+        <p
+          role="status"
+          class="text-sm font-medium text-rose-700 dark:text-rose-300"
+        >
+          {{ 'ADMIN_MACHINES.TRUNCATED' | translate }}
+        </p>
+      }
+    </div>
+  }
+
+  <p
+    class="rounded-lg border border-gray3/55 bg-white/60 p-3 text-xs text-gray5/80 dark:border-gray5/60 dark:bg-gray7/40 dark:text-gray-300"
+  >
+    {{ 'ADMIN_MACHINES.READ_ONLY_NOTE' | translate }}
+  </p>
+
+  <app-result-envelope
+    [state]="state()"
+    [errorMessage]="errorKey() | translate"
+    [loadingMessage]="'ADMIN_MACHINES.LOADING'"
+    [idleMessage]="'ADMIN_MACHINES.IDLE'"
+    [emptyMessage]="'ADMIN_MACHINES.EMPTY'"
+    [showRetry]="state() === 'error'"
+    (retry)="load()"
+  >
+    <!--
+      A real table, because this is tabular data and a screen reader should be
+      able to navigate it by row and column. The caption is `sr-only`: the heading
+      above already says what this is for anyone who can see it, and the caption
+      is what makes the columns announce themselves for anyone who cannot.
+    -->
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-left text-sm">
+        <caption class="sr-only">
+          {{ 'ADMIN_MACHINES.TITLE' | translate }}
+        </caption>
+        <thead>
+          <tr
+            class="border-b border-gray3/55 text-xs uppercase tracking-wider text-gray5/70 dark:border-gray5/60 dark:text-gray-300"
+          >
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_MACHINES.COL_MACHINE' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_MACHINES.COL_OWNER' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_MACHINES.COL_REGION' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_MACHINES.COL_STATE' | translate }}
+            </th>
+            <th scope="col" class="py-2 pr-4 font-semibold">
+              {{ 'ADMIN_MACHINES.COL_CREATED' | translate }}
+            </th>
+            <th scope="col" class="py-2 font-semibold">
+              {{ 'ADMIN_MACHINES.COL_UPDATED' | translate }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.machine.id) {
+            <tr
+              class="border-b border-gray3/35 last:border-b-0 dark:border-gray5/40"
+            >
+              <td class="py-2 pr-4">
+                <!--
+                  The prefix is what an operator matches on, so that is what the
+                  cell shows; the full value stays reachable without widening the
+                  table past the viewport.
+                -->
+                <span
+                  class="font-mono text-gray5 dark:text-gray-100"
+                  [title]="row.machine.id"
+                >
+                  {{ shortId(row.machine.id) }}
+                </span>
+                @if (row.machine.name) {
+                  <span class="block text-xs text-gray5/70 dark:text-gray-400">
+                    {{ row.machine.name }}
+                  </span>
+                }
+              </td>
+              <td class="py-2 pr-4">
+                <span
+                  class="font-mono text-gray5/80 dark:text-gray-300"
+                  [title]="row.machine.uid"
+                >
+                  {{ shortId(row.machine.uid) }}
+                </span>
+              </td>
+              <td class="py-2 pr-4 text-gray5 dark:text-gray-200">
+                {{ row.machine.region || '-' }}
+              </td>
+              <td class="py-2 pr-4">
+                <!--
+                  The raw state, and a dot whose colour repeats what the word
+                  already says. Colour is never the only signal: the text is the
+                  signal and the colour is the shortcut.
+                -->
+                <span [class]="stateClass(row.machine.state)">
+                  {{ row.machine.state || '-' }}
+                </span>
+              </td>
+              <td class="py-2 pr-4 text-gray5 dark:text-gray-200">
+                @if (row.created) {
+                  {{ row.created | date: 'short' }}
+                } @else {
+                  {{ row.machine.createdAt || '-' }}
+                }
+              </td>
+              <td class="py-2 text-gray5 dark:text-gray-200">
+                @if (row.updated) {
+                  {{ row.updated | date: 'short' }}
+                } @else {
+                  {{ row.machine.updatedAt || '-' }}
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </app-result-envelope>
+</section>

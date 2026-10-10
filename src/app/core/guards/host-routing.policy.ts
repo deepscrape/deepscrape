@@ -82,6 +82,7 @@ export const PATH_RULES: readonly PathRule[] = [
   { prefix: '/chatai', allowed: ['app'], preferred: 'app' },
   { prefix: '/crawlpack', allowed: ['app'], preferred: 'app' },
   { prefix: '/operations', allowed: ['app'], preferred: 'app' },
+  { prefix: '/machines', allowed: ['app'], preferred: 'app' },
   { prefix: '/billing', allowed: ['app'], preferred: 'app' },
   { prefix: '/settings', allowed: ['app'], preferred: 'app' },
   // Auth surface: allowed on BOTH authenticated origins, and only moved off

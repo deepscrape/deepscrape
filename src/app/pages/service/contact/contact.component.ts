@@ -5,7 +5,7 @@ import {
   signal,
   PLATFORM_ID,
 } from '@angular/core';
-import { CommonModule, AsyncPipe, isPlatformBrowser } from '@angular/common';
+import { AsyncPipe, isPlatformBrowser } from '@angular/common';
 import {
   FormBuilder,
   FormGroup,
@@ -36,7 +36,6 @@ export interface ContactFormData {
   selector: 'app-contact',
   standalone: true,
   imports: [
-    CommonModule,
     ReactiveFormsModule,
     LucideAngularModule,
     TranslateModule,

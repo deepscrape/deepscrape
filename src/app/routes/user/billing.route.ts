@@ -31,6 +31,24 @@ export const billingRoutes: Routes = [
         data: { animation: 'billing-usage' },
     },
     {
+        // Invoice and payment HISTORY. Not a duplicate of `usage`, which renders
+        // the usage breakdown: this is the only surface that renders
+        // `hostedInvoiceUrl`, so deleting it as "unrouted" would have removed the
+        // one place a customer can open their own invoice. It was built and wired
+        // to a real service (`BillingService.getUsageReport`) and simply had no
+        // route pointing at it.
+        path: 'transactions',
+        loadComponent: () => import('../../pages/user/billing/transactions/transactions.component').then(m => m.TransactionsComponent),
+        data: { animation: 'billing-transactions' },
+    },
+    {
+        // Generated from the pricing table rather than written by hand, so this page
+        // cannot advertise a number the charging code does not honour.
+        path: 'rates',
+        loadComponent: () => import('../../pages/user/billing/rates/rates.component').then(m => m.RatesComponent),
+        data: { animation: 'billing-rates' },
+    },
+    {
         path: 'success',
         loadComponent: () => import('../../pages/user/billing/success/billing-success.component').then(m => m.BillingSuccessComponent),
         data: { animation: 'billing-success' },

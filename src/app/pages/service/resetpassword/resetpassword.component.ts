@@ -1,5 +1,5 @@
 import { Component, OnInit, inject, DestroyRef } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { AsyncPipe, NgClass } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
@@ -17,7 +17,8 @@ import { Observable, Subscription } from 'rxjs';
 @Component({
     selector: 'app-resetpassword',
     imports: [
-        CommonModule,
+        AsyncPipe,
+        NgClass,
         ReactiveFormsModule,
         RouterModule,
         MatIconModule,
@@ -36,7 +37,9 @@ export class ResetPasswordComponent implements OnInit {
     private themePicker = inject(ThemeService)
     protected isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$;
     /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
-    protected readonly apexUrl: string = ORIGINS.marketing;
+    // ponytail: was ORIGINS.marketing — see app-service-layout: prerendered, so the origin is
+    // named rather than derived, and it is the app one so the logo cannot surface the landing page.
+    protected readonly homeUrl: string = ORIGINS.app + '/dashboard';
     private langChangeSubscription: Subscription;
 
     constructor(

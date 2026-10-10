@@ -116,6 +116,46 @@
       }
     </div>
   </app-slideinmodal>
+
+  <!-- Task Runner Modal -->
+  <app-slideinmodal
+    [maxWidth]="'max-w-2xl'"
+    [isOpen]="isTaskModalOpen | formControl"
+    [loading]="isTaskRunning"
+    position="center"
+    [hasBlur]="true"
+    [title]="'MACHINES.TASK_TITLE' | translate">
+    <div class="flex flex-col items-start justify-center gap-4 w-full">
+      <p class="text-sm text-gray-600 dark:text-gray-400">
+        {{ 'MACHINES.TASK_HINT' | translate }}
+      </p>
+      <p class="text-xs font-mono break-all text-gray-500 dark:text-gray-400">
+        {{ taskMachineId }}
+      </p>
+      <textarea
+        [formControl]="taskPayload"
+        rows="8"
+        spellcheck="false"
+        class="w-full rounded-lg border border-gray-300 dark:border-gray4 bg-transparent p-3 font-mono text-sm text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-100/70 dark:focus:ring-blue-200/60"
+        [attr.aria-label]="'MACHINES.TASK_TITLE' | translate">
+      </textarea>
+    </div>
+    <div class="mt-4 flex items-center justify-end gap-4">
+      <button
+        (click)="isTaskModalOpen.setValue(false)"
+        type="button"
+        class="rounded-lg p-2 min-w-fit text-white transition-colors duration-200 hover:bg-gray-100/60 hover:text-gray-700 dark:bg-gray-600/[.1] dark:hover:bg-gray-500/70">
+        {{ 'MACHINES.TASK_CANCEL' | translate }}
+      </button>
+      <button
+        (click)="submitTask()"
+        [disabled]="isTaskRunning"
+        type="button"
+        class="min-w-fit px-4 py-3 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200">
+        {{ 'MACHINES.TASK_RUN' | translate }}
+      </button>
+    </div>
+  </app-slideinmodal>
   <p class="text-lg text-center text-gray-500 mb-4">
     {{ 'MACHINES.VIEW_ALL' | translate }}
   </p>
@@ -144,6 +184,20 @@
     </button>
   </h3>
 
+  <!--
+    Browser sessions, on the same surface as the containers.
+
+    The two are different things that both lease a Fly machine, so a customer who
+    wants "a machine" should not have to know which menu holds which. The panel
+    brings its own list, its own create form and its own actions, so this is a
+    composition rather than a reimplementation: the session routes, the idle
+    deadline and the meter are all exercised by exactly one component.
+
+    It sits ABOVE the container grid because a session is the shorter-lived thing
+    and the one a customer comes here to start.
+  -->
+  <app-browser-session-panel />
+
   <!-- Machines Grid -->
   @defer (on immediate; when machines$ | async) {
   <div class="flex flex-col flex-wrap justify-center bg-transparent gap-8">
@@ -156,6 +210,7 @@
             [machine]="machine"
             (startPressed)="startMachine($event)"
             (suspendPressed)="suspendMachine($event)"
+            (taskPressed)="runTask($event)"
             (destroyPressed)="destroyMachine($event)"
           (stopPressed)="stopMachine($event)"></app-container-box>
         </div>

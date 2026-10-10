@@ -68,11 +68,18 @@ export const orgScopeGuard: CanActivateFn = (route, state) => {
         return true;
     }
 
-    // The fast path that matters for old links. A segment naming an app page cannot be an org id,
-    // so this is a bare legacy path (`/dashboard`, `/billing/plans`) — re-home it with the org
-    // already in hand. Without this every legacy link cost a `listMyOrganizations` API call before
-    // it could render, which is why the remaining bare link sites are cosmetic rather than a bug.
-    if (requested && isAppPageSegment(requested) && authz.activeOrgId) {
+    // The fast path that matters for old links. A segment naming an app page — or the org root,
+    // which the `:orgId` route swallows too — cannot be an org id, so this is a bare legacy path
+    // (`/dashboard`, `/billing`) — re-home it with the org already in hand. Without this every
+    // legacy link cost a `listMyOrganizations` API call before it could render, which is why the
+    // remaining bare link sites are cosmetic rather than a bug.
+    //
+    // The root segment has to be named explicitly: `dashboard` is deliberately NOT in
+    // `ORG_APP_PAGES` (it is the org ROOT, so `scoped()` drops it instead of nesting it). Without
+    // this a bare `/dashboard` missed the fast path entirely, fell through to the membership
+    // lookup, and — because nobody subscribes to that cold observable on the sync path — could
+    // land on `/{orgId}/dashboard` instead of `/{orgId}`.
+    if (requested && (isAppPageSegment(requested) || requested === ORG_ROOT_SEGMENT) && authz.activeOrgId) {
         return scoped(router, authz.activeOrgId, state.url, requested);
     }
 

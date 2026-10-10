@@ -68,6 +68,27 @@ export const adminNavigation = [
             matIcon: 'group'
         }
     },
+    {
+        name: 'Webrain',
+        url: '/admin/webrain',
+        icon: {
+            matIcon: 'bolt'
+        }
+    },
+    {
+        name: 'Machines',
+        url: '/admin/machines',
+        icon: {
+            matIcon: 'dns'
+        }
+    },
+    {
+        name: 'Sessions',
+        url: '/admin/sessions',
+        icon: {
+            matIcon: 'devices'
+        }
+    },
 ];
 
 export const navigation = [
@@ -103,6 +124,32 @@ export const navigation = [
         name: 'Crawl Pack',
         url: '/crawlpack',
         icon: 'crawl_logo',
+
+        identity: true,
+    },
+
+    // ponytail: browser SESSIONS, not `crawlpack/browser`. That page configures the
+    // crawl engine's browser options; this one leases a browser you can drive. The
+    // two are different features and the URLs do not collide.
+    {
+        name: 'Browser',
+        url: '/browser',
+        icon: {
+            matIcon: 'web'
+        },
+
+        identity: true,
+    },
+
+    // ponytail: the machine surface, promoted out of the crawl-pack tab strip. It
+    // is not a crawl-pack setting — the same console deploys any Fly container —
+    // and it is the surface where a browser session's machine is also visible.
+    {
+        name: 'Machines',
+        url: '/machines',
+        icon: {
+            matIcon: 'memory'
+        },
 
         identity: true,
     },
@@ -153,6 +200,22 @@ export const navigation = [
         identity: true,
         icon: {
             matIcon: 'query_stats'
+        }
+    },
+    {
+        name: 'Transactions',
+        url: '/billing/transactions',
+        identity: true,
+        icon: {
+            matIcon: 'receipt'
+        }
+    },
+    {
+        name: 'Rates',
+        url: '/billing/rates',
+        identity: true,
+        icon: {
+            matIcon: 'receipt_long'
         }
     },
     {

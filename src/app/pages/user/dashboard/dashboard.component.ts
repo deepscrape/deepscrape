@@ -1,10 +1,9 @@
 import { ChangeDetectionStrategy, Component, HostBinding, inject } from '@angular/core';
-import { BrowserComponent } from 'src/app/core/components';
 import { AiAPIService, CrawlAPIService, LocalStorage } from 'src/app/core/services';
 
 @Component({
     selector: 'app-dashboard',
-    imports: [BrowserComponent],
+    imports: [],
     templateUrl: './dashboard.component.html',
     styleUrl: './dashboard.component.scss',
     changeDetection: ChangeDetectionStrategy.OnPush,

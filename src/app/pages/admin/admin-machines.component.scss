@@ -1,0 +1,11 @@
+// No rules, on purpose.
+//
+// The file exists because `styleUrl` pointing at a missing file is a build error,
+// and it is empty rather than deleted because every other admin page in this
+// repository carries one and a missing sibling reads as an oversight.
+//
+// Everything this page needs is a Tailwind utility, including the column
+// separators and the `sr-only` caption. There is no bespoke animation to define:
+// the table appears whole, and adding a per-row fade would be motion an operator
+// reading machine states did not ask for and would need suppressing under
+// `prefers-reduced-motion`.

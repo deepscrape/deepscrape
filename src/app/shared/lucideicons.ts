@@ -60,10 +60,12 @@ import {
     Terminal,
     RefreshCw,
     MousePointerClick,
+    Bell,
 } from 'lucide-angular'
 
 export let myIcons: LucideIcons = {
     home: Home,
+    bell: Bell,
     menu: Menu,
     bot: Bot,
     gauge: Gauge,

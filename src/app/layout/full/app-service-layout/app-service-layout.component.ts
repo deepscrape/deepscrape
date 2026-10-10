@@ -1,4 +1,4 @@
-import { AsyncPipe, CommonModule } from '@angular/common';
+import { AsyncPipe } from '@angular/common';
 import {
   Component,
   inject,
@@ -32,7 +32,12 @@ export class AppServiceLayoutComponent {
   isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$
 
   /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
-  protected readonly apexUrl: string = ORIGINS.marketing;
+  // ponytail: was ORIGINS.marketing. An unconditional hop to the apex put the landing page
+  // one logo-click away from the app and console origins. These pages are PRERENDERED and
+  // served from all three hosts, so `window.location.hostname` does not exist at render time
+  // and the origin has to be named. The app origin is named rather than the apex, so the logo
+  // never leads back to marketing.
+  protected readonly homeUrl: string = ORIGINS.app + '/dashboard';
 
   constructor(private contexts: ChildrenOutletContexts) { }
   getAnimationData(outlet: RouterOutlet) {

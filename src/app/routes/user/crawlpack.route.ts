@@ -11,11 +11,6 @@ export const crawlerPackRoutes: Routes = [
         // redirectTo: 'keys'
     },
     {
-        path: 'machines',
-        loadComponent: () => import('../../pages/user/crawl-pack/machines/machines.component').then(m => m.MachinesComponent),
-        data: { title: 'Machines', animation: 'machines' },
-    },
-    {
         path: 'browser',
         loadComponent: () => import('../../pages/user/crawl-pack/browser-config/browser-config.component').then(m => m.BrowserConfigComponent),
         data: { title: 'Browser Configuration', animation: 'browserconfig' },

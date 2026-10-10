@@ -1,0 +1,7 @@
+/* The panel contributes layout only: every colour and spacing decision comes
+   from Tailwind utilities in the template, so there is no second place for the
+   theme to drift. Kept as a file because the component declares a `styleUrl`. */
+:host {
+  display: block;
+  width: 100%;
+}

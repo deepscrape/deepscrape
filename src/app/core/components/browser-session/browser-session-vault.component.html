@@ -1,0 +1,119 @@
+<!-- browser-session-vault.component.html -->
+<section class="rounded-2xl border border-gray2/60 bg-slate-50/30 p-4 dark:border-gray5/40 dark:bg-gray7/80 sm:p-6">
+
+  <header class="mb-4">
+    <h2 class="font-display text-xl text-gray6 dark:text-white">
+      {{ 'VAULT.TITLE' | translate }}
+    </h2>
+    <p class="mt-1 max-w-3xl text-sm text-gray4">
+      {{ 'VAULT.SUBTITLE' | translate }}
+    </p>
+  </header>
+
+  <!-- Upgrade state. Shown ONLY after the route answered 402: the route owns the
+       entitlement decision, so this is never inferred from a plan client-side. -->
+  @if (upgradeRequired()) {
+    <div class="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4" role="status">
+      <p class="text-sm font-medium text-rose-600 dark:text-rose-300">
+        {{ 'VAULT.UPGRADE_TITLE' | translate }}
+      </p>
+      <p class="mt-1 text-sm text-gray5 dark:text-gray2">
+        {{ 'VAULT.UPGRADE_BODY' | translate }}
+      </p>
+      <a
+        [routerLink]="['/']"
+        fragment="pricing"
+        class="mt-3 inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500"
+      >
+        <mat-icon class="!h-4 !w-4 !text-base">upgrade</mat-icon>
+        {{ 'VAULT.UPGRADE_ACTION' | translate }}
+      </a>
+    </div>
+  } @else {
+
+    <form [formGroup]="form" (ngSubmit)="save()" class="grid gap-4 sm:grid-cols-3">
+      <label class="block">
+        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.SERVICE' | translate }}</span>
+        <input formControlName="service" type="text" autocomplete="off"
+               [placeholder]="'VAULT.SERVICE_HINT' | translate"
+               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+      </label>
+      <label class="block">
+        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.PROFILE' | translate }}</span>
+        <input formControlName="profile" type="text" autocomplete="off"
+               [placeholder]="'VAULT.PROFILE_HINT' | translate"
+               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+      </label>
+      <label class="block">
+        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.LOGIN_URL' | translate }}</span>
+        <input formControlName="url" type="url" autocomplete="off"
+               placeholder="https://"
+               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+      </label>
+    </form>
+
+    <div class="mt-4 flex flex-wrap items-center gap-3">
+      <button type="button" (click)="save()"
+              [disabled]="busy() !== null || form.invalid"
+              class="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
+        <mat-icon class="!h-4 !w-4 !text-base">{{ busy() === 'save_state' ? 'hourglass_top' : 'bookmark_add' }}</mat-icon>
+        {{ 'VAULT.SAVE' | translate }}
+      </button>
+      <button type="button" (click)="login()"
+              [disabled]="busy() !== null || form.invalid"
+              class="inline-flex items-center gap-2 rounded-lg border border-cyan-600 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-600/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-cyan-300">
+        <mat-icon class="!h-4 !w-4 !text-base">{{ busy() === 'login' ? 'hourglass_top' : 'login' }}</mat-icon>
+        {{ 'VAULT.LOGIN' | translate }}
+      </button>
+      <button type="button" (click)="closeLaunch()"
+              [disabled]="busy() !== null || form.invalid"
+              class="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray4 hover:text-gray6 disabled:opacity-50 dark:hover:text-white">
+        {{ 'VAULT.CLOSE_LAUNCH' | translate }}
+      </button>
+    </div>
+
+    @if (failure()) {
+      <p class="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-600 dark:text-rose-300"
+         role="alert">
+        {{ failure() | translate }}
+      </p>
+    }
+
+    <div class="mt-6">
+      @if (loading()) {
+        <p class="text-sm text-gray4">{{ 'VAULT.LOADING' | translate }}</p>
+      } @else if (!hasEntries()) {
+        <p class="text-sm text-gray4">{{ 'VAULT.EMPTY' | translate }}</p>
+      } @else {
+        <table class="w-full text-left text-sm">
+          <thead>
+            <tr class="border-b border-gray2/60 dark:border-gray5/40">
+              <th class="px-2 py-1.5 font-medium text-gray5 dark:text-gray2">{{ 'VAULT.SERVICE' | translate }}</th>
+              <th class="px-2 py-1.5 font-medium text-gray5 dark:text-gray2">{{ 'VAULT.PROFILE' | translate }}</th>
+              <th class="px-2 py-1.5 font-medium text-gray5 dark:text-gray2">{{ 'VAULT.USERNAME' | translate }}</th>
+              <th class="px-2 py-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (entry of entries(); track entry.service + ':' + entry.profile) {
+              <tr class="border-b border-gray2/30 dark:border-gray5/20">
+                <td class="px-2 py-1.5 text-gray6 dark:text-gray3">{{ entry.service }}</td>
+                <td class="px-2 py-1.5 text-gray6 dark:text-gray3">{{ entry.profile }}</td>
+                <td class="px-2 py-1.5 text-gray4">{{ entry.username || '—' }}</td>
+                <td class="px-2 py-1.5 text-right">
+                  <button type="button" (click)="use(entry)"
+                          class="rounded-lg px-2 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-600/10 dark:text-cyan-300">
+                    {{ 'VAULT.USE' | translate }}
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        <!-- Names only. `op=profiles` never returns a secret, and the platform never
+             asks for one: the vault decrypts in-process on the worker. -->
+        <p class="mt-3 text-xs text-gray4">{{ 'VAULT.NAMES_ONLY' | translate }}</p>
+      }
+    </div>
+  }
+</section>

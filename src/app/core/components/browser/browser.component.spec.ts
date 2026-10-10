@@ -50,6 +50,11 @@ describe('BrowserComponent', () => {
     component = TestBed.runInInjectionContext(
       () => new BrowserComponent(rtcStub, authStub, documentStub)
     );
+
+    // The viewer takes its signalling endpoint from the CALLER now, not from a
+    // build constant (`environment.nekoUrl`, removed 2026-10-10), so a spec that
+    // exercises `startStream` has to supply one.
+    component.endpoint = 'wss://neko.example.test';
   });
 
   it('should start a stream, clear existing tracks, and focus the overlay', async () => {
@@ -77,6 +82,23 @@ describe('BrowserComponent', () => {
     expect(component.videoRef.nativeElement.srcObject).toBeNull();
     expect(focusSpy).toHaveBeenCalled();
     expect(component.connecting).toBeFalse();
+  });
+
+  it('refuses to connect when no endpoint was supplied', async () => {
+    // The removal's whole point: with no caller-supplied endpoint there is no
+    // fixed host left to fall back to, so nothing is dialled. `videoRef` is
+    // stubbed for exactly the reason the spec above stubs it -- so the ONLY
+    // difference between the two cases is the endpoint itself.
+    component.endpoint = '';
+    component.videoRef = {
+      nativeElement: { srcObject: null },
+    } as BrowserComponent['videoRef'];
+
+    await component.startStream();
+
+    expect(rtcStub.connect).not.toHaveBeenCalled();
+    // Names the endpoint, so this cannot pass on an earlier TypeError instead.
+    expect(component.error).toContain('endpoint');
   });
 
   it('should expose clipboard and resolution controls through child components', () => {

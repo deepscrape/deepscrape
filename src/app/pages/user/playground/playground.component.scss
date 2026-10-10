@@ -34,6 +34,14 @@
   will-change: scroll-position;
 }
 
+/* A locked mode strip entry. `mat-icon` defaults to 24px, which would stretch the tab. */
+.mode-lock {
+  font-size: 1rem;
+  height: 1rem;
+  width: 1rem;
+  line-height: 1rem;
+}
+
 /* For mobile devices */
 @media (max-width: 768px) {
   .scrollbar-thin {

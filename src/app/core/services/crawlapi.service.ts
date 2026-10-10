@@ -6,7 +6,7 @@ import { from, Observable, throwError } from 'rxjs'
 import { AuthService } from './auth.service'
 import { handleError } from '../functions'
 import { CrawlOperation, CrawlPack, CrawlStatus, CrawlStreamBatch, CrawlTask, JinaOptions } from '../types'
-import { API_CRAWL4AI_URL } from '../variables'
+import { API_BASE_URL } from '../variables'
 
 @Injectable({
   providedIn: 'root'
@@ -31,9 +31,22 @@ export class CrawlAPIService {
    * relative paths that fail in the same place they already did.
    */
   private crawl4AiEndpoint: string
+
+  /**
+   * The exact path a batch enqueue posts to.
+   *
+   * Public because the cost estimate in the UI has to name the SAME route the
+   * submit spends on. A second copy of this string is how a price gets attached to
+   * a route nobody calls — which is exactly what happened to the pricing table,
+   * whose crawl rule still names `/crawl` while the client has posted here since
+   * the job surface moved.
+   */
+  readonly jobEnqueuePath: string
+
   constructor(private http: HttpClient, private authService: AuthService) {
 
-    this.crawl4AiEndpoint = API_CRAWL4AI_URL + '/crawl'
+    this.crawl4AiEndpoint = API_BASE_URL + '/crawl'
+    this.jobEnqueuePath = this.crawl4AiEndpoint + '/stream/job'
   }
 
   
@@ -210,7 +223,7 @@ export class CrawlAPIService {
   
   multiCrawlEnqueue(urls: string[], operationData: CrawlOperation, crawlPack: CrawlPack ): Observable<CrawlTask> {
 
-    const crawl4AiReaderEndpoint: string = this.crawl4AiEndpoint + "/stream/job"
+    const crawl4AiReaderEndpoint: string = this.jobEnqueuePath
 
     const headers = new HttpHeaders({
       // 'api-key': `Bearer ${this.authService.token}`, // this is for the ssr express server `,

@@ -20,7 +20,9 @@ describe('CrawlPackComponent', () => {
   } as ActivatedRoute;
 
   const routerStub = {
-    url: '/crawlpack/machines',
+    // Was `/crawlpack/machines`, which is no longer a child of this page: the
+    // Machines tab moved to a top-level `/machines` route.
+    url: '/crawlpack/browser',
     events: events$,
   } as unknown as Router;
 
@@ -53,16 +55,17 @@ describe('CrawlPackComponent', () => {
   it('should initialize tabs on ngOnInit', () => {
     component.ngOnInit();
     const tabs = (component as unknown as { tabs: LinkTabs[] }).tabs;
-    expect(tabs.length).toBe(6);
+    // Five, not six: the Machines tab moved to a top-level `/machines` route.
+    expect(tabs.length).toBe(5);
   });
 
   it('should activate matching tab when navigation ends', () => {
     component.ngOnInit();
-    events$.next(new NavigationEnd(1, '/crawlpack/machines', '/crawlpack/machines'));
+    events$.next(new NavigationEnd(1, '/crawlpack/browser', '/crawlpack/browser'));
 
     const tabs = (component as unknown as { tabs: LinkTabs[] }).tabs;
-    const machinesTab = tabs.find((tab) => tab.link === 'machines');
-    expect(machinesTab?.active).toBeTrue();
+    const browserTab = tabs.find((tab) => tab.link === 'browser');
+    expect(browserTab?.active).toBeTrue();
   });
 
   it('should expose route animation data from outlet context', () => {

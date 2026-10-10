@@ -77,6 +77,15 @@ export type ProfileStatus = {
     deleteReason?: string
     banExpires?: Date | null
     deletedAt?: Date | null
+
+    /** Hard-delete deadline set at confirmation time. */
+    purgeAfter?: Date | null
+    /** Set once the scheduled purger has erased the account. */
+    purgedAt?: Date | null
+    /** `self` for a user-requested deletion, otherwise the acting admin's uid. */
+    deletedBy?: string | null
+    /** Join key into the retained erasure record. */
+    deletionId?: string | null
 }
 
 

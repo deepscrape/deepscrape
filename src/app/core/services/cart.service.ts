@@ -4,7 +4,7 @@ import { openDB } from 'idb'
 import { BehaviorSubject, catchError, from, map, Observable, of, throwError } from 'rxjs'
 import { AuthService } from './auth.service'
 import { FirestoreService } from './firestore.service'
-import { BrowserConfig, BrowserProfile, CrawlConfig, CrawlPack, CrawlResult, CrawlResultConfig } from '../types'
+import { BrowserConfig, BrowserProfile, CrawlConfig, CrawlPack, CrawlProvider, CrawlResult, CrawlResultConfig } from '../types'
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
 
 @Injectable({ providedIn: 'root' })
@@ -55,8 +55,12 @@ export class CartService implements OnDestroy {
     const storeName = this.storeName
 
     try {
-      // Create the database if it doesn't exist
-      await openDB(this.dbName, 1, {
+      // Version 2 because version 1 is already out there without this store: a visitor who
+      // was signed in on load reached `loadCartFromIndexedDB` first, and a version-less
+      // `openDB` creates the database EMPTY at version 1. IndexedDB only runs `upgrade` when
+      // the requested version is higher, so `pack` was never created again in that browser
+      // and every later transaction threw "One of the specified object stores was not found".
+      await openDB(this.dbName, 2, {
         upgrade(db) {
           if (!db.objectStoreNames.contains(storeName)) {
             db.createObjectStore(storeName, { keyPath: 'uid' })
@@ -66,6 +70,16 @@ export class CartService implements OnDestroy {
     } catch (error) {
       console.error('Error initializing IndexedDB:', error)
     }
+  }
+
+  /**
+   * The only way in. Every read and write goes through here, so the upgrade above always
+   * completes before a transaction is opened — the race that created the empty database is
+   * not something a call site has to remember.
+   */
+  private async db() {
+    await this.initDB()
+    return openDB(this.dbName)
   }
 
   // Get current cart as Observable
@@ -78,7 +92,7 @@ export class CartService implements OnDestroy {
     if (!item.uid)
       throw new Error('Item must have an uid property')
 
-    const db = await openDB(this.dbName)
+    const db = await this.db()
     const tx = db.transaction(this.storeName, 'readwrite')
     await tx.store.put(item)
     await tx.done
@@ -86,7 +100,7 @@ export class CartService implements OnDestroy {
 
   private async deletFromIndexedDB(id: string) {
     // Delete from IndexDb
-    const db = await openDB(this.dbName)
+    const db = await this.db()
     const tx = db.transaction(this.storeName, 'readwrite')
     await tx.store.delete(id)
     await tx.done
@@ -97,7 +111,7 @@ export class CartService implements OnDestroy {
   // Load cart from IndexedDB
   async loadCartFromIndexedDB(id: string = this.userId) {
     try {
-      const db = await openDB(this.dbName)
+      const db = await this.db()
       const item = await db.get(this.storeName, id)
       if (item) this.cartItemSubject.next(item)
     } catch (error) {
@@ -157,12 +171,28 @@ export class CartService implements OnDestroy {
     }
   }
 
-  // Add item to cart
-  async addItemToCart(item: any, scrapeType = 'crawl4ai') {
+  /**
+   * Add a configured fragment to the cart, which becomes the pack document.
+   *
+   * `provider` is required and typed. It used to be a second parameter defaulting
+   * to `'crawl4ai'`, so a caller that omitted it was silently branded crawl4ai --
+   * and because `type` was only written when the cart was EMPTY, whichever fragment
+   * happened to be added first decided the provider for the entire pack. Every add
+   * now states its provider, so the value is the caller's declared one rather than
+   * an accident of ordering.
+   *
+   * @param {any} item The fragment to merge into the cart.
+   * @param {CrawlProvider} provider The engine that will execute this pack.
+   * @return {Promise<void>} Resolves once the cart has been persisted.
+   */
+  async addItemToCart(item: any, provider: CrawlProvider): Promise<void> {
     const previousCart = this.cartItemSubject.value
-    if (previousCart === null)
-      item = { ...item, type: scrapeType, uid: this.userId }
-    else item = { ...previousCart, ...item }
+    // `userId` is filled from an async auth subscription, so a fragment added before
+    // it resolves would carry an empty uid -- and `saveToIndexedDB` refuses that with
+    // "Item must have an uid property". Fall back to the uid already on the cart
+    // rather than clobbering a good one with an empty string.
+    const uid = this.userId || previousCart?.uid || ''
+    item = { ...(previousCart ?? {}), ...item, type: provider, uid }
 
     this.cartItemSubject.next(item)
     await Promise.all([

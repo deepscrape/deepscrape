@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, Input, computed, inject, signal } from '@angular/core'
-import { CommonModule } from '@angular/common'
+import { DatePipe, TitleCasePipe } from '@angular/common'
 import { MatCardModule } from '@angular/material/card'
 import { MatTooltipModule } from '@angular/material/tooltip'
 import { MatIconModule } from '@angular/material/icon'
@@ -23,7 +23,7 @@ interface DailySummary {
 
 @Component({
   selector: 'app-session-activity',
-  imports: [CommonModule, MatCardModule, MatTooltipModule, MatIconModule, TranslateModule],
+  imports: [DatePipe, TitleCasePipe, MatCardModule, MatTooltipModule, MatIconModule, TranslateModule],
   templateUrl: './session-activity.component.html',
   styleUrl: './session-activity.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

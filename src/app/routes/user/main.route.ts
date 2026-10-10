@@ -68,6 +68,51 @@ const appPageRoutes: Routes = [
         },
     },
     {
+        // The browser-session lease list. Deliberately NOT `crawlpack/browser`,
+        // which already exists and configures the crawl engine's browser rather
+        // than leasing one. Reachable as `/browser` and as `/{orgId}/browser`,
+        // because `appPageRoutes` is mounted in both trees.
+        path: 'browser',
+        loadComponent: () => import('../../pages/user/browser/browser-session.component').then(m => m.UserBrowserPageComponent),
+        resolve: { user: UserResolver },
+        // `authzGuard` alone, NOT `paywallGuard`. The BFF registers the session routes
+        // with `access` + `perm('crawl','execute')` and never `requirePaidAccess`, and
+        // `browser-sessions.ts` states why in its own header: a 402 would refuse a free
+        // caller before the domain could answer from its tier table. A paywall here
+        // would be stricter than the server and would hide a surface the caller is
+        // entitled to.
+        canActivate: [authzGuard],
+        data: {
+            title: 'Browser',
+            animation: 'browser',
+            authz: { resource: 'crawl', action: 'execute' },
+        },
+    },
+    {
+        // The machine surface: the caller's own containers AND the machines their
+        // browser sessions own, in one place. Moved here from the
+        // `crawlpack/machines` tab, because a machine is not a crawl-pack setting --
+        // the same console deploys any Fly container, and half of what it lists is
+        // now created by a browser session rather than by the crawl pack.
+        //
+        // `paywallGuard` + `authzGuard`, matching the server exactly: the BFF
+        // registers `GET /api/machines` with `paid` + `perm('machine','read')`.
+        // `machine.read` is correct HERE because the scope is the caller; the
+        // platform-wide fleet uses `platform` for the opposite reason.
+        //
+        // The component still lives under `crawl-pack/machines/` -- the URL is what
+        // moved. Relocating the files is a separate, purely cosmetic change.
+        path: 'machines',
+        loadComponent: () => import('../../pages/user/crawl-pack/machines/machines.component').then(m => m.MachinesComponent),
+        resolve: { user: UserResolver },
+        canActivate: [paywallGuard, authzGuard],
+        data: {
+            title: 'Machines',
+            animation: 'machines',
+            authz: { resource: 'machine', action: 'read' },
+        },
+    },
+    {
         path: 'billing',
         loadComponent: () => import('../../pages/user/billing/billing.component').then(m => m.BillingComponent),
         loadChildren: () => import('./billing.route').then(m => m.billingRoutes),

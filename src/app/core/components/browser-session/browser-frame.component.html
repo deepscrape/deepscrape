@@ -1,0 +1,52 @@
+<!--
+  One `<img>` per poll, with the status in text beside it. The picture is not the
+  accessible answer: a screen reader gets nothing from an image of someone's page,
+  and it still has to be told when frames stop, which is why the status line is a
+  live region rather than a decoration.
+-->
+<div class="flex flex-col gap-3">
+  <div
+    class="relative overflow-hidden rounded-xl border border-slate-200/70 bg-slate-50/30 dark:border-gray5/60 dark:bg-gray7/80"
+  >
+    @if (live()) {
+      <img
+        class="block h-auto w-full"
+        [src]="frameUrl()"
+        [alt]="'BROWSER_SESSION.FRAME_ALT' | translate"
+        (load)="onFrameLoad()"
+        (error)="onFrameError()"
+      />
+    } @else {
+      <!--
+        Paused shows text, not the last frame. Keeping the last image on screen would
+        make a paused view indistinguishable from a live one, which is the one thing
+        a live view must never be.
+      -->
+      <p class="p-6 text-center text-sm text-gray6 dark:text-gray-300">
+        {{ 'BROWSER_SESSION.FRAME_PAUSED' | translate }}
+      </p>
+    }
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3 text-xs">
+    <button
+      type="button"
+      class="inline-flex items-center gap-1.5 rounded-full border border-slate-200/70 px-3 py-1 font-medium text-cyan-800 hover:bg-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 dark:border-gray5/60 dark:text-cyan-200 dark:hover:bg-cyan-950/40"
+      (click)="toggle()"
+    >
+      {{ toggleKey() | translate }}
+    </button>
+
+    <!--
+      Text first, colour never alone. `role="status"` plus `aria-live` means a frame
+      that stops is announced rather than silently frozen.
+    -->
+    <span
+      class="text-gray6 dark:text-gray-300"
+      role="status"
+      aria-live="polite"
+    >
+      {{ statusKey() | translate }}
+    </span>
+  </div>
+</div>

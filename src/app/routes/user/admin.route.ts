@@ -46,6 +46,40 @@ export const AdminRoutes: Routes = [
     data: { title: 'users', animation: 'admin_users' },
   },
   {
+    // Guarded as well as authorized: the webrain routes re-check `platform`
+    // permission on every call, but there is no reason to render a console for
+    // two operational credentials to someone who cannot use it. The server
+    // check remains the authoritative one.
+    path: 'webrain',
+    loadComponent: () => import('../../pages/admin/admin-webrain.component').then(m => m.AdminWebrainComponent),
+    canActivate: [adminGuard],
+    data: { title: 'webrain', animation: 'admin_webrain' },
+  },
+  {
+    // Guarded as well as authorized: `/api/admin/machines` re-checks `platform`
+    // permission on the call, but there is no reason to render a CROSS-TENANT
+    // machine list to someone who cannot read it. The server check remains the
+    // authoritative one.
+    path: 'machines',
+    loadComponent: () => import('../../pages/admin/admin-machines.component').then(m => m.AdminMachinesComponent),
+    canActivate: [adminGuard],
+    data: { title: 'machines', animation: 'admin_machines' },
+  },
+  {
+    // Guarded as well as authorized, for the same reason as the fleet above:
+    // `/api/admin/sessions` re-checks `platform` on every call, but a list of
+    // every tenant's LIVE browser activity is not something to render to someone
+    // who cannot read it. The server check remains the authoritative one.
+    //
+    // Read-only, and that is forced rather than pending: reclaiming a session
+    // moves an idle deadline the Go reaper reads, suspending a customer's live,
+    // still-billing machine. See roadmap `05` Part D.
+    path: 'sessions',
+    loadComponent: () => import('../../pages/admin/admin-sessions.component').then(m => m.AdminSessionsComponent),
+    canActivate: [adminGuard],
+    data: { title: 'sessions', animation: 'admin_sessions' },
+  },
+  {
     path: 'migration/runs',
     loadComponent: () => import('../../pages/admin/admin-migration-runs.component').then(m => m.AdminMigrationRunsComponent),
     data: { title: 'migration runs', animation: 'admin_migration_runs' },

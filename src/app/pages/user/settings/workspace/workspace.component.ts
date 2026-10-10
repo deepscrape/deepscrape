@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core'
 import { ReactiveFormsModule, FormControl, FormGroup, Validators } from '@angular/forms'
-import { CommonModule, DatePipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
 import { finalize } from 'rxjs'
 import { DropdownComponent, StinputComponent } from 'src/app/core/components'
@@ -25,7 +25,7 @@ type DropdownOption = {
 
 @Component({
   selector: 'app-workspace-tab',
-  imports: [CommonModule, ReactiveFormsModule, IfAuthorizedDirective, RippleDirective, StinputComponent, FormControlPipe, DropdownComponent, DatePipe, TranslateModule],
+  imports: [ReactiveFormsModule, IfAuthorizedDirective, RippleDirective, StinputComponent, FormControlPipe, DropdownComponent, DatePipe, TranslateModule],
   templateUrl: './workspace.component.html',
   styleUrl: './workspace.component.scss',
   animations: [listStaggerAnimation],
@@ -84,6 +84,35 @@ export class WorkspaceTabComponent {
   readonly selectedOrganization = computed(() => {
     const currentId = this.selectedOrgId()
     return this.organizations().find((org) => org.id === currentId) || null
+  })
+
+  /** Label key for the caller's role in the selected workspace. */
+  readonly activeRoleKey = computed(() => {
+    const role = this.selectedOrganization()?.membership?.role
+    return role ? this.roleLabelKey(role) : null
+  })
+
+  /**
+   * What that role can actually do, in the same terms `functions/src/domain/authz.domain.ts`
+   * `POLICIES` uses: `viewer` holds `crawl.read` alone, which is the one role whose limits
+   * are easy to miss, so it is stated rather than implied.
+   *
+   * A personal account (no membership) resolves to the `self` role, which is the default
+   * path for a free user.
+   */
+  readonly activeAccessKey = computed(() => {
+    const role = this.selectedOrganization()?.membership?.role
+    switch (role) {
+      case 'owner':
+      case 'admin':
+        return 'SETTINGS_WORKSPACE.ACCESS_ADMIN'
+      case 'member':
+        return 'SETTINGS_WORKSPACE.ACCESS_MEMBER'
+      case 'viewer':
+        return 'SETTINGS_WORKSPACE.ACCESS_VIEWER'
+      default:
+        return 'SETTINGS_WORKSPACE.ACCESS_SELF'
+    }
   })
 
   readonly createOrgForm = new FormGroup({

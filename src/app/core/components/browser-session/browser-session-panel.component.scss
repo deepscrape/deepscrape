@@ -1,0 +1,12 @@
+/*
+  Deliberately empty.
+
+  Every rule this panel needs is a Tailwind utility in the template, which is the
+  styling order the repository asks for: utilities for layout and spacing, and no
+  inline `style` attribute. The one thing that would need a stylesheet, a
+  `@keyframes` pulse on the live frame, belongs to `browser-frame` rather than
+  here, and `tailwindcss-motion` already covers it.
+
+  The file exists because the component declares a `styleUrl`, and a declared
+  stylesheet that does not exist is a build error.
+*/

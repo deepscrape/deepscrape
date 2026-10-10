@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, forwardRef, inject } from '@angular/core'
-import { CommonModule, DatePipe, JsonPipe, NgClass } from '@angular/common';
+import { DatePipe, JsonPipe, NgClass } from '@angular/common';
 import { FormControl, FormGroup, NG_VALUE_ACCESSOR, ReactiveFormsModule, Validators } from '@angular/forms'
 import { AuthService, FirestoreService, LocalStorage, SnackbarService } from 'src/app/core/services'
 import { DropdownComponent, PreviewImageComponent, SnackBarType, StinputComponent } from 'src/app/core/components'

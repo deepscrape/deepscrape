@@ -84,6 +84,12 @@
         </button>
       }
     </div>
+
+      <!-- Send the scraped page to storage. Kept outside the tabs so the action
+           is reachable from every one of them, including the files tab. -->
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <app-storage-save-button [url]="crawlResult.url"></app-storage-save-button>
+      </div>
     }
 
     <!-- Sub-tab Content -->

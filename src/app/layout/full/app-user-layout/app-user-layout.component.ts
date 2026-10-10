@@ -25,7 +25,7 @@ import { ThemeToggleComponent } from 'src/app/shared/theme-picker/theme-picker.c
 import { AppSidebarComponent } from '../../components'
 import { AppFooterComponent } from '../../footer'
 import { SCREEN_SIZE } from 'src/app/core/enum'
-import { ORIGINS, orgScopedUrl } from 'src/app/core/guards/host-routing.policy'
+import { hostClassOf, ORIGINS, orgScopedUrl } from 'src/app/core/guards/host-routing.policy'
 import { CartPackNotifyComponent, DropdownCartComponent } from 'src/app/core/components'
 import { DropdownComponent } from 'src/app/core/components'
 /**
@@ -45,8 +45,27 @@ export class AppUserLayoutComponent implements OnDestroy {
   private themePicker = inject(ThemeService)
   isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$
 
-  /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
-  protected readonly apexUrl: string = ORIGINS.marketing;
+  // ponytail: was ORIGINS.marketing. An unconditional hop to the apex put the landing page
+  // one logo-click away from the app and console origins. These pages are PRERENDERED and
+  // served from all three hosts, so `window.location.hostname` does not exist at render time
+  // and the origin has to be named. The app origin is named rather than the apex, so the logo
+  // never leads back to marketing.
+  //
+  // The org root IS the dashboard, so an authenticated user's home is `/{orgId}` — not
+  // `/dashboard`, which is the bare legacy path the guard would only canonicalise away.
+  // `orgScopedUrl` returns `/dashboard` unchanged while the org list is still resolving (and
+  // on the console, which has no org of its own), so the logo always has a target.
+  protected get homeUrl(): string {
+    return ORIGINS.app + orgScopedUrl('/dashboard', this.selectedOrgId());
+  }
+
+  /**
+   * The console administers the platform; the app's own pages and billing chrome are not
+   * its business. `&&` short-circuits, so `window` is never touched during SSR/prerender —
+   * the same guard `AppSidebarNavComponent` uses to pick `adminNavigation` over `navigation`.
+   */
+  protected readonly isConsoleHost = isPlatformBrowser(inject(PLATFORM_ID)) &&
+    hostClassOf(window.location.hostname) === 'console';
 
   // bg-gray-100 dark:bg-gray-900
   @HostBinding('class') classes = 'h-full w-full flex flex-col  min-h-svh'

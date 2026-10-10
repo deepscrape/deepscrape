@@ -1,0 +1,9 @@
+/*
+ * Empty on purpose.
+ *
+ * Every rule this chip needs is a Tailwind utility composed in the component, so
+ * there is no component-scoped CSS to declare. The file exists because the
+ * repository's component convention is a `.scss` beside every component, and
+ * `styleUrl` points at it. Putting the state colours here instead would move
+ * them out of the token-driven utility system the theme skill requires.
+ */

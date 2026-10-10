@@ -51,7 +51,6 @@
               <div class="relative flex items-center justify-center w-14 h-14 rounded-2xl mb-4 bg-cyan-500/10 dark:bg-cyan-400/10 border border-cyan-400/30 shadow-lg shadow-cyan-500/10">
                 <lucide-angular [img]="icons['terminal']" class="h-6 w-6 text-cyan-600 dark:text-cyan-400 fill-none"></lucide-angular>
               </div>
-              <span class="font-mono text-[10px] tracking-[0.25em] uppercase text-cyan-600 dark:text-cyan-400 mb-2">01 · SDK / API</span>
               <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ 'ARCH.S1_T' | translate }}</h3>
               <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-4">{{ 'ARCH.S1_D' | translate }}</p>
               <span class="mt-auto font-mono text-[11px] px-3 py-1 rounded-full bg-gray-100/80 dark:bg-white/5 text-gray-500 dark:text-gray-400 border border-gray-200/70 dark:border-white/10">Python SDK · Node client · REST</span>
@@ -71,7 +70,6 @@
               <div class="relative flex items-center justify-center w-14 h-14 rounded-2xl mb-4 bg-rose-500/10 dark:bg-rose-400/10 border border-rose-400/30 shadow-lg shadow-rose-500/10">
                 <lucide-angular [img]="icons['globe']" class="h-6 w-6 text-rose-500 dark:text-rose-400 fill-none"></lucide-angular>
               </div>
-              <span class="font-mono text-[10px] tracking-[0.25em] uppercase text-rose-500 dark:text-rose-400 mb-2">02 · Distributed</span>
               <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ 'ARCH.S2_T' | translate }}</h3>
               <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-4">{{ 'ARCH.S2_D' | translate }}</p>
               <span class="mt-auto font-mono text-[11px] px-3 py-1 rounded-full bg-gray-100/80 dark:bg-white/5 text-gray-500 dark:text-gray-400 border border-gray-200/70 dark:border-white/10">Crawl Dispatcher · Proxy Rotation · 40+ geo</span>
@@ -91,7 +89,6 @@
               <div class="relative flex items-center justify-center w-14 h-14 rounded-2xl mb-4 bg-emerald-500/10 dark:bg-emerald-400/10 border border-emerald-400/30 shadow-lg shadow-emerald-500/10">
                 <lucide-angular [img]="icons['database']" class="h-6 w-6 text-emerald-600 dark:text-emerald-400 fill-none"></lucide-angular>
               </div>
-              <span class="font-mono text-[10px] tracking-[0.25em] uppercase text-emerald-600 dark:text-emerald-400 mb-2">03 · Output</span>
               <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ 'ARCH.S3_T' | translate }}</h3>
               <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-4">{{ 'ARCH.S3_D' | translate }}</p>
               <span class="mt-auto font-mono text-[11px] px-3 py-1 rounded-full bg-gray-100/80 dark:bg-white/5 text-gray-500 dark:text-gray-400 border border-gray-200/70 dark:border-white/10">Claude · GPT · Groq → JSON · CSV</span>
@@ -166,9 +163,6 @@
 
       <!-- Runtime primitives every run inherits -->
       <div class="glass rounded-2xl p-6 border-white/5 dark:border-white/10">
-        <p class="text-center text-xs font-semibold tracking-[0.25em] uppercase text-gray-500 dark:text-gray-500 mb-5 font-mono">
-          {{ 'ARCH.ENG_RT_HEAD' | translate }}
-        </p>
         <div class="flex flex-wrap items-center justify-center gap-2.5">
           @for (prim of runtimePrimitives; track prim.key) {
             <span class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-white/5 rounded-full border border-gray-200/80 dark:border-white/10">

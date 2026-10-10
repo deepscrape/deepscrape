@@ -1,6 +1,6 @@
 import { animate, style, transition, trigger } from '@angular/animations';
+import { NgClass } from '@angular/common';
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, HostListener, inject, Input, Output, ViewChild } from '@angular/core';
-import { CommonModule } from '@angular/common';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
@@ -10,7 +10,7 @@ import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.compon
 
 @Component({
   selector: 'app-dropdown',
-  imports: [CommonModule, MatIcon, ReactiveFormsModule, Outsideclick, TranslateModule],
+  imports: [NgClass, MatIcon, ReactiveFormsModule, Outsideclick, TranslateModule],
   templateUrl: './dropdown.component.html',
   styleUrl: './dropdown.component.scss',
   animations: [

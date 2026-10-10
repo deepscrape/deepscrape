@@ -1,11 +1,10 @@
-import { Component, ElementRef, Inject, inject, OnDestroy, OnInit, ViewChild, DOCUMENT } from '@angular/core';
+import { Component, ElementRef, Inject, Input, OnDestroy, OnInit, ViewChild, DOCUMENT, inject } from '@angular/core';
 
 import { AuthService, WebRtcService, WindowToken } from '../../services';
 import { ClipboardComponent } from '../clipboard/clipboard.component';
 import { ResolutionComponent } from '../resolution/resolution.component';
 import { ControlComponent } from '../control/control.component';
 import { TranslateModule } from '@ngx-translate/core';
-import { environment } from 'src/environments/environment';
 import { fromEvent, merge, Subject } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 
@@ -18,7 +17,16 @@ import { takeUntil } from 'rxjs/operators';
 export class BrowserComponent implements OnInit, OnDestroy {
   private window = inject(WindowToken);
   private destroy$ = new Subject<void>();
-  private webSocketAPI_URL: string;
+  /**
+   * The signalling endpoint, supplied by whoever mounts this viewer.
+   *
+   * There is deliberately NO default. It used to read a global
+   * `environment.nekoUrl` pointing at one fixed external host this repo does not
+   * control, which made the endpoint a build-time constant rather than a
+   * per-session fact. An empty value means "nobody said where the browser is",
+   * and the connect path refuses rather than guessing.
+   */
+  @Input() endpoint = '';
   private isMouseDown = false;  private isConnectionActive = false;
   private wheelThrottle = false;
   private lastTextareaValue = '';
@@ -43,12 +51,8 @@ export class BrowserComponent implements OnInit, OnDestroy {
     private rtc: WebRtcService, 
     private auth: AuthService,
     @Inject(DOCUMENT) private document: Document,
-  ) {
-    // Use URL construction similar to neko client
-    this.webSocketAPI_URL = environment.production 
-      ? `${environment.nekoUrl}/ws` 
-      : `${environment.nekoUrl}/ws`/* `${location.protocol.replace(/^http/, 'ws')}//${location.host}`; */
-  }  ngOnInit(): void {
+  ) {}
+  ngOnInit(): void {
     // Wait for ViewChild references to be available
     setTimeout(() => this.setupEventListeners(), 0);
     
@@ -222,8 +226,14 @@ export class BrowserComponent implements OnInit, OnDestroy {
         }
       }
       
-      // Start WebRTC connection with server
-      await this.rtc.connect(this.webSocketAPI_URL, "admin", "neko");
+      // The endpoint comes from the CALLER, never from a build constant. An
+      // unmounted viewer therefore cannot reach anything: with no endpoint this
+      // throws into the catch below rather than dialling a default host.
+      const endpoint = (this.endpoint ?? '').trim().replace(/\/+$/, '');
+      if (!endpoint) {
+        throw new Error('No browser endpoint configured for this session.');
+      }
+      await this.rtc.connect(`${endpoint}/ws`, "admin", "neko");
       
       // Focus the overlay for keyboard input
       if (this.overlayRef?.nativeElement) {

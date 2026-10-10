@@ -10,7 +10,7 @@ import { connectFunctionsEmulator, getFunctions, provideFunctions } from '@angul
 import { getStorage, provideStorage } from '@angular/fire/storage';
 import { provideAnalytics, getAnalytics, UserTrackingService } from '@angular/fire/analytics';
 
-import { getAuth, inMemoryPersistence, initializeAuth, provideAuth } from '@angular/fire/auth';
+import { Auth, getAuth, inMemoryPersistence, initializeAuth, provideAuth } from '@angular/fire/auth';
 import { LoadingBarHttpClientModule } from '@ngx-loading-bar/http-client';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 // Direct imports rather than the './core/services' barrel: the barrel re-exports every
@@ -18,7 +18,6 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
 // Firebase SDKs they import — in the eager initial bundle.
 import { browserProvider, BrowserToken } from './core/services/browser.service';
 import { windowProvider, WindowToken } from './core/services/window.service';
-import { PLUTO_ID } from './core/services/pluto.service';
 import { STORAGE_PROVIDERS } from './core/services/storage.service';
 import { provideHttpClient, withFetch, withInterceptors, withInterceptorsFromDi, withXsrfConfiguration } from '@angular/common/http';
 import { IMAGE_LOADER, ImageLoaderConfig } from '@angular/common';
@@ -112,7 +111,27 @@ export const appConfig: ApplicationConfig = {
       registrationStrategy: 'registerWhenStable:30000'
     }),
     provideFirebaseApp(() => initializeApp(environment.firebaseConfig)),
-    provideAuth(() => getAuth()),
+    // Auth needs an explicit persistence outside the browser: with none, `getAuth()` cannot pick
+    // one and throws `auth/operation-not-supported-in-this-environment`, once per page — which is
+    // what the four errors in a dev build log are. (A dev build runs at `LogLevel.VERBOSE`, which
+    // is why they print there and not in production.) In-memory only: the server holds no session,
+    // and the seven `/service/**` pages are prerendered precisely so they render as a guest shell.
+    //
+    // `inject(FirebaseApp)` rather than `getApp()` so DI initialises the app first — the global
+    // `getApp()` would throw "No Firebase App '[DEFAULT]' has been created" if it ran first.
+    provideAuth(() => {
+      if (isPlatformBrowser(inject(PLATFORM_ID))) {
+        return getAuth();
+      }
+      // Server side: a real instance with in-memory persistence. `getAuth()` alone cannot pick a
+      // persistence outside the browser, and a `{} as Auth` stub was measured to be *worse* here —
+      // it removed none of the errors and added 22 `isAuthenticated` warnings, because downstream
+      // code reads `auth.currentUser` on the server. In-memory keeps those reads well-defined.
+      return initializeAuth(inject(FirebaseApp), {
+        persistence: inMemoryPersistence,
+        popupRedirectResolver: undefined,
+      });
+    }),
     provideFirestore(() =>
     {
       // The named database the app actually uses. `getFirestore()` with no database id
@@ -161,10 +180,6 @@ export const appConfig: ApplicationConfig = {
     // that, so this file and that constant are the two halves of one switch: re-add
     // provideAppCheck() here FIRST, then flip that constant to true.
     provideAnimationsAsync(),
-    {
-      provide: PLUTO_ID,
-      useValue: '449f8516-791a-49ab-a09d-50f79a0678b6',
-    },
     provideI18n(), // Add the i18n providers here
   ]
 }

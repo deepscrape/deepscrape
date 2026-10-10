@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, Input, Output, EventEmitter, HostBinding, signal, WritableSignal, ViewChildren, QueryList } from '@angular/core';
-import { CommonModule, JsonPipe, NgClass } from '@angular/common';
+import { JsonPipe, NgClass } from '@angular/common';
 import { CrawlResults } from '../../types';
 import { crawlOutcome, CrawlOutcome, CrawlOutcomeInput } from '../../functions';
 import { expandCollapseAnimation } from 'src/app/animations';
@@ -9,10 +9,11 @@ import { LucideAngularModule } from 'lucide-angular';
 import { myIcons } from 'src/app/shared/lucideicons';
 import { PdfSrcPipe } from '../../pipes';
 import { TranslateModule } from '@ngx-translate/core';
+import { StorageSaveButtonComponent } from '../storage-save-button/storage-save-button.component';
 
 @Component({
   selector: 'app-crawl-result-item',
-  imports: [CommonModule, NgClass, JsonPipe, MarkdownModule, MatIconModule, LucideAngularModule, PdfSrcPipe, TranslateModule],
+  imports: [NgClass, JsonPipe, MarkdownModule, MatIconModule, LucideAngularModule, PdfSrcPipe, TranslateModule, StorageSaveButtonComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   animations: [expandCollapseAnimation],
   templateUrl: './crawl-result-item.component.html',

@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, HostBinding, inject, ViewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostBinding, inject, signal, ViewChild } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormControl, FormGroup, Validators } from '@angular/forms';
 import { Observable } from 'rxjs/internal/Observable';
 import { forkJoin } from 'rxjs/internal/observable/forkJoin';
@@ -12,9 +13,9 @@ import {
   extractDomain, formatBytes, sanitizeJSON,
   setAIModel
 } from 'src/app/core/functions';
-import { aichunk, AIModel, BrowserConfigurationImpl, CrawlConfig, CrawlerRunConfigImpl, CrawlOperation, CrawlPack, CrawlTask, OpenAITokenDetails } from '../../types';
+import { aichunk, AIModel, BrowserConfigurationImpl, CrawlConfig, CrawlerRunConfigImpl, CrawlOperation, CrawlPack, CrawlTask, OpenAITokenDetails, AiKeySource, AiVendorId, vendorForModelCode } from '../../types';
 import { GinputComponent } from '../ginput/ginput.component';
-import { AiAPIService, CrawlAPIService, LocalStorage, SnackbarService } from '../../services';
+import { AiAPIService, AiFetchService, AiKeysService, LocalStorage, SnackbarService } from '../../services';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { TranslateModule } from '@ngx-translate/core';
@@ -48,36 +49,63 @@ interface AIMessage {
   role: AIRole | null;
 }
 
+/** What the results panel shows under the reply. Two numbers, both computed. */
+interface LlmUsage {
+  total_tokens: number;
+  total_cost: number;
+}
+
 @Component({
   selector: 'app-llm-scrape',
   imports: [MatIcon, MarkdownModule, MatProgressSpinner, GinputComponent, PromptareaComponent, DropdownComponent, FormControlPipe, RadioToggleComponent, BrowserCookiesComponent, TranslateModule],
   templateUrl: './app-llm-scrape.component.html',
-  styleUrl: './app-llm-scrape.component.scss'
+  styleUrl: './app-llm-scrape.component.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class AppLLMScrapeComponent {
   @HostBinding('class') classes = 'flex items-center flex-col relative';
 
   readonly clipboardButton = ClipboardbuttonComponent;
   private localStorage: Storage
-  @ViewChild(BrowserCookiesComponent) browserCookies: BrowserCookiesComponent;
   url: FormControl<string>
 
   userprompt: FormControl<string>
 
   submitButton: FormControl<boolean>
 
-  jsonChunk: aichunk = { content: '', usage: null }
+  /**
+   * The reply so far, accumulated as the stream arrives.
+   *
+   * Signals rather than plain fields because the update happens inside a
+   * subscription callback: with `OnPush` and no zone, a plain field would change
+   * without anything telling the view to re-read it, and the panel would stay
+   * blank until some unrelated event triggered a check. This component has no
+   * `ChangeDetectorRef` for exactly that reason.
+   */
+  protected readonly content = signal('')
 
-  protected isResultsProcessing: boolean
-  protected isCrawlProcessing: boolean
-  protected isGetResults: boolean
-  errorMessage = ''
+  /** Tokens and cost for the reply, or null before the provider reports them. */
+  protected readonly usage = signal<LlmUsage | null>(null)
+
+  protected readonly isResultsProcessing = signal(false)
+  protected readonly isCrawlProcessing = signal(false)
+  protected readonly isGetResults = signal(false)
+  protected readonly errorMessage = signal('')
+
+  /**
+   * The vendor whose key served the current request.
+   *
+   * Set when the request starts and rendered beside the reply, because BYOK
+   * today means "your own quota on a paid plan": a user who has stored a key
+   * cannot otherwise tell whether their key or the platform's was spent, and
+   * the answer is a server decision the UI has to report rather than guess.
+   */
+  protected readonly activeVendor = signal<AiVendorId | null>(null)
 
   forkJoinSubscription: Subscription
   aiResultsSub: Subscription
 
-  private destroy$ = new Subject<void>();
-
+  private readonly destroyRef = inject(DestroyRef)
 
   model: AIModel[] = []
 
@@ -86,23 +114,28 @@ export class AppLLMScrapeComponent {
 
   options: FormGroup
 
-  constructor(
-    private aiapi: AiAPIService,
-    private crawlService: CrawlAPIService,
-    private snackbarService: SnackbarService,
-    private fb: FormBuilder,
-    private cdr: ChangeDetectorRef
+  private aiapi = inject(AiAPIService)
+  private aiFetch = inject(AiFetchService)
+  private aiKeys = inject(AiKeysService)
+  private snackbarService = inject(SnackbarService)
+  private fb = inject(FormBuilder)
 
-  ) {
+  constructor() {
     setAIModel(this.model)
     this.localStorage = inject(LocalStorage)
+
+    // The vendor catalogue, so the "which key served this" line can name a
+    // source. Without it the badge would read `none` for a paid user whose call
+    // the platform actually pays for. Failure is non-fatal: the badge falls back
+    // to the local rules in `AiKeysService.resolve`.
+    void this.aiKeys.load()
   }
 
   ngOnInit(): void {
-    this.isResultsProcessing = false
-    this.isCrawlProcessing = false
-    this.isGetResults = false
-    this.errorMessage = ''
+    this.isResultsProcessing.set(false)
+    this.isCrawlProcessing.set(false)
+    this.isGetResults.set(false)
+    this.errorMessage.set('')
 
     //Called after the constructor, initializing input properties, and the first call to ngOnChanges.
     //Add 'implements OnInit' to the class.
@@ -155,10 +188,18 @@ export class AppLLMScrapeComponent {
       })
     })
 
-    this.forwardCookies?.valueChanges.forEach((value: boolean) => {
-      this.localStorage.setItem("forwardCookies", String(value))
-      // this.browserCookies.closeModal = !value
-    })
+    // `forEach` used to be used here, which subscribes and never unsubscribes:
+    // one leaked subscription per component instance, writing to localStorage
+    // for a preference nobody was reading any more. `takeUntilDestroyed` is what
+    // the rest of the repository uses for a subscription with no mid-life
+    // cancellation requirement. This one has none: the preference is a stored
+    // value, and it is also written by the cookies component.
+    this.forwardCookies?.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((value: boolean) => {
+        this.localStorage.setItem("forwardCookies", String(value))
+        // this.browserCookies.closeModal = !value
+      })
   }
 
   protected get forwardCookies() {
@@ -167,6 +208,34 @@ export class AppLLMScrapeComponent {
 
   protected get iframeEnable() {
     return this.options.get('iframeEnable')
+  }
+
+  /**
+   * Where the key for the call to the currently selected model would come from.
+   *
+   * Read from the server's resolved state through `AiKeysService`, not computed
+   * from the model name here: the server is what chooses the credential, and a
+   * second opinion in the browser would be a second answer.
+   * @return {AiKeySource} `user`, `platform`, or `none`.
+   */
+  protected activeKeySource(): AiKeySource {
+    const vendor = this.activeVendor()
+    return vendor ? this.aiKeys.resolve(vendor).source : 'none'
+  }
+
+  /**
+   * The i18n key for the key source of the call that produced the reply.
+   * @return {string} The translation key.
+   */
+  protected activeKeySourceLabelKey(): string {
+    switch (this.activeKeySource()) {
+      case 'user':
+        return 'AI_VENDOR.SOURCE_USER'
+      case 'platform':
+        return 'AI_VENDOR.SOURCE_PLATFORM'
+      default:
+        return 'AI_KEYS.SOURCE_NONE'
+    }
   }
 
 
@@ -193,67 +262,84 @@ export class AppLLMScrapeComponent {
     // disable the form
     this.disableForm()
 
-    // save the Crawl operation
-    // this.prepareCrawlOperation()
-
     // start the crawl operation
-    this.isCrawlProcessing = true
+    this.isCrawlProcessing.set(true)
 
     // live processing
     this.processData(this.url.value, this.modelAI.value.code)
+  }
 
-    // send background request to the python server api
-    // this.crawlEnqueue(this.url.value)
-    
+  /**
+   * The page text for one target, fetched through the worker's free route.
+   *
+   * Why `/api/scrape` and not the crawl path
+   * ---------------------------------------
+   * The route is behind `crawl.execute`, not `paid`, so any authenticated
+   * caller reaches it and the page read costs no crawl credits. That is what
+   * makes the LLM step usable on a free plan, which matters because the vendor
+   * routes are paid-gated: a free user with their own key can still get a page
+   * read and a completion out of this, and could not if the fetch went through
+   * `/api/crawl`.
+   *
+   * A refused or failed fetch is thrown rather than returned as an empty
+   * string: an empty body sent to a model produces a confident answer about
+   * nothing, which is worse than an error the user can see.
+   * @param {string} url The target to read.
+   * @return {Observable<string>} The page text, or an error.
+   */
+  private fetchPageContent(url: string): Observable<string> {
+    return this.aiFetch.scrape(url).pipe(
+      map((envelope) => {
+        if (envelope.status === 'error') {
+          throw new Error(envelope.error || 'AI_FETCH.UNREACHABLE')
+        }
+        return envelope.data?.result?.text ?? ''
+      })
+    )
   }
 
 
   private processData(link: string, aitype: string = 'claude') {
 
-    this.errorMessage = ''
+    this.errorMessage.set('')
+
+    // Recorded before the request so the reply can say whose key would have
+    // served it. The source itself is read from the server's resolved state at
+    // render time, so a key stored while the reply streams is reflected.
+    this.activeVendor.set(vendorForModelCode(aitype))
 
     const urls = [
-      // 'https://www.masoutis.gr/categories/index/prosfores?item=0&subitem=2466&subdescr=web-only',
-      // 'https://www.mymarket.gr/offers/1-plus-1?perPage=96'
       link
     ]
 
-
-    const tasks = urls.map((url, index) => {
-      
-      return of(null)
-      
-      .pipe(
+    // Page content comes from the scraping worker. Cookie forwarding and iframe
+    // extraction are not part of this chain: `/api/scrape` accepts `url` and
+    // nothing else, so a forwarded cookie would be an argument the worker
+    // ignores, and the toggle stays for the crawl path it still governs.
+    const tasks = urls.map((url, index) =>
+      of(null).pipe(
         delay(index * 200), // Increasing delay for each request
-        mergeMap(() => (this.forwardCookies?.value ? this.fetchCookiesFromExtension(url) : of(undefined))),
-        mergeMap((cookies) =>
-          this.crawlService.sendToCrawl4AI(url, { iframe: "true", forwardCookies: this.forwardCookies?.value },
-            Array.isArray(cookies) ? constructCookiesforJina(cookies)
-              : undefined
-          ))
+        mergeMap(() => this.fetchPageContent(url))
       )
-    })
+    )
 
     // fork join the links
     this.forkJoinSubscription = forkJoin(tasks)
-      .pipe(takeUntil(this.destroy$))
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: async (results) => {
+        next: (results: string[]) => {
           const subsequentContent = results.map((result: string) => {
-            // const strlen = result.length
             const encoder = new TextEncoder()
             const bytesLength = encoder.encode(result).length;
-            // const spitlen = strlen / 400 / 5
             console.log(formatBytes(bytesLength))
-            return result // .slice(0, 2) splitArrayIntoChunks(result.split('[!'), 6)
+            return result
           })
 
-          let subsequentPosts: Observable<AIMessage>[] = []
+          const subsequentPosts: Observable<AIMessage>[] = []
 
           const role: string = aitype === 'claude' ? 'user' : 'system'
-          for await (const content of subsequentContent) {
-            // subsequentPosts =  content.map((subcontent: string, index: number) => {
-            let messages = []
+          for (const content of subsequentContent) {
+            const messages: { role: string; content: string }[] = []
 
             messages.push({ role, content: sanitizeJSON(this.userprompt.value.replace(/\n+/gi, '')) })
 
@@ -261,12 +347,8 @@ export class AppLLMScrapeComponent {
             console.log(messages)
 
             subsequentPosts.push(of(null).pipe(
-              // delay(1 * 4000), // Increasing delay for each request
               mergeMap(() => this.chooseAIModel(messages))
             ))
-            // })
-
-            // this.getResultsFromClaudeAI(subsequentPosts)
           }
 
           const arrayobs = subsequentPosts.shift() || null
@@ -277,12 +359,9 @@ export class AppLLMScrapeComponent {
         },
         complete: () => {
           // reset the processing status
-          // this.isResultsProcessing = this.isCrawlProcessing = false
-          this.isCrawlProcessing = false
+          this.isCrawlProcessing.set(false)
           // reset the form
           this.enableForm()
-
-          this.cdr?.detectChanges()
         },
         error: (error: unknown) => {
 
@@ -290,12 +369,13 @@ export class AppLLMScrapeComponent {
           const errorDetails = error && typeof error === 'object' ? (error as any).error : undefined;
           console.error('Error processing data:', error, errorDetails ? arrayBufferToString(errorDetails) : 'Unknown error');
           // set the error message to show on the screen by snackbar popup
-          this.errorMessage = 'Error processing data. Please check console for details.';
+          this.errorMessage.set('Error processing data. Please check console for details.');
 
           // reset the processing status
-          this.isResultsProcessing = false
+          this.isResultsProcessing.set(false)
+          this.isCrawlProcessing.set(false)
           // show snackbar Error
-          this.showSnackbar(this.errorMessage || "", SnackBarType.error, '', 5000)
+          this.showSnackbar(this.errorMessage() || "", SnackBarType.error, '', 5000)
         }
       })
   }
@@ -341,45 +421,48 @@ export class AppLLMScrapeComponent {
 
   private getResultsFromAI(subsequentPosts: Observable<AIMessage>[]) {
 
-    // this.detailsMessage = 'Process AI Data'
     /* Initialize the Results viariables  */
-    this.errorMessage = ''
-    this.isGetResults = true
-    this.isResultsProcessing = true
+    this.errorMessage.set('')
+    this.isGetResults.set(true)
+    this.isResultsProcessing.set(true)
 
-    this.cdr?.detectChanges()
     // init the total cost and total tokens counter
     let total_cost = 0
     let total_tokens = 0
 
-    // Add any necessary headers for Claude AI API
+    // The provider's stream, cancelled either by the component's destruction or
+    // by `abortRequests`, which unsubscribes `aiResultsSub` and thereby aborts
+    // the in-flight HTTP request rather than leaving it to complete unseen.
     this.aiResultsSub = subsequentPosts[0]
-      .pipe(takeUntil(this.destroy$))
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(
         {
           next: (result: AIMessage) => {
 
-            this.jsonChunk['content'] += result.content || ''
-
+            this.content.update(previous => previous + (result.content || ''))
 
             if (result?.usage) {
-              const usage = result?.usage as unknown as any;
-              total_tokens = !usage?.total_tokens ?
-                (usage?.completion_tokens || 0) + (usage?.prompt_tokens || 0) :
-                usage?.total_tokens || 0
+              const rawUsage = result.usage as unknown as TokenUsage;
+              // Bracket access throughout: `TokenUsage` carries an index
+              // signature, so dot access is a compile error under
+              // `noPropertyAccessFromIndexSignature` even though the keys exist.
+              total_tokens = !rawUsage?.['total_tokens'] ?
+                (rawUsage?.['completion_tokens'] || 0) + (rawUsage?.['prompt_tokens'] || 0) :
+                rawUsage?.['total_tokens'] || 0
 
-              total_cost = calculateOpenAICost(usage, this.modelAI.value.name)
+              // The second cast is deliberate, not a shortcut:
+              // `calculateOpenAICost` predates `TokenUsage` and takes the older,
+              // fully named `OpenAITokenDetails`, which the index-signature type
+              // is not assignable to. Both describe the same payload.
+              total_cost = calculateOpenAICost(rawUsage as unknown as OpenAITokenDetails, this.modelAI.value.name)
 
-              // set jsonChunk usage
-              this.jsonChunk['usage'] = { total_tokens, total_cost }
-              // console.log('usage', result?.usage)
-              // console.log(`content: `, this.jsonChunk['content'])
+              this.usage.set({ total_tokens, total_cost })
             }
           },
           complete: () => {
 
             // reset all variables to zero
-            this.isResultsProcessing = false
+            this.isResultsProcessing.set(false)
 
             // reset the form
             this.enableForm()
@@ -387,13 +470,13 @@ export class AppLLMScrapeComponent {
           error: (error) => {
 
             console.error('Error sending data to AI:', error)
-            this.errorMessage = 'Error on get data from AI. Please check console for details.'
+            this.errorMessage.set('Error on get data from AI. Please check console for details.')
 
             // show show Snackbar
-            this.showSnackbar(this.errorMessage || "", SnackBarType.error, '', 5000)
+            this.showSnackbar(this.errorMessage() || "", SnackBarType.error, '', 5000)
 
             // reset all variables to zero
-            this.isResultsProcessing = false;
+            this.isResultsProcessing.set(false);
 
             // reset the form
             this.enableForm()
@@ -420,9 +503,9 @@ export class AppLLMScrapeComponent {
   protected closeResults() {
 
     // Close results, reset results variables and subscribers
-    this.isGetResults = false
-    this.jsonChunk['usage'] = null
-    this.jsonChunk['content'] = ''
+    this.isGetResults.set(false)
+    this.usage.set(null)
+    this.content.set('')
     this.aiResultsSub?.unsubscribe()
     this.forkJoinSubscription?.unsubscribe()
   }
@@ -436,20 +519,20 @@ export class AppLLMScrapeComponent {
     this.snackbarService.showSnackbar(message, type, action, duration)
   }
 
-  private fetchCookiesFromExtension(url: string) {
-    return this.browserCookies.fetchCookiesFromExtension(url)
-  }
-
-
   onClearText() {
     this.url.setValue('')
   }
 
   abortRequests() {
 
-    // Emit a signal to cancel the request
-    this.destroy$.next()
-    this.isResultsProcessing = this.isCrawlProcessing = false
+    // Unsubscribing is the cancellation: Angular's HttpClient aborts the
+    // underlying request when its subscription is disposed, so this stops the
+    // provider stream and the page fetch at the transport rather than leaving
+    // them running with nobody listening.
+    this.aiResultsSub?.unsubscribe()
+    this.forkJoinSubscription?.unsubscribe()
+    this.isResultsProcessing.set(false)
+    this.isCrawlProcessing.set(false)
     this.enableForm()
     this.showSnackbar('Request canceled', SnackBarType.info, '', 5000)
   }
@@ -457,12 +540,12 @@ export class AppLLMScrapeComponent {
   ngOnDestroy(): void {
     //Called once, before the instance is destroyed.
     //Add 'implements OnDestroy' to the class.
-    // Complete the Subject to prevent memory leaks
-    this.destroy$.next();
-    this.destroy$.complete();
+    // Unsubscribe the streams. `takeUntilDestroyed` already covers the two
+    // subscriptions it guards; this covers a request that was aborted earlier
+    // and re-created, and keeps destruction independent of which mechanism
+    // created the subscription.
     this.aiResultsSub?.unsubscribe()
     this.forkJoinSubscription?.unsubscribe()
   }
 }
-
 

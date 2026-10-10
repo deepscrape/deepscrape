@@ -235,8 +235,9 @@
               browser pool, so runs do not pay a cold-start penalty per page.
             </li>
             <li>
-              <strong>Persistent stealth profiles.</strong> Real browser profiles that survive between
-              runs, rather than a fresh fingerprint every request.
+              <strong>Stealth profiles, not synthetic fingerprints.</strong> A real browser profile
+              with a stable identity for the life of a session, so the fingerprint does not change
+              request to request and a login holds while it runs.
             </li>
             <li>
               <strong>An encrypted credential vault.</strong> Logins are stored with AES-256-GCM, with

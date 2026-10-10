@@ -69,7 +69,7 @@
   <div
     role="tablist"
     #bar
-    [ngStyle]="{ left: leftPosition, transform: transformPosition }"
+    [style.left]="leftPosition" [style.transform]="transformPosition"
     class="animate-tab-selector slide absolute bottom-0 z-10 block h-1 w-28 flex-auto transform rounded-lg border-0 bg-inherit bg-none text-center text-slate-700 shadow">
     <a
       class="z-30 mb-0 flex h-1 w-full cursor-pointer items-center justify-center rounded-md border-0 bg-blue-600 px-0 text-sm text-slate-600 transition-all ease-in-out dark:bg-white dark:text-white"

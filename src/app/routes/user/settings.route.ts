@@ -41,4 +41,9 @@ export const settingsRoutes: Routes = [
             authz: { resource: 'organization', action: 'read' },
         },
     },
+    {
+        path: 'storage',
+        loadComponent: () => import('../../pages/user/settings/storage/storage.component').then(m => m.StorageTabComponent),
+        data: { title: 'Storage', animation: 'storage' },
+    },
 ]

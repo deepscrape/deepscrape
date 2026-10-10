@@ -1,0 +1,7 @@
+/**
+ * The search mode is laid out with Tailwind utilities and the repository's
+ * shared controls, so it needs no local rules: its colours, borders and states
+ * all come from the tokens the controls already use.
+ *
+ * A rule here would be the second place a field's border colour is decided.
+ */

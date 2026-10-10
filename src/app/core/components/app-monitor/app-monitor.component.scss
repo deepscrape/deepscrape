@@ -1,0 +1,8 @@
+/**
+ * The monitor mode is laid out with Tailwind utilities and the repository's
+ * shared controls, so it needs no local rules: surfaces, borders, chips and the
+ * light/dark variants all come from the tokens those controls already use.
+ *
+ * A rule here would be the second place a monitor row's border colour is
+ * decided, and the first place it would go stale.
+ */

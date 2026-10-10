@@ -1,11 +1,10 @@
-import { NgStyle } from '@angular/common';
 import { Component, Input, ElementRef, HostListener, Renderer2, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
   selector: 'with-gradient-border',
   templateUrl: './with-gradient-border.component.html',
   styleUrls: ['./with-gradient-border.component.scss'],
-  imports: [NgStyle,],
+  imports: [],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class WithGradientBorderComponent {

@@ -1,43 +1,62 @@
-<div class="relative flex h-full w-full flex-col p-4 bg-gray-100 dark:bg-gray-900 rounded-lg shadow-sm">
+<div class="relative flex h-full w-full flex-col gap-4 p-4">
   @if (activeLink !== 'keys') {
-    <h1 class="text-2xl font-semibold mb-5 text-gray6 dark:text-gray3">{{ ( activeLink + ' ' + "Settings") | titlecase }}</h1>
+    <h1 class="text-xl font-semibold tracking-tight text-gray6 dark:text-white">
+      {{ ( activeLink + ' ' + "Settings") | titlecase }}
+    </h1>
   }
-  <!-- Tab Menu -->
+  <!--
+    Tab menu.
+
+    One accent, not six. The tab data carries a per-tab `color`, which this strip spent
+    on a rainbow of pink/sky/green icons and a blue active border -- none of which is in
+    the theme map, where `cyan` is the primary token and `rose` the accent. Colour is now
+    spent on state alone, so the shell reads as one product with the pages it frames.
+    The strip is also the surface now: the panel it used to sit in was a hard-coded
+    `bg-gray-100 dark:bg-gray-900`, which is what made these pages look detached from the
+    rest of the app.
+  -->
   <div
-    class="sticky top-20 scrollbar-hidden snap-x overflow-auto z-50 flex h-16 flex-nowrap items-center justify-start gap-1 border-b bg-gray-200 text-base text-gray-800 dark:border-b-[#64b5f633] dark:bg-gray-900"
+    class="sticky top-20 z-20 flex snap-x flex-nowrap items-center gap-1 overflow-x-auto rounded-xl border border-gray-200/70 bg-gray-100/70 p-1 scrollbar-hidden backdrop-blur dark:border-gray-700/60 dark:bg-gray6/60"
     >
     @for (gTab of gTabs$ | async; track gTab) {
       <a
         (click)="activeLink = gTab.id"
-      [ngClass]="
-        activeLink === gTab.id
-          ? 'bg-gray-50 border-blue-600 transition dark:border-blue-300 dark:bg-gray5/40'
-          : 'border-transparent'
-      "
         [routerLink]="routerLink(gTab.id)"
         routerLinkActive="active"
         appRipple
         rippleColor="dark"
-        class="flex snap-normal h-full w-full max-w-[9rem] flex-shrink-0 items-center justify-start space-x-2 rounded-sm rounded-tl-lg rounded-tr-lg border-b-2 px-3 py-3 text-gray-900 transition-all hover:border-blue-300 hover:bg-cyan-100 hover:duration-100 hover:ease-in-out dark:text-gray-400 dark:hover:bg-cyan-300/10 dark:hover:text-gray-200"
+        [attr.aria-current]="activeLink === gTab.id ? 'page' : null"
+        [ngClass]="{
+          'bg-white text-cyan-700 shadow-sm ring-1 ring-inset ring-cyan-500/25 dark:bg-cyan-950/40 dark:text-cyan-300 dark:ring-cyan-400/25':
+            activeLink === gTab.id,
+          'text-gray-600 hover:bg-white/70 hover:text-cyan-700 dark:text-gray-400 dark:hover:bg-gray6/60 dark:hover:text-cyan-300':
+            activeLink !== gTab.id
+        }"
+        class="group flex h-11 w-full max-w-[9rem] flex-shrink-0 snap-normal items-center gap-2 rounded-lg px-3 text-sm font-medium transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
         >
+        <!--
+          The icon is decorative: it sits beside the tab's own text, so it carries no
+          label of its own. `aria-hidden` was misspelled `faria-hidden`, which made it
+          inert, so the placeholder `aria-label` "Example face SVG icon" was announced
+          to screen readers on every tab. The per-tab colour chain also referenced
+          `group-hover` on an element whose parent had no `group` class, so every one of
+          those branches was dead.
+        -->
         <lucide-angular
-          faria-hidden="false"
-          aria-label="Example face SVG icon"
+          aria-hidden="true"
           [img]="icons[gTab.icon]"
-      [ngClass]="gTab.color === 'gray' ? 'text-gray-500 group-hover:text-gray-900 dark:group-hover:text-white ' : 
-      gTab.color === 'pink' ? 'text-pink-500 group-hover:text-pink-900 dark:group-hover:text-pink-300 ' :
-      gTab.color === 'sky' ? 'text-sky-500 group-hover:text-sky-900 dark:group-hover:text-sky-300 ' :
-      gTab.color === 'green' ? 'text-green-500 group-hover:text-green-900 dark:group-hover:text-green-300 ' :
-      'text-black group-hover:text-gray-900 dark:group-hover:text-white '"
-        class="h-8 w-8 max-h-[16px] max-w-[16px] flex-shrink-0 transition duration-75 fill-none"></lucide-angular>
-        <span>{{ gTab.name }}</span>
+          [ngClass]="activeLink === gTab.id
+            ? 'text-cyan-600 dark:text-cyan-300'
+            : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300'"
+          class="h-4 w-4 flex-shrink-0 transition-colors duration-200 fill-none"></lucide-angular>
+        <span class="truncate">{{ gTab.name }}</span>
       </a>
     }
   </div>
 
   <!-- Inner Section  -->
 
-  <div class="" [@routeChildAnimation]="getAnimationData(outlet)">
+  <div class="min-w-0" [@routeChildAnimation]="getAnimationData(outlet)">
     <router-outlet #outlet="outlet"></router-outlet>
   </div>
 </div>

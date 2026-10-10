@@ -82,10 +82,15 @@
           #menuElement
           aria-current="menu"
           [id]="'container-box-ul' + machine.id"
-          (click)="destroy()"
           class="devsite-appearance-selector-menu transition-shadow duration-300 before:absolute dark:before:border-b-gray5/10 dark:after:border-b-gray7 dark:hover:shadow-md dark:hover:shadow-gray7 before:bottom-full before:right-2 before:top-[-21px] before:-ml-2 before:h-0 before:w-0 before:border-[10px] before:border-solid before:border-transparent before:border-b-[#BDBDBD] before:content-[''] after:absolute after:bottom-full after:right-2 after:top-[-20px] after:z-[60px] after:-ml-2 after:h-0 after:w-0 after:border-[10px] after:border-solid after:border-transparent after:border-b-white after:content-[''] hover:shadow-lg bg-gray-200 dark:bg-gray7 border-0.5 border-gray-300 absolute right-0 z-10 mt-3 w-48 origin-top-right rounded-[.5rem] px-1 py-1 shadow-lg focus:outline-none transform opacity-100 scale-100"
           [hidden]="!machine.menu_visible">
-          <li>
+          <!-- Runs a task inside this container. It has to be started first. -->
+          <li (click)="runTask()">
+            <span
+              class="flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-gray-700 dark:text-gray-200 dark:hover:bg-gray5/[0.5] dark:focus:bg-gray5/[0.8] cursor-pointer font-medium duration-300 transition-colors"
+            >{{ 'CNT.RUN_TASK' | translate }}</span>
+          </li>
+          <li (click)="destroy()">
             <span
               class="flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 disabled:opacity-50 text-red-600 dark:text-red-600/[.7] dark:hover:bg-gray5/[0.5] dark:focus:bg-gray5/[0.8] disabled:dark:hover:bg-gray-900/[0.5] disabled:dark:focus:bg-gray-900/[0.8] cursor-pointer font-medium duration-300 transition-colors"
             >{{ 'CNT.DESTROY' | translate }}</span>

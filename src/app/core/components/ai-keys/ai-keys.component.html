@@ -1,0 +1,158 @@
+<div class="flex w-full max-w-3xl flex-col gap-3">
+  <div class="flex flex-col gap-1">
+    <h2 class="text-lg font-semibold text-gray-800 dark:text-gray1">
+      {{ 'AI_KEYS.TITLE' | translate }}
+    </h2>
+    <p class="text-sm text-gray-500 dark:text-gray-300">
+      {{ 'AI_KEYS.DESCRIPTION' | translate }}
+    </p>
+  </div>
+
+  <!-- The key never leaves the request that carries it. This states the rule
+       where a user will read it, rather than only in a docblock. -->
+  <p class="text-xs italic text-gray-500 dark:text-gray-400">
+    {{ 'AI_KEYS.PRIVACY' | translate }}
+  </p>
+
+  <!-- The scraping engine, above the vendor rows: this is the choice that
+       changes which backend serves `/api/crawl`, so it is the one a user most
+       needs to see. The list is whatever the server reported as selectable for
+       the plan, so a plan change needs no edit here. -->
+  @if (engines().length) {
+    <div class="flex flex-col gap-2 border-t border-gray-200 pt-3 dark:border-gray4/40">
+      <h3 class="text-sm font-semibold text-gray-800 dark:text-gray1">
+        {{ 'SCRAPE_PROVIDER.TITLE' | translate }}
+      </h3>
+
+      <div class="flex flex-wrap gap-2">
+        @for (engine of engines(); track engine.id) {
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition disabled:opacity-60"
+            [class]="isEngineSelected(engine.id)
+              ? 'border-cyan-400 bg-cyan-50 text-cyan-800 dark:border-cyan-500/60 dark:bg-cyan-950/40 dark:text-cyan-200'
+              : 'border-gray-200 bg-white/70 text-gray-700 hover:border-gray-300 dark:border-gray4/40 dark:bg-gray6/60 dark:text-gray-200'"
+            [attr.aria-pressed]="isEngineSelected(engine.id)"
+            [disabled]="busyEngine() !== null"
+            (click)="chooseEngine(engine.id)">
+            <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">
+              {{ isEngineSelected(engine.id) ? 'check_circle' : 'radio_button_unchecked' }}
+            </mat-icon>
+            {{ engine.labelKey | translate }}
+          </button>
+        }
+      </div>
+
+      <!-- The server's own description of the engine in use. Catalogue prose
+           rather than a translation key, because it is data about the backend
+           and changes when the backend does. -->
+      @for (engine of engines(); track engine.id) {
+        @if (isEngineSelected(engine.id) && engine.notes) {
+          <p class="text-xs text-gray-500 dark:text-gray-300">{{ engine.notes }}</p>
+        }
+      }
+    </div>
+  }
+
+  @if (isLoading() && !isLoaded()) {
+    <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
+      <span
+        class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"
+        aria-hidden="true"></span>
+      {{ 'AI_KEYS.LOADING' | translate }}
+    </div>
+  }
+
+  @if (errorMessage()) {
+    <p
+      class="rounded-md border border-pink-300/60 bg-pink-50 px-3 py-2 text-sm text-pink-700 dark:border-pink-500/40 dark:bg-pink-950/30 dark:text-pink-300"
+      role="alert">
+      {{ errorMessage() | translate }}
+    </p>
+  }
+
+  @for (vendor of catalogue; track vendor.id) {
+    <div
+      class="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white/70 p-3 dark:border-gray4/40 dark:bg-gray6/60">
+
+      <!-- Header: which provider, whose key serves it, and whether one is stored. -->
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="text-sm font-medium text-gray-800 dark:text-gray1">
+          {{ vendor.labelKey | translate }}
+        </span>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <span
+            class="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300">
+            <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">vpn_key</mat-icon>
+            {{ sourceLabelKey(vendor.id) | translate }}
+          </span>
+
+          <span
+            class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+            [class]="hasKey(vendor.id)
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+              : 'bg-gray-100 text-gray-600 dark:bg-gray-100/[0.08] dark:text-gray-300'">
+            {{ (hasKey(vendor.id) ? 'AI_KEYS.HAS_KEY' : 'AI_KEYS.NO_KEY') | translate }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Why the provider cannot be used, when it cannot. Kept apart from the
+           key state because "bring a key" and "upgrade" are different remedies. -->
+      @if (refusalLabelKey(vendor.id); as refusalKey) {
+        <p class="text-xs text-amber-700 dark:text-amber-300">
+          {{ refusalKey | translate }}
+        </p>
+      }
+
+      @if (acceptsKey(vendor.id)) {
+        @if (hasKey(vendor.id)) {
+          <div class="flex items-center justify-end">
+            <button
+              type="button"
+              [disabled]="isRemoveDisabled(vendor.id)"
+              (click)="remove(vendor.id)"
+              class="inline-flex items-center gap-2 rounded-full border border-pink-300/60 px-4 py-1.5 text-sm font-medium text-pink-600 transition-colors hover:bg-pink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400 dark:border-pink-500/40 dark:text-pink-300 dark:hover:bg-pink-950/30 dark:disabled:border-gray4/40 dark:disabled:text-gray-500">
+              @if (busyVendor() === vendor.id) {
+                <span
+                  class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden="true"></span>
+              }
+              {{ (busyVendor() === vendor.id ? 'AI_KEYS.REMOVING' : 'AI_KEYS.REMOVE') | translate }}
+            </button>
+          </div>
+        } @else {
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+            <!-- `type="password"` so a key is not shoulder-readable while typed.
+                 The control's value is never interpolated anywhere. -->
+            <app-stinput
+              class="block w-full"
+              type="password"
+              leftIcon="vpn_key"
+              [control]="controlFor(vendor.id)"
+              [label]="'AI_KEYS.KEY_LABEL' | translate"
+              [errorLabel]="'AI_KEYS.KEY_HINT' | translate"></app-stinput>
+
+            <button
+              type="button"
+              [disabled]="isSaveDisabled(vendor.id)"
+              (click)="save(vendor.id)"
+              class="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-cyan-600 px-5 text-sm font-medium text-white transition-colors hover:bg-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400">
+              @if (busyVendor() === vendor.id) {
+                <span
+                  class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"
+                  aria-hidden="true"></span>
+              }
+              {{ (busyVendor() === vendor.id ? 'AI_KEYS.SAVING' : 'AI_KEYS.SAVE') | translate }}
+            </button>
+          </div>
+        }
+      } @else {
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          {{ 'AI_KEYS.BYOK_UNSUPPORTED' | translate }}
+        </p>
+      }
+    </div>
+  }
+</div>

@@ -1,4 +1,4 @@
-import { CommonModule, DecimalPipe } from '@angular/common';
+import { DecimalPipe, NgClass } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit, inject, ChangeDetectionStrategy } from '@angular/core'
 import { FormBuilder, FormControl, ReactiveFormsModule } from '@angular/forms'
 import { MatDatepickerModule } from '@angular/material/datepicker'
@@ -79,7 +79,7 @@ interface HourlyAccumulator {
 @Component({
   selector: 'app-admin-migration',
   imports: [
-    CommonModule,
+    NgClass,
     ReactiveFormsModule,
     DecimalPipe,
     DropdownComponent,

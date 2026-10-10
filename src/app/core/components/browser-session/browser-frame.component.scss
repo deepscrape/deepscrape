@@ -1,0 +1,9 @@
+// The frame is a plain `<img>` and carries no animation of its own.
+//
+// The roadmap's live-view clause mentions a pulse or scanline effect and asks that
+// it be dropped under `prefers-reduced-motion`. No such effect was added, so there
+// is nothing to suppress -- that is the decision recorded here, rather than adding
+// motion and then having to remember to disable it.
+//
+// This file exists because the component declares a `styleUrl`, and a missing file
+// is a build error, not a warning.

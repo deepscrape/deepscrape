@@ -1,5 +1,5 @@
 import { Component, OnInit, OnDestroy, AfterViewInit, inject, DestroyRef, ViewChild, ElementRef, PLATFORM_ID, ChangeDetectionStrategy } from '@angular/core';
-import { CommonModule, isPlatformBrowser } from '@angular/common';
+import { AsyncPipe, NgClass, isPlatformBrowser } from '@angular/common';
 import { AbstractControl, FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
@@ -34,7 +34,8 @@ interface SignupForm {
 @Component({
     selector: 'app-signup',
     imports: [
-        CommonModule,
+        AsyncPipe,
+        NgClass,
         ReactiveFormsModule,
         RouterModule,
         MatIconModule,
@@ -71,7 +72,9 @@ export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
     private themePicker = inject(ThemeService);
     protected isDarkMode$: Observable<boolean> = this.themePicker.isDarkMode$;
     /** Marketing apex. The brand mark must resolve to the site, never to a subdomain. */
-    protected readonly apexUrl: string = ORIGINS.marketing;
+    // ponytail: was ORIGINS.marketing — see app-service-layout: prerendered, so the origin is
+    // named rather than derived, and it is the app one so the logo cannot surface the landing page.
+    protected readonly homeUrl: string = ORIGINS.app + '/dashboard';
     private destroyRef = inject(DestroyRef);
     private langChangeSubscription: Subscription;
     public currentAuthMethod: 'email' | 'phone' | null = null;

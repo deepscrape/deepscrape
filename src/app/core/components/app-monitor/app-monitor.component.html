@@ -1,0 +1,257 @@
+<div class="flex w-full max-w-3xl flex-col gap-4 mt-8">
+  <!-- Create a monitor -->
+  <section class="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray6">
+    <h3 class="text-sm font-semibold text-gray6 dark:text-white">
+      {{ 'MONITOR.CREATE_TITLE' | translate }}
+    </h3>
+    <p class="mb-3 mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+      {{ 'MONITOR.CREATE_HINT' | translate }}
+    </p>
+
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <app-stinput
+        leftIcon="bookmark"
+        [control]="nameControl"
+        [label]="'MONITOR.NAME' | translate"
+        [errorLabel]="'MONITOR.NAME_HINT' | translate"></app-stinput>
+
+      <app-stinput
+        leftIcon="link"
+        [control]="urlControl"
+        [label]="'MONITOR.URL' | translate"
+        [errorLabel]="'MONITOR.URL_HINT' | translate"></app-stinput>
+    </div>
+
+    <!-- Interval: presets first because they are what people actually pick, the
+         number field second because it is the fallback. -->
+    <div class="mt-1 flex flex-col gap-2">
+      <span class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        {{ 'MONITOR.INTERVAL' | translate }}
+      </span>
+      <div class="flex flex-wrap items-center gap-2">
+        @for (preset of intervalPresets; track preset) {
+          <button
+            type="button"
+            (click)="applyInterval(preset)"
+            class="rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+            [ngClass]="{
+              'border-transparent bg-cyan-600 text-white': isActiveInterval(preset),
+              'border-gray-200 bg-white text-gray6 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700': !isActiveInterval(preset)
+            }">
+            {{ preset }} {{ 'MONITOR.MINUTES_SHORT' | translate }}
+          </button>
+        }
+      </div>
+
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <app-stinput
+          leftIcon="schedule"
+          type="number"
+          [min]="limits.minIntervalMinutes"
+          [max]="limits.maxIntervalMinutes"
+          [control]="intervalControl"
+          [label]="'MONITOR.INTERVAL_MINUTES' | translate"
+          [errorLabel]="'MONITOR.INTERVAL_HINT' | translate"></app-stinput>
+
+        <app-stinput
+          leftIcon="code"
+          [control]="selectorControl"
+          [label]="'MONITOR.SELECTOR' | translate"
+          [errorLabel]="'MONITOR.SELECTOR_HINT' | translate"></app-stinput>
+      </div>
+
+      <!-- Extract mode: a three-way choice, so three chips rather than a boolean
+           toggle that could only express two of the three. -->
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          {{ 'MONITOR.EXTRACT_MODE' | translate }}
+        </span>
+        @for (mode of extractModes; track mode.code) {
+          <button
+            type="button"
+            (click)="extractModeControl.setValue(mode.code)"
+            class="rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+            [ngClass]="{
+              'border-transparent bg-cyan-600 text-white': extractModeControl.value === mode.code,
+              'border-gray-200 bg-white text-gray6 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700': extractModeControl.value !== mode.code
+            }">
+            {{ mode.name | translate }}
+          </button>
+        }
+      </div>
+    </div>
+
+    <div class="mt-3 flex justify-end">
+      <button
+        type="button"
+        [disabled]="createDisabled"
+        (click)="create()"
+        class="inline-flex items-center gap-2 rounded-full bg-cyan-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400">
+        @if (creating()) {
+          <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+        }
+        {{ (creating() ? 'MONITOR.CREATING' : 'MONITOR.CREATE') | translate }}
+      </button>
+    </div>
+  </section>
+
+  <!-- A failed create is shown through the same envelope as every other failure,
+       so there is one error presentation rather than two. -->
+  @if (createError()) {
+    <app-result-envelope
+      state="error"
+      [errorMessage]="createError()"></app-result-envelope>
+  }
+
+  <!-- The monitor list -->
+  <app-result-envelope
+    [title]="'MONITOR.MONITORS'"
+    [state]="listState()"
+    [meta]="listMeta"
+    [errorMessage]="listError()"
+    [emptyMessage]="'MONITOR.NO_MONITORS'"
+    [showRetry]="listState() === 'error'"
+    (retry)="loadMonitors()">
+
+    <ul class="flex flex-col gap-2">
+      @for (monitor of monitors(); track monitor.id) {
+        <li class="rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-gray-700 dark:bg-gray6/60">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="truncate text-sm font-semibold text-gray6 dark:text-white">{{ monitor.name }}</span>
+
+                @if (!monitor.enabled) {
+                  <span class="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                    {{ 'MONITOR.PAUSED' | translate }}
+                  </span>
+                }
+
+                @if (monitor.lastStatus) {
+                  <span
+                    class="rounded-full px-2 py-0.5 text-xs font-medium"
+                    [ngClass]="statusClass(monitor.lastStatus)">
+                    {{ statusLabel(monitor.lastStatus) | translate }}
+                  </span>
+                }
+              </div>
+
+              <a
+                [href]="monitor.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-0.5 block max-w-full truncate text-xs text-cyan-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:text-cyan-300">
+                {{ monitor.url }}
+              </a>
+
+              <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                <span>{{ monitor.intervalMinutes }} {{ 'MONITOR.MINUTES_SHORT' | translate }}</span>
+                <span>
+                  {{ 'MONITOR.LAST_CHECKED' | translate }}:
+                  {{ monitor.lastCheckedAt ? (monitor.lastCheckedAt | date: 'short' : 'UTC') : ('MONITOR.NEVER' | translate) }}
+                </span>
+                @if (monitor.consecutiveErrors > 0) {
+                  <span class="text-red-600 dark:text-red-400">
+                    {{ 'MONITOR.CONSECUTIVE_ERRORS' | translate }}: {{ monitor.consecutiveErrors }}
+                  </span>
+                }
+                @if (monitor.selector) {
+                  <span class="font-mono">{{ monitor.selector }}</span>
+                }
+              </div>
+            </div>
+
+            <div class="flex flex-none items-center gap-1">
+              <button
+                type="button"
+                [disabled]="isBusy(monitor.id)"
+                (click)="toggleEnabled(monitor)"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:text-gray-400 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white">
+                <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">
+                  {{ monitor.enabled ? 'pause' : 'play_arrow' }}
+                </mat-icon>
+                <span class="sr-only">
+                  {{ (monitor.enabled ? 'MONITOR.PAUSE' : 'MONITOR.RESUME') | translate }}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                [disabled]="isBusy(monitor.id)"
+                (click)="toggleHistory(monitor.id)"
+                [attr.aria-expanded]="historyOpenFor() === monitor.id"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:text-gray-400 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white">
+                <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">history</mat-icon>
+                <span class="sr-only">
+                  {{ (historyOpenFor() === monitor.id ? 'MONITOR.HIDE_HISTORY' : 'MONITOR.SHOW_HISTORY') | translate }}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                [disabled]="isBusy(monitor.id)"
+                (click)="requestDelete(monitor.id)"
+                class="inline-flex h-8 items-center justify-center gap-1 rounded-full px-2 text-gray-600 transition-colors hover:bg-red-50 hover:text-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:text-gray-400 dark:text-gray-300 dark:hover:bg-red-950/40 dark:hover:text-red-300">
+                <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">delete</mat-icon>
+                <span class="text-xs">
+                  {{ (pendingDelete() === monitor.id ? 'MONITOR.CONFIRM_DELETE' : 'MONITOR.DELETE') | translate }}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Change history for this row only. Kept inside the row so the
+               monitor it belongs to is never in question. -->
+          @if (historyOpenFor() === monitor.id) {
+            <div class="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
+              <app-result-envelope
+                [title]="'MONITOR.HISTORY'"
+                [state]="historyState()"
+                [errorMessage]="historyError()"
+                [emptyMessage]="'MONITOR.NO_CHECKS'"
+                [showRetry]="historyState() === 'error'"
+                (retry)="loadHistory(monitor.id)">
+
+                <div class="overflow-x-auto">
+                  <table class="w-full text-left text-xs">
+                    <caption class="sr-only">{{ 'MONITOR.HISTORY' | translate }}</caption>
+                    <thead>
+                      <tr class="text-gray-500 dark:text-gray-400">
+                        <th scope="col" class="py-1 pr-3 font-medium">{{ 'MONITOR.CHECK_AT' | translate }}</th>
+                        <th scope="col" class="py-1 pr-3 font-medium">{{ 'MONITOR.CHECK_STATUS' | translate }}</th>
+                        <th scope="col" class="py-1 pr-3 font-medium">{{ 'MONITOR.CHECK_HTTP' | translate }}</th>
+                        <th scope="col" class="py-1 pr-3 font-medium">{{ 'MONITOR.CHECK_DURATION' | translate }}</th>
+                        <th scope="col" class="py-1 font-medium">{{ 'MONITOR.CHECK_ERROR' | translate }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (check of history(); track check.id) {
+                        <tr class="border-t border-gray-100 dark:border-gray-700/60">
+                          <td class="whitespace-nowrap py-1 pr-3">{{ check.at | date: 'short' : 'UTC' }}</td>
+                          <td class="py-1 pr-3">
+                            <span
+                              class="rounded-full px-2 py-0.5 font-medium"
+                              [ngClass]="statusClass(check.status)">
+                              {{ statusLabel(check.status) | translate }}
+                            </span>
+                          </td>
+                          <td class="py-1 pr-3">{{ check.httpStatus }}</td>
+                          <td class="py-1 pr-3">
+                            @if (check.ms !== undefined) {
+                              {{ check.ms }} ms
+                            }
+                          </td>
+                          <td class="py-1 text-red-600 dark:text-red-400">{{ check.error }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </app-result-envelope>
+            </div>
+          }
+        </li>
+      }
+    </ul>
+  </app-result-envelope>
+</div>

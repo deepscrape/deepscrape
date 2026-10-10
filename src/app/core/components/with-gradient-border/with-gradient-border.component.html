@@ -1,5 +1,5 @@
-<div class="relative w-full h-full overflow-visible" [ngStyle]="{'padding': borderWidth}">
-  <div class="absolute inset-0 pointer-events-none transition-all duration-200 will-change-auto z-10 gradient motion-reduce:hidden" [ngStyle]="gradientStyle" aria-hidden="true"></div>
+<div class="relative w-full h-full overflow-visible" [style.padding]="borderWidth">
+  <div class="absolute inset-0 pointer-events-none transition-all duration-200 will-change-auto z-10 gradient motion-reduce:hidden" [style]="gradientStyle" aria-hidden="true"></div>
   <div class="relative z-20 w-full h-full rounded-lg">
     <ng-content></ng-content>
   </div>

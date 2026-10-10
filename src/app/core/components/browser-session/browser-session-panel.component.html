@@ -1,0 +1,242 @@
+<!--
+  Two error channels, deliberately. The envelope below reports a failure to LOAD
+  the list; the alert below reports a failed action. A failed keepalive or close
+  must not hide the list, because the session that needs closing is in it.
+
+  Surfaces use the repository's own neutral tokens at partial opacity
+  (gray3/gray5/gray7) rather than Tailwind's default gray scale, so this page sits
+  in the same family as the admin surfaces instead of beside them. `admin-glass-card`
+  is deliberately NOT used: it is defined per-component inside each admin page's own
+  SCSS (`:host`-scoped), so referencing it here would silently render nothing.
+-->
+<section class="space-y-6">
+  <!--
+    The heading lives here rather than on the host page, because this component
+    already imports TranslateModule and the page does not have to. That keeps the
+    page a dumb host, which is what lets the same panel be dropped into the
+    playground's `browser` mode and the crawl-pack tab later.
+  -->
+  <header class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div>
+      <h2 class="text-2xl font-bold text-gray5 dark:text-gray-100">
+        {{ 'BROWSER_SESSION.TITLE' | translate }}
+      </h2>
+      <p class="mt-1 text-sm text-gray5/70 dark:text-gray-300">
+        {{ 'BROWSER_SESSION.COST_NOTE' | translate }}
+      </p>
+    </div>
+  </header>
+
+  <!--
+    The create form sits outside the envelope so a create failure cannot hide
+    sessions the caller already holds.
+  -->
+  <form
+    class="space-y-5 rounded-xl border border-gray3/55 bg-white/75 p-5 dark:border-gray5/60 dark:bg-gray7/55"
+    (submit)="$event.preventDefault(); create()"
+  >
+    <fieldset>
+      <legend
+        class="text-xs font-semibold uppercase tracking-wider text-gray5/70 dark:text-gray-300"
+      >
+        {{ 'BROWSER_SESSION.MODE_LABEL' | translate }}
+      </legend>
+      <div class="mt-2 flex flex-wrap gap-2">
+        @for (option of MODES; track option) {
+          <button
+            type="button"
+            [class]="toggleClass(mode() === option)"
+            [attr.aria-pressed]="mode() === option"
+            (click)="setMode(option)"
+          >
+            {{ modeLabelKey(option) | translate }}
+          </button>
+        }
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend
+        class="text-xs font-semibold uppercase tracking-wider text-gray5/70 dark:text-gray-300"
+      >
+        {{ 'BROWSER_SESSION.KIND_LABEL' | translate }}
+      </legend>
+      <div class="mt-2 flex flex-wrap gap-2">
+        @for (option of KINDS; track option) {
+          <button
+            type="button"
+            [class]="toggleClass(kind() === option)"
+            [attr.aria-pressed]="kind() === option"
+            (click)="setKind(option)"
+          >
+            {{ kindLabelKey(option) | translate }}
+          </button>
+        }
+      </div>
+    </fieldset>
+
+    @if (mode() === 'byo') {
+      <div class="space-y-1">
+        <!--
+          The label is passed already translated. Safe either way: if the control
+          translates its label, translating a translated string returns it
+          unchanged, and if it does not, the text is correct as given.
+        -->
+        <app-stinput
+          [control]="cdpControl"
+          [label]="'BROWSER_SESSION.CDP_URL_LABEL' | translate"
+          idName="browser-session-cdp"
+        />
+        <!--
+          Mirrors the BYOB storage copy, so the write-only convention reads the
+          same everywhere in the product.
+        -->
+        <p class="text-xs text-gray5/70 dark:text-gray-300">
+          {{ 'BROWSER_SESSION.CDP_URL_HINT' | translate }}
+        </p>
+      </div>
+    }
+
+    <div class="flex flex-wrap items-center gap-3">
+      <button
+        type="submit"
+        [disabled]="!canCreate()"
+        class="rounded-md bg-cyan-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-500 dark:text-gray7"
+      >
+        {{
+          (creating() ? 'BROWSER_SESSION.CREATING' : 'BROWSER_SESSION.CREATE')
+            | translate
+        }}
+      </button>
+      <!--
+        Browser time is never free on platform compute, so the cost is stated
+        before the button rather than discovered on an invoice.
+      -->
+      <p class="text-xs text-gray5/70 dark:text-gray-300">
+        {{ 'BROWSER_SESSION.COST_NOTE' | translate }}
+      </p>
+    </div>
+  </form>
+
+  <!--
+    `role="alert"` so a failed action is announced, not merely coloured. It is an
+    error, not a status: something the caller asked for did not happen.
+  -->
+  @if (noticeKey()) {
+    <p
+      role="alert"
+      class="rounded-lg bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-900/20 dark:text-rose-300"
+    >
+      {{ noticeKey() | translate }}
+    </p>
+  }
+
+  <app-result-envelope
+    [state]="state()"
+    [errorMessage]="errorKey() | translate"
+    [loadingMessage]="'BROWSER_SESSION.LOADING'"
+    [idleMessage]="'BROWSER_SESSION.IDLE'"
+    [emptyMessage]="'BROWSER_SESSION.EMPTY'"
+    [showRetry]="state() === 'error'"
+    (retry)="load()"
+  >
+    <!--
+      `@listStagger` is the repository's own list animation (`listStaggerAnimation`),
+      driven by the session count so a change re-triggers the `* => *` transition.
+      Reusing it beats a local `@keyframes`, which the styling policy discourages.
+    -->
+    <ul class="space-y-3" [@listStagger]="sessions().length">
+      @for (session of sessions(); track session.id) {
+        <li
+          class="space-y-3 rounded-xl border border-gray3/55 bg-white/75 p-3 dark:border-gray5/60 dark:bg-gray7/55"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="space-y-1">
+              <app-browser-session-chip [session]="session" />
+              <p class="text-xs text-gray5/70 dark:text-gray-300">
+                {{ 'BROWSER_SESSION.CREATED' | translate }}:
+                {{ session.createdAt | date: 'short' }}
+                @if (session.expiresAt) {
+                  <span>
+                    - {{ 'BROWSER_SESSION.EXPIRES' | translate }}:
+                    {{ session.expiresAt | date: 'short' }}
+                  </span>
+                }
+              </p>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                [class]="actionClass()"
+                [disabled]="action(session.id) !== 'none'"
+                (click)="keepalive(session.id)"
+              >
+                {{
+                  (action(session.id) === 'keepalive'
+                    ? 'BROWSER_SESSION.KEEPING'
+                    : 'BROWSER_SESSION.KEEPALIVE'
+                  ) | translate
+                }}
+              </button>
+              <button
+                type="button"
+                [class]="dangerClass()"
+                [disabled]="action(session.id) !== 'none'"
+                (click)="close(session.id)"
+              >
+                {{
+                  (action(session.id) === 'closing'
+                    ? 'BROWSER_SESSION.CLOSING'
+                    : 'BROWSER_SESSION.CLOSE'
+                  ) | translate
+                }}
+              </button>
+              <!--
+                The live view control, offered only where a frame can exist.
+                `aria-expanded` carries the open state and `aria-controls` names
+                the region it governs, so the relationship is announced rather
+                than left to whoever can see which row changed height.
+              -->
+              @if (canFrame(session.kind)) {
+                <button
+                  type="button"
+                  [class]="actionClass()"
+                  [attr.aria-expanded]="isFramed(session.id)"
+                  [attr.aria-controls]="frameId(session.id)"
+                  (click)="toggleFrame(session.id)"
+                >
+                  {{
+                    (isFramed(session.id)
+                      ? 'BROWSER_SESSION.FRAME_HIDE'
+                      : 'BROWSER_SESSION.FRAME_SHOW'
+                    ) | translate
+                  }}
+                </button>
+              }
+            </div>
+          </div>
+
+          <!--
+            The frame is MOUNTED on demand, never hidden behind CSS. Its own
+            interval is the thing that costs money, so unmounting has to be what
+            "closed" means; a `display:none` frame would keep polling a machine
+            nobody is watching. It is also given its own labelled region, because
+            a stream of images is not readable text on its own.
+          -->
+          @if (canFrame(session.kind)) {
+            @if (isFramed(session.id)) {
+              <div [id]="frameId(session.id)">
+                <app-browser-frame [sessionId]="session.id" />
+              </div>
+            }
+          } @else {
+            <p class="text-xs text-gray5/70 dark:text-gray-300">
+              {{ 'BROWSER_SESSION.FRAME_UNSUPPORTED' | translate }}
+            </p>
+          }
+        </li>
+      }
+    </ul>
+  </app-result-envelope>
+</section>

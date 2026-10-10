@@ -1,0 +1,25 @@
+:host {
+  display: block;
+}
+
+/* Same glass surface the other admin consoles use. Defined per component,
+   matching admin-billing-observability / admin-migration. */
+.admin-glass-card {
+  position: relative;
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease,
+    border-color 220ms ease;
+}
+
+.admin-glass-card:hover {
+  transform: translateY(-2px);
+}
+
+:host-context(.dark) .admin-glass-card {
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}

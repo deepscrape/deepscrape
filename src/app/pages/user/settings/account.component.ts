@@ -76,13 +76,10 @@ export class AccountSettingsComponent {
   }
 
   getRouteId(): string {
-
-    const url = this.router.url;
-    const lastSubRoute = url.split('/').pop();
-
-    console.log('lastSubRoute', lastSubRoute);
-
-    return lastSubRoute ?? ''
+    // No logging on this path: it is called from the router-events subscriber, so a
+    // `console.log` here printed the last URL segment on every navigation, in
+    // production included.
+    return this.router.url.split('/').pop() ?? ''
   }
 
   ngOnDestroy(): void {

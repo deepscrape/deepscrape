@@ -1,4 +1,4 @@
-import { CommonModule, DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe, NgClass } from '@angular/common';
 import { ChangeDetectorRef, Component, OnInit, inject, ChangeDetectionStrategy } from '@angular/core'
 import { FormControl } from '@angular/forms'
 import { RouterLink } from '@angular/router'
@@ -47,7 +47,7 @@ interface BackupRunItem {
 
 @Component({
   selector: 'app-admin-migration-backups',
-  imports: [CommonModule, DecimalPipe, RouterLink, SlideInModalComponent, RippleDirective, TranslateModule],
+  imports: [DatePipe, DecimalPipe, NgClass, RouterLink, SlideInModalComponent, RippleDirective, TranslateModule],
   templateUrl: './admin-migration-backups.component.html',
   styleUrl: './admin-migration-backups.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush

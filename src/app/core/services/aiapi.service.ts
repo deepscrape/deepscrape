@@ -7,7 +7,7 @@ import { map } from 'rxjs/internal/operators/map';
 import { tap } from 'rxjs/internal/operators/tap';
 import { environment } from 'src/environments/environment';
 import { arrayBufferToString, customUrlEncoder, sanitizeJSON, switchModelApiEndpoint } from '../functions';
-import { API_ANTHROPIC, API_CRAWL4AI_URL, API_GROQAI, API_JINAAI, API_OPENAI } from '../variables';
+import { API_ANTHROPIC, API_GROQAI, API_JINAAI, API_OPENAI } from '../variables';
 import { scan } from 'rxjs/internal/operators/scan';
 import { claudeAiApiStreamData, CrawlPack, CrawlTask, JinaOptions } from '../types';
 import { filter } from 'rxjs/internal/operators/filter';

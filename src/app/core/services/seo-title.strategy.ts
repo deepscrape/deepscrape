@@ -39,6 +39,11 @@ const SEO: Record<string, { title: string; description: string }> = {
     description:
       'Crawl4AI is a library you self-host; deepscrape is the managed crawler built on the same idea — rendering, anti-bot, scheduling and billing handled for you.',
   },
+  '/mcp-web-scraping': {
+    title: 'MCP Web Scraping Server for AI Agents | deepscrape',
+    description:
+      'Connect an MCP web scraping server to Claude, Cursor or Copilot. 17 intent-based tools, three browser engines, stealth sessions — managed, no browser fleet.',
+  },
 };
 
 /** '/contact/' -> '/contact', '/' -> ''. Query/hash stripped. */

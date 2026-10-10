@@ -10,18 +10,33 @@
     <!-- Set a radio button On/Off MFA-->
     <app-radiotoggle [control]="forwardCookies | formControl"></app-radiotoggle>
 
-    <app-dropdown
-      [options]="model"
-      [control]="modelAI | formControl"
-      [padding]="'p-2'"
-      dropDownName="choose your model"
-      (select)="onDropDownSelected($event)"
-      >
-    </app-dropdown>
+    <div class="flex flex-col items-end gap-1">
+      <app-dropdown
+        [options]="model"
+        [control]="modelAI | formControl"
+        [padding]="'p-2'"
+        dropDownName="choose your model"
+        (select)="onDropDownSelected($event)"
+        >
+      </app-dropdown>
+      <!-- Whose key would serve a call to the selected model. Read from the
+           server's resolved state, because the server is what picks the key. -->
+      <span
+        class="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300">
+        <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">vpn_key</mat-icon>
+        {{ activeKeySourceLabelKey() | translate }}
+      </span>
+    </div>
   </div>
+  <!-- The page fetch runs server-side through the scraping worker, which reads
+       the target without the extension's cookies. Said here rather than left for
+       the user to infer from a page that returns a login wall. -->
+  <p class="text-xs italic text-gray-500 dark:text-gray-400">
+    {{ 'LLM.COOKIES_NOTE' | translate }}
+  </p>
   <div class="relative">
     <div class="absolute right-3 top-4 z-10 h-5 w-5">
-      @if (isCrawlProcessing) {
+      @if (isCrawlProcessing()) {
         <mat-spinner
           [diameter]="20"
           class="stroke-gray-200"
@@ -48,35 +63,35 @@
     ></app-promptarea>
   </div>
 </div>
-@if (isGetResults) {
+@if (isGetResults()) {
   <div
     class="relative max-w-[80%] mt-4 flex w-full items-center justify-start gap-4 rounded-md bg-gray-100 p-4 pt-10 pb-10 shadow-md dark:bg-gray6"
     >
     <button
       type="button"
       title="close results"
-      class="absolute right-2 top-[5px] z-10 h-8 w-8 rounded-full border border-blue-200/5 font-medium text-pink-400 transition-colors duration-200 hover:bg-gray-100/60 hover:text-pink-700 focus:outline-none focus:ring-2 focus:ring-gray-100/70 dark:bg-transparent dark:text-pink-500 dark:hover:bg-gray5/60 dark:hover:text-pink-700 dark:focus:ring-gray4/60"
+      class="absolute right-2 top-[5px] z-10 h-8 w-8 rounded-full border border-gray-200/60 font-medium text-gray-500 transition-colors duration-200 hover:bg-gray-100/60 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-700/60 dark:bg-transparent dark:text-gray-400 dark:hover:bg-gray5/60 dark:hover:text-gray-200 dark:focus-visible:ring-gray4/60"
       (click)="closeResults()"
       >
       <mat-icon fontSet="material-icons-outlined" class="!h-5 !w-5 text-lg">
         close
       </mat-icon>
     </button>
-    @if(isResultsProcessing && !jsonChunk['content']) {
+    @if(isResultsProcessing() && !content()) {
       <div class="w-full flex justify-center text-gray4 dark:text-gray-100">
         <div class="flex flex-col items-center gap-6">
           {{ 'LLM.WAITING' | translate }}
-          @if (isResultsProcessing) {
+          @if (isResultsProcessing()) {
             <mat-spinner
               [diameter]="40"
-              class="stroke-gray-200 dark:stroke-violet-400"
+              class="stroke-gray-200 dark:stroke-cyan-400"
             ></mat-spinner>
           }
         </div>
       </div>
-    } @else if (!isResultsProcessing && !jsonChunk['content'] &&
-      isCrawlProcessing) { } @else {
-      @if (!jsonChunk['content']) {
+    } @else if (!isResultsProcessing() && !content() &&
+      isCrawlProcessing()) { } @else {
+      @if (!content()) {
         <div
           class="w-full text-center text-gray4 dark:text-gray-100"
           >
@@ -85,17 +100,17 @@
       }
     }
 
-    @if (jsonChunk['content']?.length > 0) {
+    @if (content().length > 0) {
       <div
-        class="block prose prose-code:dark:bg-[rgb(34 34 34)] prose-code:bg-pink-100 prose-img:rounded-xl prose-headings:text-[#4368d6] prose-headings:dark:text-[#6587ed] prose-a:text-blue-600 hover:prose-a:text-blue-500 w-full max-w-full rounded-lg bg-gray-100 px-4 py-2 text-lg text-gray-900 dark:bg-gray6 dark:text-gray1"
+        class="block prose prose-code:dark:bg-[rgb(34 34 34)] prose-code:bg-rose-50 prose-img:rounded-xl prose-headings:text-cyan-700 prose-headings:dark:text-cyan-300 prose-a:text-cyan-700 hover:prose-a:text-cyan-600 dark:prose-a:text-cyan-300 w-full max-w-full rounded-lg bg-gray-100 px-4 py-2 text-lg text-gray-900 dark:bg-gray6 dark:text-gray1"
         >
-        @if (jsonChunk['usage']) {
+        @if (usage()) {
           <p
             class="inline-flex items-center w-full justify-end mt-1 text-sm text-red-500 dark:text-red-300 font-medium self-center gap-2 text-[12px] lg:text-xs italic"
             >
-            {{ 'LLM.COST' | translate }}: {{ jsonChunk["usage"]?.total_cost || 0 }} $
+            {{ 'LLM.COST' | translate }}: {{ usage()?.total_cost || 0 }} $
             <mat-icon>bolt</mat-icon>
-            {{ 'LLM.TOKENS' | translate }}: {{ jsonChunk["usage"]?.total_tokens || 0 }}
+            {{ 'LLM.TOKENS' | translate }}: {{ usage()?.total_tokens || 0 }}
           </p>
         }
         <markdown
@@ -103,7 +118,7 @@
           clipboard
           emoji
           [clipboardButtonComponent]="clipboardButton"
-          [data]="jsonChunk['content']"
+          [data]="content()"
         ></markdown>
       </div>
     }

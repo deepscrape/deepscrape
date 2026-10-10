@@ -6,6 +6,7 @@ export const ACCOUNT_DATA_TABS: GlobalTabs[] = [
     { svg: '', icon: 'sparkles', color: "black", name: 'General', id: 'general' },
     { svg: '', icon: 'user-round', color: "gray", name: 'Profile', id: 'profile' },
     { svg: '', icon: 'settings', color: "sky", name: 'Workspace', id: 'workspace' },
+    { svg: '', icon: 'database', color: "gray", name: 'Storage', id: 'storage' },
     { svg: '', icon: 'fingerprint', color: "pink", name: 'Security', id: 'security' },
     // { svg: '', icon: 'piggy-bank', color: "sky", name: 'Payments', id: 'payment' },
     { svg: '', icon: 'key-round', color: "green", name: 'API Keys', id: 'keys' },

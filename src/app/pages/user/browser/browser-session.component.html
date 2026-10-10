@@ -1,0 +1,13 @@
+<!--
+  A thin host. The panel owns its own heading and every call to
+  `/api/browser/session*`, so the page supplies nothing but the layout section.
+  That is what lets the same panel be dropped into the playground's `browser` mode
+  and the crawl-pack tab without a second implementation of the lease controls.
+-->
+<section class="space-y-6">
+  <app-browser-session-panel />
+
+  <!-- Below the lease panel on purpose: the two are one sequence -- open a
+       session, log in, then capture that login in the vault. -->
+  <app-browser-session-vault />
+</section>

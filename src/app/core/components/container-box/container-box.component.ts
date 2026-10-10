@@ -1,4 +1,4 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, EventEmitter, HostListener, Input, model, Output, signal, ViewChild } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule } from '@ngx-translate/core';
@@ -48,6 +48,7 @@ export class ContainerBoxComponent {
   @Output() suspendPressed = new EventEmitter<{ id: string, laststate: string, instance_id: string }>()
   @Output() stopPressed = new EventEmitter<{ id: string, laststate: string, instance_id: string }>()
   @Output() destroyPressed = new EventEmitter<{ id: string, laststate: string, instance_id: string }>()
+  @Output() taskPressed = new EventEmitter<{ id: string, laststate: string, instance_id: string }>()
 
   constructor(private cdr: ChangeDetectorRef, private deployService: DeploymentService) { }
 
@@ -86,6 +87,11 @@ export class ContainerBoxComponent {
 
   protected destroy() {
     this.destroyPressed.emit({ id: this.machine.id, laststate: this.machine.state, instance_id: this.machine.instance_id })
+    this.toggleMenuVisible()
+  }
+
+  protected runTask() {
+    this.taskPressed.emit({ id: this.machine.id, laststate: this.machine.state, instance_id: this.machine.instance_id })
     this.toggleMenuVisible()
   }
 
@@ -146,5 +152,6 @@ export class ContainerBoxComponent {
     this.suspendPressed?.complete()
     this.stopPressed?.complete()
     this.destroyPressed?.complete()
+    this.taskPressed?.complete()
   }
 }

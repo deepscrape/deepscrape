@@ -29,10 +29,13 @@ describe('DashboardComponent', () => {
     expect(host.classList.contains('grow')).toBeTrue();
   });
 
-  it('should render browser component host element', () => {
+  it('does NOT mount the neko viewer', () => {
+    // Pinned in the NEGATIVE on purpose. `app-browser` was mounted here and
+    // reached a fixed external WebRTC host on every dashboard visit, so this
+    // assertion is what stops it quietly creeping back in.
     const browserHost = fixture.nativeElement.querySelector('app-browser');
 
-    expect(browserHost).toBeTruthy();
+    expect(browserHost).toBeNull();
   });
 
   it('fetchData should execute without throwing', () => {

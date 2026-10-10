@@ -5,7 +5,10 @@ import { resolveSafeReturnUrl } from '../functions'
 import { map } from 'rxjs/operators'
 import { SnackBarType } from '../components/snackbar/snackbar.component';
 
-const VERIFICATION_REQUIRED_MESSAGE = 'Your email or phone number is not verified. Please verify to proceed.'
+// An i18n KEY, not a sentence: `SnackbarComponent` renders it through `translate`.
+// This was the literal English string, which meant every unverified user saw it in
+// English whatever locale they had chosen.
+const VERIFICATION_REQUIRED_MESSAGE = 'VERIFICATION.ACCESS_REQUIRED'
 
 export const LoginGuard: CanActivateFn = (route, state) => {
   const authService = inject(AuthService)

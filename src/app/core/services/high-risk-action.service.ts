@@ -14,7 +14,7 @@ export class HighRiskActionService {
   private webAuthnService = inject(WebAuthnService)
   private router = inject(Router)
 
-  async ensureVerified(action: 'unlink_provider' | 'api_key_reveal' | 'billing_change' | 'login'): Promise<boolean> {
+  async ensureVerified(action: 'unlink_provider' | 'api_key_reveal' | 'billing_change' | 'login' | 'account_deletion'): Promise<boolean> {
     const user = await firstValueFrom(this.authService.user$, { defaultValue: null })
     if (!user?.uid) {
       return false

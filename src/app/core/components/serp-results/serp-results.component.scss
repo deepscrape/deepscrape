@@ -1,0 +1,10 @@
+/**
+ * The SERP list is styled entirely from the shared theme tokens through Tailwind
+ * classes in the template, so it follows the light and dark palettes with no
+ * local overrides.
+ *
+ * There is deliberately no rule here. A local `.truncate` (or any other
+ * override of a global utility) would be a second definition of a class the
+ * template already gets from `src/styles.scss`, and the two would disagree the
+ * next time the global one changes.
+ */

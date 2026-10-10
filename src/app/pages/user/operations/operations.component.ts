@@ -1,5 +1,6 @@
 import { AsyncPipe, DatePipe, DecimalPipe, JsonPipe, NgClass } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostBinding, SimpleChanges, ViewChild } from '@angular/core'
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostBinding, SimpleChanges, ViewChild, computed, inject } from '@angular/core'
+import { toSignal } from '@angular/core/rxjs-interop'
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms'
 import { FirestoreService } from 'src/app/core/services'
 import { MatIcon } from '@angular/material/icon'
@@ -8,13 +9,18 @@ import { MatProgressSpinner } from '@angular/material/progress-spinner'
 import { RouterLink, Router, ActivatedRoute } from '@angular/router'
 import { BehaviorSubject, combineLatest, map, Observable, of, Subject, Subscription, tap, timer } from 'rxjs'
 import { DropdownComponent, GinputComponent, LoadingDotsComponent, PromptareaComponent, SnackBarType, StinputComponent } from 'src/app/core/components'
+import { FeatureGateComponent } from 'src/app/core/components/feature-gate/feature-gate.component'
+import {
+  OPERATIONS_REQUIREMENT,
+  gateStateFor,
+} from 'src/app/core/components/feature-gate/feature-gate.policy'
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
 import { Outsideclick, RippleDirective } from 'src/app/core/directives'
 import { CrawlOperationStatus } from 'src/app/core/enum'
 import { crawlOperationStatusColor, isArray, setAIModel, setOperationStatusList } from 'src/app/core/functions'
 import { FormControlPipe } from 'src/app/core/pipes'
-import { AuthService, CacheService, CrawlStoreService, ScrollService, SnackbarService, TaskStatus, WebSocketService } from 'src/app/core/services'
-import { AIModel, CrawlConfig, CrawlOperation, DropDownOption, Users } from 'src/app/core/types'
+import { AuthService, AuthzService, BillingService, CacheService, CrawlAPIService, CrawlStoreService, ScrollService, SnackbarService, TaskStatus, WebSocketService } from 'src/app/core/services'
+import { AIModel, CrawlConfig, CrawlOperation, CrawlPack, CrawlTask, DropDownOption, Users } from 'src/app/core/types'
 import { MatInputModule } from '@angular/material/input'
 import { MatFormFieldModule } from '@angular/material/form-field'
 import { provideNativeDateAdapter } from '@angular/material/core'
@@ -49,7 +55,7 @@ type OperationPageCursor = {
 
 @Component({
   selector: 'app-operations',
-  imports: [DatePipe, RippleDirective, MatIcon, NgClass, AsyncPipe, MatProgressBarModule, LoadingDotsComponent, StinputComponent, FormControlPipe, GinputComponent, DropdownComponent, RouterLink, PromptareaComponent, ReactiveFormsModule, MatFormFieldModule, Outsideclick, MatProgressSpinner, MatInputModule, DecimalPipe, MatTimepickerModule, MatDatepickerModule, TranslateModule],
+  imports: [DatePipe, RippleDirective, MatIcon, NgClass, AsyncPipe, MatProgressBarModule, LoadingDotsComponent, StinputComponent, FormControlPipe, GinputComponent, DropdownComponent, RouterLink, PromptareaComponent, ReactiveFormsModule, MatFormFieldModule, Outsideclick, MatProgressSpinner, MatInputModule, DecimalPipe, MatTimepickerModule, MatDatepickerModule, TranslateModule, FeatureGateComponent],
   providers: [provideNativeDateAdapter(), provideNativeDateTimeAdapter()],
   animations: [listStaggerAnimation],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -79,6 +85,17 @@ export class OperationsComponent {
 
   // retrieves data dynamically from server
   crawlConfigPack: DropDownOption[] = []
+
+  /**
+   * The pack each picker option stands for, keyed by that option's `code`.
+   *
+   * `DropDownOption` carries only a label and a code, and `multiCrawlEnqueue`
+   * needs the whole pack because it spreads `config.value` into the request
+   * body. Keeping the loaded packs beside their options avoids a second read on
+   * submit. `code` is the pack document id, which is what the picker round-trips.
+   */
+  private readonly packsByCode = new Map<string, CrawlPack>()
+
   userprompt: FormControl<string>
   submitButton: FormControl<boolean>
   operationName: FormControl<string>
@@ -137,6 +154,36 @@ export class OperationsComponent {
   private taskStatuses: TaskStatus[] = []
   private _seenTaskIds: Set<string> = new Set<string>()
 
+  private readonly authz = inject(AuthzService)
+  private readonly billing = inject(BillingService)
+
+  /**
+   * What this surface needs, from the same table the playground reads:
+   * `POST /api/crawl/stream/job` carries `requirePaidAccess` plus
+   * `requirePermission('crawl', 'execute')`, so the form is refused here instead of
+   * surfacing a 402 after an operation has already been queued.
+   *
+   * `null` while either source is still resolving, and the template reads that as
+   * allowed. Nothing on this page was gated before, so an unresolved entitlement must
+   * not lock it: the conservative default is the current behaviour, not a refusal.
+   */
+  private readonly runSurface = toSignal(
+    combineLatest([
+      this.authz.can$('crawl', 'execute'),
+      this.billing.canAccessPaidFeatures$(),
+    ]).pipe(
+      map(([canExecute, paid]) => ({ permissions: { crawl: canExecute }, paid })),
+    ),
+    { initialValue: null },
+  )
+
+  protected readonly operationsGate = computed(() => {
+    const caps = this.runSurface()
+    return caps ? gateStateFor(OPERATIONS_REQUIREMENT, caps) : null
+  })
+
+  protected readonly canRunOperations = computed(() => this.operationsGate()?.allowed ?? true)
+
   constructor(
     private route: ActivatedRoute,
     private cdr: ChangeDetectorRef,
@@ -145,6 +192,7 @@ export class OperationsComponent {
     private cacheService: CacheService,
     private authService: AuthService,
     private crawlStoreService: CrawlStoreService,
+    private crawlService: CrawlAPIService,
     private snackbarService: SnackbarService,
     private scroll: ScrollService,
     private translate: TranslateService,
@@ -367,6 +415,10 @@ export class OperationsComponent {
     }
 
     void this.loadOperationsPage(1, true)
+
+    // The picker had no writer, so the "pick a pack, then Run" instruction this
+    // template opens with could never be followed. Load the options with the list.
+    void this.loadCrawlPacks()
   }
 
   // ngOnChanges(changes: SimpleChanges): void {
@@ -426,6 +478,84 @@ export class OperationsComponent {
       })
 
 
+  }
+
+  /**
+   * Fill the pack picker from the caller's own saved packs.
+   *
+   * `crawlConfigPack` previously had no writer at all, so the template's
+   * `@if(!crawlConfigPack.length)` always took the empty branch and this surface
+   * could never satisfy the "create a pack, then Run" instruction in its own
+   * copy. Each option's `code` is the pack document id, which is what
+   * `packsByCode` keys on to hand `multiCrawlEnqueue` a real pack.
+   *
+   * Failure is not fatal: an empty picker is what the template already renders,
+   * and `onPromptSubmited` still refuses a Run that has no pack.
+   *
+   * @return {Promise<void>} Resolves once the picker has been filled.
+   */
+  private async loadCrawlPacks(): Promise<void> {
+    const uid = this.user?.uid
+
+    if (!uid)
+      return
+
+    try {
+      const packs = await this.firestoreService.loadPreviousPacks(uid)
+
+      this.packsByCode.clear()
+      this.crawlConfigPack = (packs ?? []).map((pack: CrawlPack): DropDownOption => {
+        this.packsByCode.set(pack.id, pack)
+        return { name: pack.title, code: pack.id }
+      })
+    } catch (error) {
+      console.error('Error loading crawl packs:', error)
+    }
+
+    this.cdr.markForCheck()
+  }
+
+  /**
+   * Enqueue one operation on the job surface the entitlement table names.
+   *
+   * `OPERATIONS_REQUIREMENT` cites `POST /api/crawl/stream/job`, which is
+   * `CrawlAPIService.multiCrawlEnqueue`. This surface never called it: submit
+   * went straight to `storeCrawlOperation`, so an operation was a Firestore row
+   * with no `task_id`.
+   *
+   * That field is the whole mechanism. `initOperations` derives each row's
+   * status from `wsService.taskStatus$` by matching `op.task_id`, and opens a
+   * websocket only for rows that carry one. A row stored without it is inert and
+   * displays whatever status the form happened to write; attaching the id from
+   * the reply is what makes the row live.
+   *
+   * Persistence happens in `complete`, not `next`, so that a job the server
+   * refused does not leave a row behind claiming to be running.
+   *
+   * @param {CrawlOperation} operationData The validated operation to enqueue.
+   * @param {CrawlPack} pack The configured pack the request body is built from.
+   */
+  private enqueueCrawlOperation(operationData: CrawlOperation, pack: CrawlPack): void {
+
+    this.crawlSubs = this.crawlService
+      .multiCrawlEnqueue(operationData.urls, operationData, pack)
+      .subscribe({
+        next: (task: CrawlTask) => {
+          operationData.task_id = task.id
+          // The chosen action fixes the stored status; later changes arrive via
+          // `taskStatus$`, keyed on the id attached just above.
+          operationData.status = CrawlOperationStatus.STARTED
+          operationData.color = crawlOperationStatusColor(CrawlOperationStatus.STARTED)
+        },
+        error: (error: unknown) => {
+          console.error('Error enqueuing crawl operation:', error)
+          this.enableForm()
+          this.showSnackbar(this.translate.instant('OPERATIONS.INVALID_INPUT'), SnackBarType.error, '', 5000)
+        },
+        complete: () => {
+          this.prepareCrawlOperation(operationData)
+        }
+      })
   }
 
 
@@ -624,11 +754,40 @@ export class OperationsComponent {
     // reset the results
     // this.closeResults()
 
+    // The action dropdown IS the "how" of job creation for this surface: Run
+    // enqueues, Save and Schedule only record. Only the Save path was ever
+    // implemented -- submit fell through to `storeCrawlOperation` for every
+    // action, so Run and Schedule each wrote an inert row and nothing was ever
+    // queued.
+    const action = this.operationStatus.value.code as CrawlOperationStatus
+
+    if (action !== CrawlOperationStatus.STARTED) {
+      // disable the form
+      this.disableForm()
+
+      // Save records the operation; Schedule records it carrying `scheduled_At`
+      // for a dispatcher to pick up later. Nothing enqueues a scheduled row yet,
+      // so both actions are deliberately store-only rather than silently running.
+      this.prepareCrawlOperation(operationData)
+      return
+    }
+
+    // Run needs the pack: `multiCrawlEnqueue` builds the request body from
+    // `pack.config.value`, so without one there is nothing to enqueue. The
+    // template hides the picker when no packs exist, but the action dropdown
+    // stays usable, so this branch is reachable and has to refuse.
+    const pack = this.packsByCode.get(this.crawlPack.value?.code ?? '')
+
+    if (!pack) {
+      this.showSnackbar(this.translate.instant('OPERATIONS.INVALID_INPUT'), SnackBarType.error, '', 5000)
+      return
+    }
+
     // disable the form
     this.disableForm()
 
-    // save the Crawl operation
-    this.prepareCrawlOperation(operationData)
+    // enqueue the Crawl operation on the paid job surface
+    this.enqueueCrawlOperation(operationData, pack)
   }
 
   private enableForm() {
@@ -662,6 +821,12 @@ export class OperationsComponent {
   }
 
   protected toggleScrapperBtn() {
+    // Never open a form whose only submit path the backend refuses. Closing stays
+    // allowed, so a caller whose access changed can still dismiss the form.
+    if (!this.addScrapperBtn && !this.canRunOperations()) {
+      return
+    }
+
     this.addScrapperBtn = !this.addScrapperBtn
   }
 

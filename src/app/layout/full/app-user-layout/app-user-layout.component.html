@@ -23,7 +23,7 @@
         </svg>
       </button>
       <a
-        [href]="apexUrl"
+        [href]="homeUrl"
         aria-label="deepscrape home"
         class="flex items-center justify-between space-x-2">
         <h1
@@ -45,15 +45,22 @@
       </a>
     </div>
     <div class="flex min-w-0 flex-1 items-center justify-end gap-4">
-      <!-- Crawler Packager in Cart -->
-      @if (cartPackager$ | async) {
+      <!-- Crawler Packager in Cart. App functionality (billing-side), so never on the console. -->
+      @if (!isConsoleHost && (cartPackager$ | async)) {
         <app-cart-pack-notify></app-cart-pack-notify>
         <app-dropdown-cart class="fixed"></app-dropdown-cart>
       }
 
       <div class="flex min-w-0 flex-1 items-center justify-end gap-2">
-        <!-- Platform notifications: crawl results, billing, security, push -->
+        <!--
+          Platform notifications: crawl results, billing, security, push. Product-facing, so
+          not on the console — which is platform administration, not the app. Security alerts
+          still reach an admin by email and web push (see `alert-fanout`), so gating this does
+          not remove the alert, only one affordance on the wrong surface.
+        -->
+        @if (!isConsoleHost) {
         <app-notification-bell></app-notification-bell>
+        }
         <!-- Lang Mode Switch -->
         <app-lang-picker></app-lang-picker>
         <!-- Theme Mode Switch -->
@@ -124,6 +131,8 @@
                 </div>
               </div>
             </div>
+            <!-- Org-scoped: the console is platform-wide, so it has no active org to switch. -->
+            @if (!isConsoleHost) {
             <div
               class="relative px-4 py-3 border-t border-gray-100 dark:border-gray-600/30"
               role="none">
@@ -150,7 +159,9 @@
                 </div>
               }
             </div>
-            @if (invitations().length) {
+            }
+            <!-- Pending org invitations: same app-scoped concern as the workspace switcher. -->
+            @if (!isConsoleHost && invitations().length) {
               <div
                 class="px-4 py-3 border-t border-gray-100 dark:border-gray-600/30"
                 role="none">
@@ -194,6 +205,8 @@
                   <div>Dashboard</div>
                 </a>
               </li>
+              <!-- App pages. The console keeps only the way back to the app + sign out. -->
+              @if (!isConsoleHost) {
               <li>
                 <a
                   class="flex flex-row items-center gap-2 justify-start text-center py-2 cursor-pointer px-4 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-300/[.08] dark:hover:text-white"
@@ -238,6 +251,7 @@
                   <div>Settings</div>
                 </a>
               </li>
+              }
               <li>
                 <a
                   (click)="logout()"
@@ -303,6 +317,8 @@
                   <div>Dashboard</div>
                 </a>
               </li>
+              <!-- App pages. The console keeps only the way back to the app + sign out. -->
+              @if (!isConsoleHost) {
               <li>
                 <a
                   class="flex flex-row items-center gap-2 justify-start text-center py-2 cursor-pointer px-4 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-300/[.08] dark:hover:text-white"
@@ -347,6 +363,7 @@
                   <div>Settings</div>
                 </a>
               </li>
+              }
               <li>
                 <a
                   (click)="logout()"

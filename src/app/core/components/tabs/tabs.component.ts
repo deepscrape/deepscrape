@@ -1,7 +1,7 @@
 import { AfterViewChecked, AfterViewInit, ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, EventEmitter, Inject, inject, Input, OnInit, Output, PLATFORM_ID, ViewChild } from '@angular/core';
 import { LocalStorage, ScreenResizeService } from '../../services';
 import { RippleDirective, TouchEventsDirective } from '../../directives';
-import { isPlatformBrowser, NgClass, NgStyle } from '@angular/common';
+import { isPlatformBrowser, NgClass } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { SCREEN_SIZE } from '../../enum';
 import { CrawlLinkTab, LinkTabs, ScrollDimensions } from '../../types';
@@ -11,7 +11,7 @@ import { NavigationEnd, NavigationStart, Router, RouterLink } from '@angular/rou
 import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 @Component({
   selector: 'app-tabs',
-  imports: [RippleDirective, NgClass, NgStyle, MatIcon, RouterLink, TouchEventsDirective, TranslateModule],
+  imports: [RippleDirective, NgClass, MatIcon, RouterLink, TouchEventsDirective, TranslateModule],
   templateUrl: './tabs.component.html',
   styleUrl: './tabs.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

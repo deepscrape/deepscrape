@@ -7,6 +7,8 @@ import { forkJoin } from 'rxjs/internal/observable/forkJoin';
 import { takeUntil } from 'rxjs/internal/operators/takeUntil';
 import { tap } from 'rxjs/internal/operators/tap';
 import { AuthService, CrawlAPIService, FirestoreService, LocalStorage, OperationStatusService, SnackbarService, AnalyticsService } from '../../services';
+import { PricingRatesService } from '../../services/pricing-rates.service';
+import { PricingEstimate } from '../../types/pricing-rates.interface';
 import { Subject } from 'rxjs/internal/Subject';
 import { concatMap } from 'rxjs/internal/operators/concatMap';
 import { delay } from 'rxjs/internal/operators/delay';
@@ -50,10 +52,20 @@ export class AppCrawlComponent {
   private localStorage = inject(LocalStorage)
   private translate = inject(TranslateService)
   private analytics = inject(AnalyticsService)
+  private pricingService = inject(PricingRatesService)
   private user: Users & { currProviderData: UserInfo | null } | null = null
   private destroy$ = new Subject<void>()
 
   protected latestTaskId = signal<string | null>(null); // Initialize with null if no task ID initially
+
+  /**
+   * What the NEXT run costs this caller, or null when it could not be read.
+   *
+   * A signal rather than an observable because it is set once: the answer depends
+   * on the caller's tier and the route, not on the form, so there is nothing to
+   * re-read as the user types. The template only reads it.
+   */
+  protected readonly costEstimate = signal<PricingEstimate | null>(null)
 
 
   crawlOptions: FormGroup
@@ -127,6 +139,20 @@ export class AppCrawlComponent {
 
     this.taskStatus$ = of(undefined)
 
+    // What the run about to be submitted costs, so the price is visible BEFORE
+    // the button that spends it. One call, because the answer depends on the
+    // caller's tier rather than on the form — and the path comes from
+    // `CrawlAPIService` so the estimate and the submit cannot name different routes.
+    this.pricingService
+      .estimate('POST', this.crawlService.jobEnqueuePath)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (reply) => this.costEstimate.set(reply.estimate),
+        // Deliberately silent: a price that cannot be read must not block or
+        // visibly fail a crawl. The run reports its own outcome, and the charge
+        // (if any) is shown in billing.
+        error: () => this.costEstimate.set(null),
+      })
 
     this.urls = new FormControl('', {
       nonNullable: true,

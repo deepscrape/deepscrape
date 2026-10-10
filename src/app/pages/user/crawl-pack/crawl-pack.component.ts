@@ -43,13 +43,15 @@ export class CrawlPackComponent {
   ngOnInit(): void {
     //Called after the constructor, initializing input properties, and the first call to ngOnChanges.
     //Add 'implements OnInit' to the class.
-    // ['crawlpack', 'machines', 'browserconfig', 'crawlerconfig', 'crawlresults', 'extraction']
+    // The Machines tab moved to a top-level route (`/machines`, see
+    // `routes/user/main.route.ts`): the deploy console is not a crawl-pack setting,
+    // and its list now includes machines that browser sessions own.
+    // ['crawlpack', 'browserconfig', 'crawlerconfig', 'crawlresults', 'extraction']
 
     
 
     const newTabs: LinkTabs[] = [
       { label: 'Crawler Pack', active: false, icon: 'inventory_2', link: '', index: 'crawlpack' },
-      { label: 'Machines', active: false, icon: 'memory', link: 'machines', index: 'machines' },
       { label: 'Browser Configuration', icon: 'travel_explore', active: false, link: 'browser', index: 'browserconfig' },
       { label: 'Crawler Configuration', icon: 'tune', active: false, link: 'configuration', index: 'crawlerconfig' },
       { label: 'Crawler Results', icon: 'data_object', active: false, link: 'results', index: 'crawlresults' },

@@ -17,7 +17,7 @@ import { FormGroup, FormBuilder, FormsModule, ReactiveFormsModule, Validators } 
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { MatIcon } from '@angular/material/icon';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { CommonModule, JsonPipe, isPlatformBrowser } from '@angular/common';
+import { AsyncPipe, JsonPipe, NgClass, isPlatformBrowser } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
@@ -84,7 +84,7 @@ type loginCredentials = {
  */
 @Component({
   selector: 'app-login',
-  imports: [CommonModule, ReactiveFormsModule, FormsModule, RouterLink, MatProgressSpinner, MatIcon, TranslateModule],
+  imports: [AsyncPipe, NgClass, ReactiveFormsModule, FormsModule, RouterLink, MatProgressSpinner, MatIcon, TranslateModule],
   templateUrl: './login.component.html',
   styleUrl: './login.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -1,0 +1,9 @@
+<!--
+  The dot is decoration, so it is hidden from assistive tech; the translated state
+  text beside it carries the meaning. Colour is never the only signal.
+-->
+<span [class]="chipClass()">
+  <span class="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true"></span>
+  <span>{{ stateKey() | translate }}</span>
+  <span class="opacity-75">{{ modeKey() | translate }}</span>
+</span>

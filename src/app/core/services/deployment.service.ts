@@ -2,10 +2,11 @@ import { inject, Injectable } from '@angular/core';
 import { AnalyticsService } from './analytics.service';
 import { AuthService } from './auth.service';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { API_ARACHNEFLY_UPLOAD_URL, API_ARACHNEFLY_URL } from '../variables';
+import { API_ARACHNEFLY_URL } from '../variables';
 import { catchError } from 'rxjs/internal/operators/catchError';
 import { tap } from 'rxjs/internal/operators/tap';
 import { DockerImageInfo, FlyMachine, MachineResponse } from '../types';
+import { MineMachinesResponse } from '../types/machine-fleet.interface';
 import { Observable } from 'rxjs/internal/Observable';
 import { handleError } from '../functions';
 import { map } from 'rxjs/internal/operators/map';
@@ -18,6 +19,38 @@ export class DeploymentService {
   private readonly analyticsService = inject(AnalyticsService)
 
   constructor(private http: HttpClient, private authService: AuthService) { }
+
+  /**
+   * The caller's own machines, each marked with what it is for.
+   *
+   * A GET on `API_ARACHNEFLY_URL` itself, which is `/api/machines`. The route is
+   * served by the BFF rather than forwarded to arachnefly, because it reads this
+   * platform's Firestore -- and it is the ONLY machine call here that does.
+   *
+   * The result carries `kind`, and that field is the reason this method exists
+   * rather than the callable the list already used. The same subcollection holds
+   * two different things: containers the caller deployed, and machines their
+   * browser sessions own. They must not be offered the same actions, so the caller
+   * is TOLD which is which instead of inferring it from the `bs-` name prefix.
+   *
+   * Errors are rethrown rather than mapped: the two machines surfaces care about
+   * different statuses (this one is `paid + machine.read`, so 402 and 403 mean
+   * different things), and a blanket catch here would flatten them.
+   * @return {Observable<MineMachinesResponse>} The caller's machines.
+   */
+  listMine(): Observable<MineMachinesResponse> {
+    const url = `${API_ARACHNEFLY_URL}`
+    const headers = {
+      'Authorization': `Bearer ${this.authService.token}`,
+    }
+
+    return this.http.get<MineMachinesResponse>(url, { headers }).pipe(
+      catchError(error => {
+        console.error('Error listing machines:', error)
+        throw error
+      })
+    );
+  }
 
 
   /**
@@ -236,6 +269,36 @@ export class DeploymentService {
       .then(() => console.log('Stats metrics saved to Firebase'))
       .catch(error => console.error('Error saving stats metrics to Firebase:', error));
   } */
+
+  /**
+   * Runs a task inside a deployed container. Arachnefly replays the request onto
+   * the instance and forwards the payload, unchanged, to `/crawl` in the
+   * container — so the payload's shape is the deployed image's contract. The
+   * container has to be started first.
+   * @param {string} machineId - id of the started machine.
+   * @param {unknown} payload - JSON body handed to the container.
+   * @returns {Observable<any>} arachnefly's `{code,status,message,data}` envelope.
+   */
+  runTask(machineId: string, payload: unknown): Observable<any> {
+    // set headers
+    const headers = {
+      'Authorization': `Bearer ${this.authService.token}`,
+      'Content-Type': 'application/json',
+    }
+    const url = `${API_ARACHNEFLY_URL}/execute-task/${machineId}`
+
+    return this.http.post(url, payload ?? {}, { headers }).pipe(
+      tap((response: any) => {
+        console.log('Task executed:', response)
+        this.analyticsService.trackEvent('machine_task_executed', { machineId }).subscribe({ error: () => undefined })
+      }),
+      map((response: any) => response?.data),
+      catchError(error => {
+        console.error('Error in Execute Task API call:', error)
+        throw error
+      })
+    )
+  }
 
   destroy(machineId: string, force: boolean = false): Observable<any> {
     const url = `${API_ARACHNEFLY_URL}/machine/${machineId}`; // Replace with your API endpoint

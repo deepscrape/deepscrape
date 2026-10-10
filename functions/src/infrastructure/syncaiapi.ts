@@ -6,10 +6,16 @@
 import { NextFunction, Request, Response, Router } from "express"
 import {
     anthropicAICore, openaiAICore, groqAICore, jinaAICrawl,
-    arachnefly, scrapeMiddleware, webrainJobs,
+    arachnefly, scrapeMiddleware, webrainJobs, webrainSerp,
+    webrainScrape, webrainSearch, webrainExtract, webrainPdf,
+    monitorCreate, monitorList, monitorUpdate, monitorDelete,
+    monitorChecks,
+    getWebrainConfig, setWebrainToken, setWebrainProxies,
+    storageGetSettings, storageList, storagePresign, storageSave,
+    storageSetSettings,
 } from "../handlers"
 import { auth, db } from "../app/config"
-import { BillingSnapshot, getBillingAccessMode, resolveBillingPricingPolicy } from "../domain"
+import { BillingSnapshot, getBillingAccessMode, isChargeableAccessMode, resolveBillingPricingPolicy } from "../domain"
 import { consumeBillingCredits, releaseBillingCredits, reserveBillingCredits } from "../app/billing-credits"
 import { requirePermission } from "./authz.middleware"
 import { authErrorCode as getAuthErrorCode } from "./auth-error"
@@ -131,6 +137,69 @@ class ReverseAPIProxy {
     }
 
     /**
+     * resolveAccess
+     *
+     * Resolves `req.accessMode` for an authenticated caller WITHOUT requiring a
+     * paid plan, so one route can serve both tiers and let the per-tool
+     * allowlist (`decideWebrainTool`) make the real decision.
+     *
+     * Why this has to exist rather than a route that simply omits `paid`:
+     * `requirePaidAccess` is the only place `req.accessMode` is ever populated,
+     * and it 402s a free caller before reaching that assignment. Omitting it
+     * therefore leaves `accessMode` undefined, which fails CLOSED at
+     * `webrainTierFor` (undefined -> "free" -> strictest allowlist) — safe, but
+     * it also means a genuinely PAYING caller gets served the free tier and
+     * silently loses tools they paid for. Resolving here keeps the entitlement
+     * decision in one place instead of resting on whether each route remembered
+     * to gate.
+     *
+     * Authorization is untouched: the permission layer already admits free
+     * users (`POLICIES.self` grants `ai.execute` and `crawl.execute`), so this
+     * only removes the billing block. Scope stays with `perm(...)` in the
+     * route's own guard.
+     *
+     * Charges nothing. The tools this fronts are stateless, and their cost does
+     * not scale with payload, so there is no credit to reserve. A route that
+     * SHOULD bill a paid caller composes the charge path explicitly rather than
+     * inheriting it from here.
+     * @param {*} req
+     * @param {*} res
+     * @param {*} next
+     */
+    async resolveAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
+        const uid = req.user?.uid
+        if (!uid) {
+            res.status(401).json({ error: "unauthorized", code: "unauthorized" })
+            return
+        }
+
+        if (isPlatformAdminRequest(req)) {
+            // Same as the paid path: one decision, shared with whatever runs
+            // after it, so the scrape-provider resolver cannot disagree.
+            req.accessMode = "admin"
+            next()
+            return
+        }
+
+        try {
+            const billingSnap = await db.doc(`users/${uid}/billing/current`).get()
+
+            // `data()` is undefined for a missing document, and
+            // `getBillingAccessMode` accepts undefined and reads it as free —
+            // which is what a fresh account is. Calling it the same way the
+            // paid path does is what keeps the two from disagreeing about
+            // "free".
+            const billing = billingSnap.data() as BillingSnapshot | undefined
+
+            req.accessMode = getBillingAccessMode(billing)
+            next()
+        } catch (error) {
+            console.error("Access resolution failed:", error)
+            res.status(500).json({ error: "internal", code: "internal" })
+        }
+    }
+
+    /**
      * requirePaidAccess
      * @param {*} req
      * @param {*} res
@@ -167,7 +236,7 @@ class ReverseAPIProxy {
 
                 if (accessMode !== "free") {
                     const policy = resolveBillingPricingPolicy(req.method, req.path)
-                    const shouldCharge = policy.credits > 0 && (accessMode === "credits" || accessMode === "plan")
+                    const shouldCharge = policy.credits > 0 && isChargeableAccessMode(accessMode)
 
                     let chargeContext: BillingChargeContext | null = null
 
@@ -259,7 +328,13 @@ class ReverseAPIProxy {
                      */
                     res.once("finish", () => {
                         const success = res.statusCode >= 200 && res.statusCode < 400
-                        void settleCharge(success)
+                        // RETURNED rather than `void`ed so a host that awaits its
+                        // listeners commits the ledger before answering. The BFF's
+                        // bridge does await them; Cloud Run can freeze an instance
+                        // the moment the response goes out, and a settlement still
+                        // in flight then is simply lost — leaving the reservation
+                        // standing and the customer short of credits.
+                        return settleCharge(success)
                     })
 
                     /**
@@ -267,8 +342,10 @@ class ReverseAPIProxy {
                      */
                     res.once("close", () => {
                         if (!res.writableEnded) {
-                            void settleCharge(false)
+                            return settleCharge(false)
                         }
+
+                        return undefined
                     })
 
                     next()
@@ -888,6 +965,17 @@ class ReverseAPIProxy {
         this.router.get("/orgs/invitations/me", requirePermission("organization", "read"), this.listMyInvitations)
         this.router.get("/orgs/:orgId/invitations", requirePermission("organization", "invite"), this.listOrgInvitations)
 
+        /**
+         * Monitors — `GET /monitor/list` and `GET /monitor/checks`.
+         *
+         * `resolveAccess`, not `requirePaidAccess`: see the POST block below for
+         * why the whole monitor surface is free-resolving. `crawl.execute` is
+         * granted to `self` (domain/authz.domain.ts), so this removes the billing
+         * block and not the scope check.
+         */
+        this.router.get("/monitor/list", this.resolveAccess, requirePermission("crawl", "execute"), monitorList)
+        this.router.get("/monitor/checks", this.resolveAccess, requirePermission("crawl", "execute"), monitorChecks)
+
         /* Jina AI */
         this.router.get("/jina/:url", this.requirePaidAccess, requirePermission("ai", "execute"), jinaAICrawl)
 
@@ -903,6 +991,17 @@ class ReverseAPIProxy {
 
         // wait for a machine to stabilize a specific state and return the machine details
         this.router.get("/machines/machine/waitforstate/:machineId", this.requirePaidAccess, requirePermission("machine", "read"), arachnefly.waitForState)
+
+        /**
+         * The webrain configuration — platform admin only.
+         *
+         * `requirePermission("platform", ...)` IS the admin gate: no role in
+         * `POLICIES` is granted `platform`, so the only path through
+         * `canPerform` is the platform-admin short-circuit. No billing gate
+         * belongs here — the route spends no credits, it reads a credential the
+         * platform owns. The handler reports presence, never the value.
+         */
+        this.router.get("/webrain/config", requirePermission("platform", "read"), getWebrainConfig)
 
 
         /**
@@ -923,12 +1022,32 @@ class ReverseAPIProxy {
          * a job is the same capability spent in a batch.
          */
         this.router.post("/crawl/stream/job", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.multiCrawlEnqueue)
+        // The seeder's enqueue only; its status/results/cancel are the crawl
+        // job's routes (the client rewrites `/seeder` to `/job`).
+        this.router.post("/seeder/stream/job/multi-research", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.multiSeedEnqueue)
 
         this.router.get("/job/stream/status/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.getTaskStatus)
         this.router.get("/crawl/stream/job/status/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.getTaskStatus)
 
         this.router.get("/job/stream/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.streamTaskResults)
         this.router.get("/crawl/stream/job/:taskId", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.streamTaskResults)
+
+        /**
+         * Stored artifacts — the shared URL cache and the caller's own objects.
+         *
+         * No `requirePaidAccess` and no `resolveAccess`: this surface spends no
+         * credit and reads no billing document, so it must not require an
+         * entitlement to resolve. The gate is `storage.read`/`storage.write`,
+         * granted to `self` ONLY (domain/authz.domain.ts) — and
+         * `requirePermission` derives ownerId from the VERIFIED token, which is
+         * what keeps one caller's objects out of another caller's list.
+         *
+         * Which tier an object goes to is NOT decided here: the handler asks
+         * `decideStorageScope` once and returns the chosen scope in the
+         * response, so the same answer is produced on both hosts.
+         */
+        this.router.get("/storage/list", requirePermission("storage", "read"), storageList)
+        this.router.get("/storage/settings", requirePermission("storage", "read"), storageGetSettings)
 
         this.router.put("/job/:taskId/cancel", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.cancelTask)
         this.router.put("/crawl/job/:tempTaskId/cancel", this.requirePaidAccess, requirePermission("crawl", "execute"), webrainJobs.cancelTask)
@@ -958,6 +1077,59 @@ class ReverseAPIProxy {
         // no longer names crawl4ai — switching to webrain is config, not an edit here.
         this.router.post("/crawl", this.requirePaidAccess, requirePermission("crawl", "execute"), scrapeMiddleware)
 
+        /**
+         * Free-tier structured search (`webrain_serp`).
+         *
+         * `resolveAccess`, NOT `requirePaidAccess`, and that is the whole point:
+         * `requirePaidAccess` is the only place `req.accessMode` is otherwise
+         * populated, and it 402s a free caller before reaching that assignment.
+         * Resolving here lets one route serve both tiers and leaves the per-tool
+         * decision to `decideWebrainTool`'s allowlist inside the call — the
+         * free/paid boundary lives in domain/webrain-tools.domain.ts, not in a
+         * route guard, deliberately.
+         *
+         * Authorization is unchanged: the router is mounted behind `isJwtAuth`,
+         * and `crawl.execute` is granted to `self` (domain/authz.domain.ts), which
+         * is what a normal user resolves to. This removes the billing block, not
+         * the scope check.
+         */
+        this.router.post("/serp", this.resolveAccess, requirePermission("crawl", "execute"), webrainSerp)
+
+        /**
+         * The other four free-tier webrain routes.
+         *
+         * Same guard as `/serp`, for the same reason: `resolveAccess` populates
+         * `req.accessMode` without 402-ing a free caller, and the per-tool
+         * decision stays with `decideWebrainTool`'s allowlist
+         * (domain/webrain-tools.domain.ts) rather than being duplicated into a
+         * route guard. Each handler refuses the worker arguments that are not the
+         * worker's (`limit` on search, `url` on extract and pdf) with a 400 that
+         * names the real field.
+         */
+        this.router.post("/scrape", this.resolveAccess, requirePermission("crawl", "execute"), webrainScrape)
+        this.router.post("/search", this.resolveAccess, requirePermission("crawl", "execute"), webrainSearch)
+        this.router.post("/extract", this.resolveAccess, requirePermission("crawl", "execute"), webrainExtract)
+        this.router.post("/pdf", this.resolveAccess, requirePermission("crawl", "execute"), webrainPdf)
+
+        /**
+         * Monitors — create, update, delete.
+         *
+         * Free-resolving on purpose. A monitor is one bounded, infrequent read of
+         * one page, the same cost class as a search, and `requirePaidAccess` is
+         * the ONLY place `req.accessMode` is otherwise set — gating here would
+         * 402 a free caller before the entitlement was resolved at all. What
+         * bounds a free account is `MONITOR_MAX_PER_USER`, enforced in the
+         * handler, because the resource being protected is the shared worker pool
+         * rather than revenue.
+         *
+         * `update` and `delete` are POSTs rather than PUT/DELETE because the
+         * surface is registered identically on the Elysia host, where the client
+         * already speaks these four paths.
+         */
+        this.router.post("/monitor/create", this.resolveAccess, requirePermission("crawl", "execute"), monitorCreate)
+        this.router.post("/monitor/update", this.resolveAccess, requirePermission("crawl", "execute"), monitorUpdate)
+        this.router.post("/monitor/delete", this.resolveAccess, requirePermission("crawl", "execute"), monitorDelete)
+
         // Enqueue a stream Crawl Task
         // this.router.post("/crawl/stream/job", crawlagent.multiCrawlEnqueue)
 
@@ -966,6 +1138,28 @@ class ReverseAPIProxy {
         // Deploy a new Machine
         this.router.post("/machines/deploy", this.requirePaidAccess, requirePermission("machine", "deploy"), arachnefly.deployMachine)
         // this.router.post('/api/machines/logs', receiveLogs)
+
+        /**
+         * The webrain configuration writes — platform admin only, the same
+         * `platform` gate as the GET above. Both go through
+         * `saveWebrainConfig`, which drops the store's 30s cache, so a rotation
+         * or a pool swap is visible on the next request rather than the next
+         * deploy. A token is echoed ONLY when this call minted it.
+         */
+        this.router.post("/webrain/config/token", requirePermission("platform", "write"), setWebrainToken)
+        this.router.post("/webrain/config/proxies", requirePermission("platform", "write"), setWebrainProxies)
+
+        /**
+         * Stored artifacts — the writes. Same gate rationale as the GETs above:
+         * no billing block, and `storage.write` resolves only through `self`,
+         * which `requirePermission` derives from the verified token.
+         *
+         * `presign` carries `storage.read`, not `storage.write`: it mints a URL
+         * for one object the caller may already read. It changes nothing.
+         */
+        this.router.post("/storage/save", requirePermission("storage", "write"), storageSave)
+        this.router.post("/storage/presign", requirePermission("storage", "read"), storagePresign)
+        this.router.post("/storage/settings", requirePermission("storage", "write"), storageSetSettings)
     }
 
     /**

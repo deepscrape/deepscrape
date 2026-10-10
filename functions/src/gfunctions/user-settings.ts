@@ -36,7 +36,12 @@
  */
 import { HttpsError } from "firebase-functions/v2/https"
 import { guardedOnCall as onCall } from "../infrastructure/callable-limiter"
-import { db } from "../app/config"
+import {
+  db,
+  getSecretFromManager,
+  purgeSecretAndAllRevisions,
+  upsertSecretValue,
+} from "../app/config"
 import { getBillingAccessMode } from "../domain/billing.domain"
 import {
   readStoredProvider,
@@ -132,8 +137,85 @@ export const readUserAiKey = async (
   if (!snapshot.exists) {
     return null
   }
-  const value = (snapshot.data() ?? {})[vendor]
+
+  const entry = (snapshot.data() ?? {})[vendor]
+
+  // A STRING here is the legacy layout: the field value WAS the key. Migrate it
+  // on read so an existing user keeps a working key without re-entering it, and
+  // rewrite the field as metadata so this branch runs at most once per vendor.
+  if (typeof entry === "string" && entry.length > 0) {
+    await migrateLegacyKey(uid, vendor, entry)
+    return entry
+  }
+
+  const secretPath = secretPathOf(entry)
+  if (!secretPath) {
+    return null
+  }
+
+  // A path that resolves to nothing means the secret was purged while the
+  // metadata survived; report absence rather than an empty credential, so the
+  // caller falls back to the platform key instead of sending an empty header.
+  const value = await getSecretFromManager(secretPath)
   return typeof value === "string" && value.length > 0 ? value : null
+}
+
+/**
+ * The Secret Manager secret id for one user's key for one vendor.
+ *
+ * Deterministic, so a save and a later read agree without storing the name
+ * twice, and scoped by uid so one account's secret is not reachable from
+ * another's request. The uid comes from the verified token and never from a
+ * request body, which is what makes the scoping real rather than decorative.
+ * @param {*} uid
+ * @param {*} vendor
+ * @return {*}
+ */
+const aiKeySecretId = (uid: string, vendor: AiVendorId): string =>
+  `ai-key-${uid}-${vendor}`
+
+/** The secret path recorded as metadata, or null for any other shape.
+ * @param {*} entry
+ * @return {*}
+ */
+const secretPathOf = (entry: unknown): string | null => {
+  if (!entry || typeof entry !== "object") {
+    return null
+  }
+  const path = (entry as { secretPath?: unknown }).secretPath
+  return typeof path === "string" && path.length > 0 ? path : null
+}
+
+/**
+ * Move a legacy plaintext key into Secret Manager.
+ *
+ * Best-effort on purpose: the caller must still receive the key they already
+ * stored even if the migration cannot run, so a failure is logged and the read
+ * continues. The plaintext field is only overwritten AFTER the secret write
+ * succeeds, so a failed migration cannot leave the account with no usable key.
+ * @param {*} uid
+ * @param {*} vendor
+ * @param {*} value
+ */
+const migrateLegacyKey = async (
+  uid: string,
+  vendor: AiVendorId,
+  value: string
+): Promise<void> => {
+  try {
+    const secretPath = await upsertSecretValue(
+      aiKeySecretId(uid, vendor),
+      value
+    )
+    await aiKeysRef(uid).set(
+      { [vendor]: { secretPath, updatedAt: Date.now() } },
+      { merge: true }
+    )
+  } catch (error) {
+    // The message only, and never the value: this catch exists so a migration
+    // outage degrades to "still reads the old field", not to a lost key.
+    console.error("AI key migration failed:", (error as Error).message)
+  }
 }
 
 /**
@@ -243,7 +325,18 @@ export const setMyAiKey = onCall(OPTIONS, async (request) => {
     )
   }
 
-  await aiKeysRef(uid).set({ [vendor]: key.trim() }, { merge: true })
+  // The value goes to Secret Manager; Firestore keeps only WHERE it lives, so a
+  // document read can no longer yield a credential. `merge` preserves the other
+  // vendors' entries in the same document.
+  const secretPath = await upsertSecretValue(
+    aiKeySecretId(uid, vendor),
+    key.trim()
+  )
+
+  await aiKeysRef(uid).set(
+    { [vendor]: { secretPath, updatedAt: Date.now() } },
+    { merge: true }
+  )
 
   return { vendor, hasKey: true }
 })
@@ -268,6 +361,16 @@ export const clearMyAiKey = onCall(OPTIONS, async (request) => {
     return { vendor, hasKey: false }
   }
 
+  // Destroy the value rather than merely forgetting its address: an
+  // unreferenced secret version is still readable by anything holding secret
+  // access, and the user asked for the key to be gone. A legacy plaintext entry
+  // has no secret yet, so there is nothing to purge and the field delete below
+  // is the whole removal.
+  const secretPath = secretPathOf((snapshot.data() ?? {})[vendor])
+  if (secretPath) {
+    await purgeSecretAndAllRevisions(secretPath)
+  }
+
   // Field deletion rather than a null value: a null would still read as "a key
   // is
   // present" to any presence check, including `mappedVendorIds` above.
@@ -276,3 +379,95 @@ export const clearMyAiKey = onCall(OPTIONS, async (request) => {
 
   return { vendor, hasKey: false }
 })
+
+/** Notification preferences this callable may write. */
+const WRITABLE_NOTIFICATION_PREFERENCES = ["spendCapEmail"] as const
+
+type WritableNotificationPreference =
+  (typeof WRITABLE_NOTIFICATION_PREFERENCES)[number]
+
+/**
+ * Narrows a caller-supplied preference key to the allowlist.
+ *
+ * An allowlist and not a passthrough: without it this callable would let a
+ * caller write an arbitrary field into their own user document, which is a
+ * privilege the client must not have.
+ * @param {*} value Candidate key from the request body.
+ * @return {boolean} True when the key may be written.
+ */
+const isWritableNotificationPreference = (
+  value: unknown
+): value is WritableNotificationPreference =>
+  typeof value === "string" &&
+  (WRITABLE_NOTIFICATION_PREFERENCES as readonly string[]).includes(value)
+
+/**
+ * The caller's notification preferences, with defaults applied.
+ *
+ * The default lives here, server-side and in one place, because the client
+ * and the alert fan-out must agree on what "unset" means. `spendCapEmail`
+ * defaults to FALSE: it is an opt-in, so an absent field is a user who never
+ * asked for mail, not a user who asked and was ignored.
+ * @param {*} request The callable request.
+ * @return {Promise<*>} The preference bag.
+ */
+export const getMyNotificationPreferences = onCall(
+  OPTIONS,
+  async (request) => {
+    const uid = requireUid(request)
+    const snapshot = await db.collection("users").doc(uid).get()
+    const stored = (snapshot.data()?.notifications as {
+      preferences?: Record<string, unknown>
+    } | undefined)?.preferences
+    return {
+      preferences: {
+        spendCapEmail: stored?.spendCapEmail === true,
+      },
+    }
+  }
+)
+
+/**
+ * Stores one notification preference for the caller.
+ *
+ * `merge: true` is what makes this safe per-key: Firestore merges nested maps
+ * field by field, so writing `spendCapEmail` cannot drop the caller's other
+ * preferences, nor the `securityAlerts` and `emailNotifications` flags that
+ * sit beside them in `notifications`. A whole-object replace would silently
+ * discard everything the user had set through any other surface.
+ *
+ * The uid comes from the verified token ONLY, never the body.
+ * @param {*} request The callable request.
+ * @return {Promise<*>} The stored key and value.
+ */
+export const setMyNotificationPreference = onCall(
+  OPTIONS,
+  async (request) => {
+    const uid = requireUid(request)
+    const data = request.data as
+      | { key?: unknown; enabled?: unknown }
+      | undefined
+    const key = data?.key
+    const enabled = data?.enabled
+
+    if (!isWritableNotificationPreference(key)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Unknown notification preference."
+      )
+    }
+    if (typeof enabled !== "boolean") {
+      throw new HttpsError(
+        "invalid-argument",
+        "A preference must be true or false."
+      )
+    }
+
+    await db.collection("users").doc(uid).set(
+      { notifications: { preferences: { [key]: enabled } } },
+      { merge: true }
+    )
+
+    return { key, enabled }
+  }
+)

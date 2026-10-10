@@ -288,6 +288,26 @@ async function deleteEmulatorSecret(
 }
 
 
+/**
+ * secretPathFor
+ *
+ * The path a named secret lives at in the running environment.
+ *
+ * `getSecretFromManager` and `purgeSecretAndAllRevisions` take a PATH, and the
+ * emulator answers a different scheme than production, so the choice is made
+ * here once instead of being copied by every caller that knows a secret by
+ * name rather than by the path it stored.
+ * @param {string} secretId The bare secret id, e.g. "WEBRAIN_CONFIG".
+ * @return {string} The path to hand to the secret helpers.
+ */
+export function secretPathFor(secretId: string): string {
+    if (env.IS_EMULATOR) {
+        return toEmulatorSecretPath(secretId)
+    }
+
+    return `projects/${env.GCP_PROJECT_ID}/secrets/${secretId}`
+}
+
 // Helper: Store API key in Cloud Secret Manager
 /**
  * saveToSecretManager
@@ -341,6 +361,79 @@ export async function saveToSecretManager(
     }) */
 
     return secret.name
+}
+
+/** gRPC NOT_FOUND, what Secret Manager answers for an absent secret. */
+const SECRET_NOT_FOUND = 5
+
+/**
+ * upsertSecretValue
+ *
+ * Why this exists beside `saveToSecretManager` rather than replacing it:
+ * `saveToSecretManager` calls `createSecret`, which answers an existing id with
+ * `ALREADY_EXISTS`. That is fine for a mint-once platform key, but rotating a
+ * BYOK key is a normal user action, and the second save of the same key would
+ * fail where the first succeeded. This tries to add a version first and only
+ * creates the secret when it is genuinely absent, so it is safe to call on
+ * every save.
+ *
+ * Version growth is deliberate: each save adds a version and
+ * `getSecretFromManager` reads `/versions/latest`, so an older version is inert
+ * but still readable by anything holding secret access -- the same trust level
+ * as this server. `purgeSecretAndAllRevisions` is what clears them, via
+ * `clearMyAiKey`.
+ * ponytail: old versions are not destroyed on rotate. Add a destroy-older pass
+ * here if a project-level reader is ever considered untrusted.
+ * @param {*} secretId
+ * @param {*} value
+ * @return {*} The full secret path, for the caller to store as metadata.
+ */
+export async function upsertSecretValue(
+    secretId: string,
+    value: string
+): Promise<string> {
+    if (!secretId) {
+        throw new Error("secretId is required")
+    }
+
+    if (env.IS_EMULATOR) {
+        return saveEmulatorSecret(secretId, value)
+    }
+
+    const secretPath = `projects/${env.GCP_PROJECT_ID}/secrets/${secretId}`
+
+    try {
+        await secretManager.addSecretVersion({
+            parent: secretPath,
+            payload: {
+                data: Buffer.from(value, "utf8"),
+            },
+        })
+        return secretPath
+    } catch (error) {
+        if ((error as { code?: number }).code !== SECRET_NOT_FOUND) {
+            throw error
+        }
+    }
+
+    const [secret] = await secretManager.createSecret({
+        parent: `projects/${env.GCP_PROJECT_ID}`,
+        secretId,
+        secret: {
+            replication: {
+                automatic: {},
+            },
+        },
+    })
+
+    await secretManager.addSecretVersion({
+        parent: secret.name,
+        payload: {
+            data: Buffer.from(value, "utf8"),
+        },
+    })
+
+    return secret.name ?? secretPath
 }
 
 /**

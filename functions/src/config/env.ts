@@ -161,6 +161,13 @@ const getEnv = () => {
     COOKIE_SECRET: getConfigValue("COOKIE_SECRET"),
     CSRF_COOKIE_SECRET: getConfigValue("CSRF_COOKIE_SECRET"),
     DB_NAME: getConfigValue("DB_NAME", "easyscrape"),
+    // Cloud Storage bucket for the artifact cache (`/api/storage/*`). Empty
+    // means "let the Admin SDK choose", which resolves to
+    // `${GCP_PROJECT_ID}.appspot.com` -- see
+    // `infrastructure/firebase-blob-store.ts`. It has no default on purpose: a
+    // bucket name is a deployment fact, and a wrong default is a bucket
+    // silently written to that nobody chose.
+    STORAGE_BUCKET: getConfigValue("STORAGE_BUCKET", ""),
     IS_EMULATOR: parseBoolean(process.env["FUNCTIONS_EMULATOR"], false) || !!process.env["FIREBASE_EMULATOR_HUB"],
     DOTENV_PRIVATE_KEY: getConfigValue("DOTENV_PRIVATE_KEY"),
     PORT: parseInt(getConfigValue("PORT", "4000"), 10),
@@ -193,7 +200,86 @@ const getEnv = () => {
     // local-stdio default. On the shared free-tier pool it must be set, as
     // defence in depth behind the gateway — it is NOT a tenancy boundary.
     WEBRAIN_MCP_URL: getConfigValue("WEBRAIN_MCP_URL", ""),
-    WEBRAIN_MCP_TOKEN: getConfigValue("WEBRAIN_MCP_TOKEN"),
+    // ONE value, ONE name to rotate. `WEBRAIN_HTTP_TOKEN` is the ENGINE's own
+    // name: it is the fly secret on `deepscrape-webrain`, the variable
+    // `deploy/browser-session/entrypoint.sh` refuses to start without, and what
+    // `BuildConfigMap` writes into every session machine's `config.env`. So that
+    // is the name read FIRST — the same precedence `AWS_*` gets over `TIGRIS_*`
+    // above, and for the same reason: one credential, one rotation, in both
+    // services. `WEBRAIN_MCP_TOKEN` is kept as a fallback so an existing
+    // deployment does not 401 on the next release. The two names diverging is
+    // not a cosmetic problem: a mismatch is a 401 on every webrain call, which
+    // surfaces as "search is broken".
+    WEBRAIN_MCP_TOKEN: getConfigValue("WEBRAIN_HTTP_TOKEN") ||
+      getConfigValue("WEBRAIN_MCP_TOKEN"),
+
+    // The container image a dedicated browser session's machine runs.
+    //
+    // No default, for the same reason `WEBRAIN_MCP_URL` has none: a new provider
+    // must not inherit "some image is assumed", which is how a deployment ends up
+    // running something nobody chose. The manual `/machines/deploy` path takes
+    // `defaultImage` from the CALLER, so it can never owe an answer here; a
+    // browser session is the platform's own choice, and an empty value makes the
+    // choice explicit by refusing the session instead of picking for the caller.
+    BROWSER_MACHINE_IMAGE: getConfigValue("BROWSER_MACHINE_IMAGE", ""),
+    // Where a browser machine is placed. Arachnefly already falls back to `iad`
+    // when the value is not a 3-letter region, so this mirrors that rather than
+    // inventing a different default that would silently disagree with it.
+    BROWSER_MACHINE_REGION: getConfigValue("BROWSER_MACHINE_REGION", "iad"),
+
+    // Tigris (S3-compatible) object storage — the artifact bucket behind
+    // `/api/storage/*` and the BYOB path.
+    //
+    // Why Tigris rather than the GCS bucket this used to be: storage costs
+    // the same ($0.02/GB) on both, but GCS bills egress (~$0.12/GB) and
+    // Tigris does not. Monitor history is re-read on every panel open and
+    // every diff check, so egress is the cost that scales with our access
+    // pattern and it is the only field where the two differ. See
+    // `infrastructure/s3-blob-store.ts` for the full rationale — that adapter IS
+    // the Tigris one. (This comment used to name `tigris-blob-store.ts`, a file
+    // that has never existed.)
+    //
+    // PUBLIC vs PRIVATE, and this distinction is load-bearing:
+    // `image-cdn-a.deepscrape.dev` is a PUBLIC asset CDN. It is NOT this
+    // bucket and must never be. A public bucket serves any object to anyone
+    // holding the key, which would defeat `domain/storage-scope.domain.ts`
+    // entirely -- bucket policy outranks application logic. This bucket stays
+    // private and is reached only through short-lived presigned URLs.
+    //
+    // Empty `TIGRIS_BUCKET` means "not configured", and the platform store
+    // then falls back to GCS rather than failing -- so a deployment that has
+    // not migrated yet keeps working, and one that has pays no egress.
+    TIGRIS_BUCKET: getConfigValue("TIGRIS_BUCKET", ""),
+    // The global Tigris S3 endpoint. Not a per-region URL: Tigris exposes one
+    // endpoint and routes internally. IAM lives at iam.storage.dev and is a
+    // different host, used only by the console/CLI.
+    // The S3 endpoint. Read under the AWS SDK's own name FIRST, because that is
+    // the name the rest of this platform already uses -- `crawlagent/storage.py`
+    // reads `AWS_ENDPOINT_URL_S3` -- so one value configures both services and
+    // there is no second copy to keep in step. `TIGRIS_ENDPOINT` stays as the
+    // fallback, so an existing deployment needs no change. Not a per-region URL:
+    // Tigris exposes one endpoint and routes internally. IAM lives at
+    // iam.storage.dev and is a different host, used only by the console/CLI --
+    // nothing in this service performs an IAM call.
+    TIGRIS_ENDPOINT: getConfigValue("AWS_ENDPOINT_URL_S3") ||
+      getConfigValue("TIGRIS_ENDPOINT", "https://t3.storage.dev"),
+    // Tigris uses the literal region name `auto`, so that is the last resort.
+    // `AWS_REGION` is accepted first for the same reason as the endpoint above.
+    TIGRIS_REGION: getConfigValue("AWS_REGION") ||
+      getConfigValue("TIGRIS_REGION", "auto"),
+    // A `tid_...` / `tsec_...` pair. Tigris supports access keys ONLY --
+    // no AssumeRole, no STS, no temporary credentials -- so these are
+    // long-lived and must be rotated on a schedule.
+    //
+    // Read under the AWS SDK names first, for the reason the endpoint above
+    // gives -- and here it MATTERS. The same credential has to exist in this
+    // service and in crawlagent, and under two different names that is two
+    // secrets to rotate, plus a mismatch whose symptom is a signing failure
+    // rather than a missing setting. One name, one rotation.
+    TIGRIS_ACCESS_KEY_ID: getConfigValue("AWS_ACCESS_KEY_ID") ||
+      getConfigValue("TIGRIS_ACCESS_KEY_ID"),
+    TIGRIS_SECRET_ACCESS_KEY: getConfigValue("AWS_SECRET_ACCESS_KEY") ||
+      getConfigValue("TIGRIS_SECRET_ACCESS_KEY"),
 
     // QStash — the job queue. These ARE runtime secrets: the service publishes
     // work and verifies the signature on the delivery endpoint, so unlike the Box
@@ -212,10 +298,12 @@ const getEnv = () => {
     QSTASH_CURRENT_SIGNING_KEY: getConfigValue("QSTASH_CURRENT_SIGNING_KEY"),
     QSTASH_NEXT_SIGNING_KEY: getConfigValue("QSTASH_NEXT_SIGNING_KEY"),
 
-    // Which provider `/api/crawl` uses: 'crawl4ai' (the default) or 'webrain'.
-    // The default keeps an unconfigured deployment byte-for-byte as it was, so
-    // turning webrain on is a config change and turning it back off is too.
-    SCRAPE_PROVIDER: getConfigValue("SCRAPE_PROVIDER", "crawl4ai"),
+    // Which provider `/api/crawl` uses: 'webrain' (the default) or 'crawl4ai'.
+    // The default IS webrain, so an unconfigured deployment runs the current
+    // engine; selecting 'crawl4ai' is the opt-out and is what the legacy path
+    // expects. (This comment used to claim crawl4ai was the default while the
+    // code said otherwise.)
+    SCRAPE_PROVIDER: getConfigValue("SCRAPE_PROVIDER", "webrain"),
 
     // Third-party API Keys
     JINAAI_API_KEY: getConfigValue("JINAAI_API_KEY"),

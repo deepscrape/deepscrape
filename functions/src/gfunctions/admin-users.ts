@@ -41,6 +41,7 @@ import {
   db,
   getStripe,
   purgeSecretAndAllRevisions,
+  secretPathFor,
   stripeSecrets,
 } from "../app/config"
 import {redisEval} from "../app/cacheConfig"
@@ -49,6 +50,8 @@ import {guardedOnCall as onCall} from "../infrastructure/callable-limiter"
 import {validateCallableData} from "../infrastructure/validate"
 import {clearAccountDeletion, markAccountDeleted} from "../infrastructure/account-tombstone"
 import {renderEmail, renderEmailText, sendEmail} from "../infrastructure/email"
+import {purgeAccountBlobs} from "../infrastructure/blob-purge"
+import {accountSecrets} from "../domain/account-secrets.domain"
 import {canPerform} from "../domain/authz.domain"
 import {
   DELETION_CONFIRMATION_CODE_LENGTH,
@@ -883,9 +886,20 @@ export const adminListUsers = onCall(ADMIN_CALLABLE_OPTIONS, async (request) => 
 
   const {search, pageSize, lastDocId, filter} = validateCallableData(
     z.object({
-      search: z.string().max(200).optional(),
-      pageSize: z.number().int().min(1).max(100).default(25),
-      lastDocId: z.string().max(128).optional(),
+      search: z.string().max(200).nullable().optional(),
+      pageSize: z.union([z.number(), z.string()])
+        .transform((val) => {
+          if (typeof val === "undefined") {
+            return 25
+          }
+          if (typeof val === "string") {
+            const num = Number(val)
+            return isNaN(num) ? 25 : Math.floor(num)
+          }
+          return Math.floor(val)
+        })
+        .pipe(z.number().int().min(1).max(100)),
+      lastDocId: z.string().max(128).nullable().optional(),
       filter: z.enum(["all", "banned", "deleted", "admins"]).default("all"),
     }),
     request.data ?? {},
@@ -1320,6 +1334,27 @@ export const adminCancelAccountDeletion = onCall(ADMIN_CALLABLE_OPTIONS, async (
 // ---------------------------------------------------------------------------
 
 /**
+ * True when a purge failed only because the secret does not exist.
+ *
+ * `purgeSecretAndAllRevisions` calls `listSecretVersions` first, which THROWS
+ * NOT_FOUND for a secret that was never created -- and the ids from
+ * `accountSecrets` are returned for every account, so "absent" is the ORDINARY
+ * case here rather than an anomaly. Reporting it as CRITICAL would put a
+ * permanent alarm on every purge and teach an operator to ignore the one that
+ * does matter.
+ *
+ * Three spellings, because the client reports the code differently across
+ * transports: 5 is gRPC NOT_FOUND, 404 is its HTTP form, and the string form
+ * appears once an error has been serialised.
+ * @param {*} error The caught error.
+ * @return {boolean} True when the secret simply does not exist.
+ */
+const isSecretNotFound = (error: unknown): boolean => {
+  const code = (error as {code?: unknown})?.code
+  return code === 5 || code === 404 || code === "NOT_FOUND"
+}
+
+/**
  * Recover the Secret Manager paths for an account's API keys.
  *
  * Must run before the subcollections are deleted: once `apikeys` is gone, the paths to
@@ -1359,16 +1394,29 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
   uid: string
   collectionsDeleted: string[]
   secretsPurged: number
+  blobsDeleted: number
   authDeleted: boolean
 }> {
   const userRef = db.collection("users").doc(uid)
 
-  const [userSnapshot, secretPaths] = await Promise.all([
+  const [userSnapshot, storedPaths] = await Promise.all([
     userRef.get(),
     collectApiKeySecretPaths(uid),
   ])
 
   const userData = userSnapshot.data() as UserDoc
+
+  // Two sources, and BOTH are needed. `apikeys` is data-driven: a BYOK AI key has
+  // no derivable id, so its `secretPath` is the only record of it and has to be
+  // read before the subcollections go. The rest are derived from the uid by
+  // `accountSecrets`, and that is what catches `storage-byob-<uid>` and
+  // `browser-cdp-<uid>` -- recorded as a path ON a subcollection document, so the
+  // sweep below removes the pointer and would otherwise leave the live credential
+  // behind. See `domain/account-secrets.domain.ts`.
+  const secretPaths = [
+    ...storedPaths,
+    ...accountSecrets(uid).map((secret) => secretPathFor(secret.id)),
+  ]
 
   let secretsPurged = 0
   for (const secretPath of secretPaths) {
@@ -1376,10 +1424,26 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
       await purgeSecretAndAllRevisions(secretPath)
       secretsPurged += 1
     } catch (error) {
+      if (isSecretNotFound(error)) {
+        continue
+      }
       // A secret that cannot be purged is a dangling credential — worth a loud log, but
       // not a reason to abandon the erasure of everything else.
       console.error(`CRITICAL: failed to purge secret ${secretPath} for deleted account ${uid}:`, error)
     }
+  }
+
+  // Objects, swept by the DERIVED namespace prefix, so nothing here reads
+  // Firestore and a lost pointer cannot hide a blob — the same property the
+  // derived secret ids have. Best-effort, like the secrets above: an object
+  // store outage must not block the erasure of everything else. Only the
+  // PLATFORM bucket is swept; see `infrastructure/blob-purge.ts` for why a
+  // caller's own bucket is left alone.
+  let blobsDeleted = 0
+  try {
+    blobsDeleted = await purgeAccountBlobs(uid)
+  } catch (error) {
+    console.error(`CRITICAL: failed to purge blobs for deleted account ${uid}:`, error)
   }
 
   // Enumerate rather than denylist: any subcollection this account owns that is not
@@ -1433,13 +1497,14 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
       purgedAt: Timestamp.fromDate(now),
       collectionsDeleted,
       secretsPurged,
+      blobsDeleted,
       retentionScrubbedAt: Timestamp.fromDate(now),
       originalEmail: null,
       originalUsername: null,
     }, {merge: true})
   }
 
-  return {uid, collectionsDeleted, secretsPurged, authDeleted}
+  return {uid, collectionsDeleted, secretsPurged, blobsDeleted, authDeleted}
 }
 
 /**
@@ -1489,7 +1554,7 @@ export const purgeDeletedAccounts = onSchedule(
         purged += 1
         console.log(
           `Purged account ${result.uid}: deleted [${result.collectionsDeleted.join(", ")}], ` +
-          `${result.secretsPurged} secrets, auth=${result.authDeleted}`,
+          `${result.secretsPurged} secrets, ${result.blobsDeleted} blobs, auth=${result.authDeleted}`,
         )
       } catch (error) {
         failed += 1

@@ -39,10 +39,20 @@
 
 import fetch, { RequestInit } from "node-fetch"
 import { env } from "../config/env"
+import { withPlatformProxy } from "../domain/webrain-proxy.domain"
 import {
   decideWebrainTool,
+  needsCallerOwnWorker,
+  needsExclusiveWorker,
   webrainToolRefusalMessage,
+  type WebrainToolRefusal,
 } from "../domain/webrain-tools.domain"
+import {
+  webrainMcpToken,
+  webrainProxyPool,
+} from "./webrain-config.store"
+import {webrainPayloadSignals} from "../domain/webrain-signals.domain"
+import {acquireWorkerTarget} from "./webrain-worker-acquire"
 
 /** A tool result, normalised out of webrain's MCP envelope. */
 export interface WebrainToolResult {
@@ -52,6 +62,17 @@ export interface WebrainToolResult {
   /** The same payload when it parsed as JSON. Most tools
    * return typed JSON. */
   json?: unknown
+  /**
+   * The page needed JavaScript, so the browserless fetch returned a shell
+   * rather than content.
+   *
+   * Present ONLY for tools that report it — `scrape` today. `undefined` means
+   * "no information about this payload", never "the page fetched fine", and the
+   * two are kept apart deliberately: see `domain/webrain-signals.domain.ts`.
+   */
+  needsJs?: boolean
+  /** Visible characters the engine counted; the heuristic's other input. */
+  visibleChars?: number
   /**
    * The response's size stamp: `{chars, est_tokens}`. An ESTIMATE, and an
    * object
@@ -81,7 +102,7 @@ export interface WebrainToolResult {
    */
   toolRefused?: boolean
   /** Why the gateway refused it, when it did. */
-  refusal?: "unknown-tool" | "tier"
+  refusal?: WebrainToolRefusal
   /** The worker could not be reached (or no URL is configured). */
   transportError?: boolean
   /** HTTP status, or 0 when the connection itself failed. */
@@ -91,12 +112,11 @@ export interface WebrainToolResult {
 const baseUrl = (): string => (env.WEBRAIN_MCP_URL || "").replace(/\/+$/, "")
 
 /** Only sent when a token is configured — an unset token means "no auth".
- * @return {*}
+ * @param {string} token The token the store resolved for this call.
+ * @return {Record<string, string>} The header, or nothing when unset.
  */
-const authHeaders = (): Record<string, string> => {
-  const token = env.WEBRAIN_MCP_TOKEN
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
+const authHeaders = (token: string): Record<string, string> =>
+  token ? { Authorization: `Bearer ${token}` } : {}
 
 /**
  * Streamable HTTP may answer as SSE. Returns the last `data:` payload, or the
@@ -127,7 +147,11 @@ const extractText = (result: { content?: unknown } | undefined): string => {
 const transportFailure = (message: string): WebrainToolResult => ({
   ok: false,
   text: "",
-  error: baseUrl() ? message : "WEBRAIN_MCP_URL is not configured",
+  // The caller supplies the message now. This used to be overridden whenever
+  // `baseUrl()` was empty, which was correct while that variable was the ONLY
+  // worker source. With a pool configured and `WEBRAIN_MCP_URL` deliberately
+  // empty, the override would name a variable that is not what failed.
+  error: message,
   transportError: true,
   status: 0,
 })
@@ -173,10 +197,64 @@ export const webrainTool = async (
     }
   }
 
-  const url = baseUrl()
-  if (!url) {
-    return transportFailure("WEBRAIN_MCP_URL is not configured")
+  // A vault tool is refused BEFORE a worker is taken, because no source this
+  // function can reach is the caller's own machine -- see `VAULT_TOOLS`. Admin
+  // is exempt to match the allowlist's own decision (an operator diagnosing a
+  // failure needs the tool that failed), and the smoke probe depends on it.
+  if (decision.tier !== "admin" && needsCallerOwnWorker(name)) {
+    return {
+      ok: false,
+      text: "",
+      error: webrainToolRefusalMessage("own-worker"),
+      toolRefused: true,
+      refusal: "own-worker",
+      status: 0,
+    }
   }
+
+  // One exclusive worker for this call, released in the `finally` below. With
+  // no pool configured the single `WEBRAIN_MCP_URL` is still the source;
+  // `planWorkerAcquisition` decides, and it deliberately does NOT fall back to
+  // that URL once a pool exists -- a fully busy pool must not degrade into the
+  // shared worker, which is the sharing the pool was introduced to remove.
+  const acquired = await acquireWorkerTarget(baseUrl())
+  if (!acquired.ok) {
+    return transportFailure(
+      acquired.reason === "all_workers_busy" ?
+        "every browser worker is currently leased" :
+        "no browser worker configured: set WEBRAIN_WORKER_POOL, " +
+        "or WEBRAIN_MCP_URL for a single worker"
+    )
+  }
+  const url = acquired.target.url
+
+  // A tool that reads "the current page" needs a worker nobody else is in:
+  // on a shared process the caller reads whatever the previous caller left.
+  // The check is HERE rather than with the tier decision above because this
+  // is the first point at which the worker is known. `leased` is true only
+  // when an exclusive lease was taken, and the single `WEBRAIN_MCP_URL` is
+  // deliberately unleased -- so refusing at this point costs nothing there,
+  // since the unleased path never took a lease to give back.
+  if (!acquired.target.leased && needsExclusiveWorker(name)) {
+    await acquired.target.release()
+    return {
+      ok: false,
+      text: "",
+      error: webrainToolRefusalMessage("shared-worker"),
+      toolRefused: true,
+      refusal: "shared-worker",
+      status: 0,
+    }
+  }
+
+  // Resolved per call, not at module load: a rotation in Secret Manager has to
+  // be visible to the next request on this instance, or the rotate button does
+  // not rotate. The store serves both values from a short TTL cache, so this is
+  // not a Secret Manager access per call.
+  const [token, pool] = await Promise.all([
+    webrainMcpToken(),
+    webrainProxyPool(),
+  ])
 
   const options: RequestInit = {
     method: "POST",
@@ -184,15 +262,35 @@ export const webrainTool = async (
       "Content-Type": "application/json",
       // Both, or webrain's streamable-HTTP transport rejects the request.
       "Accept": "application/json, text/event-stream",
-      ...authHeaders(),
+      ...authHeaders(token),
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name, arguments: args },
+      // Egress is platform-owned: any caller-supplied `proxy` is dropped here
+      // and the tier's entry from the platform pool attached instead. The
+      // single point every tool call is built, so a future tool cannot forget
+      // to opt in and no caller can choose where our request is made from.
+      // The pool is the store's per-call read, never an env value frozen at
+      // module load. See `domain/webrain-proxy.domain.ts`.
+      params: {
+        name,
+        arguments: withPlatformProxy(name, accessMode, args, pool),
+      },
     }),
-    compress: true,
+    // NO `compress` here, and that is load-bearing rather than taste. Bun's
+    // fetch would gzip the REQUEST body and send `Content-Encoding: gzip`;
+    // webrain's hand-rolled `std::net` server does not decode request-body
+    // compression, so it reads binary, cannot parse it, and answers
+    // `{"error":{"code":-32700,"message":"Parse error"}}`. Every handler then
+    // relays that verbatim as `{"status":"error","error":"Parse error"}`,
+    // which names a JSON-RPC code instead of anything a caller can act on.
+    //
+    // Measured, not inferred: the same tools/call body uncompressed gives a
+    // normal result, and gzipped it returns exactly `-32700`. Response
+    // decompression is unaffected: the fetch spec, and Bun, decode a
+    // compressed RESPONSE without this flag.
   }
 
   let raw: string
@@ -202,7 +300,14 @@ export const webrainTool = async (
     status = response.status
     raw = await response.text()
   } catch (error) {
-    return transportFailure(String(error))
+    return transportFailure(`worker unreachable: ${String(error)}`)
+  } finally {
+    // The lease covers the REQUEST, not the parsing below it: the worker is
+    // free the moment its body has been read, and holding it through JSON
+    // parsing and signal extraction would strand capacity for no benefit.
+    // This runs on the error path too, including the `return` above -- the
+    // path that would otherwise strand a worker for the whole TTL.
+    await acquired.target.release()
   }
 
   if (status < 200 || status >= 300) {
@@ -253,13 +358,20 @@ export const webrainTool = async (
 
   const text = extractText(payload.result)
   const isError = payload.result?.isError === true
+  // Parsed once: `json` and the signals below read the same payload, and
+  // parsing twice would let two fields disagree about one response.
+  const json = toJson(text)
 
   return {
     // The guard's refusal is an error envelope, so `ok` must be false; the
     // flag is what lets a caller tell it apart from a broken request.
     ok: !isError,
     text,
-    json: toJson(text),
+    json,
+    // Spread, never defaulted. Assigning `needsJs: false` to a tool that never
+    // reports it would assert a static page fetched cleanly — the exact silent
+    // failure this signal exists to expose. Absent must stay absent.
+    ...webrainPayloadSignals(json),
     tokens: payload.result?.tokens,
     ms: payload.result?.ms,
     // Exact message is `<tool> is disabled on this instance: WEBRAIN_NO_STATE
@@ -289,6 +401,12 @@ export const webrainHealth = async (): Promise<{
   ok: boolean
   status: number
 }> => {
+  // `baseUrl()` and NOT `acquireWorkerTarget`, deliberately. A liveness probe
+  // is not a browser-backed call: it touches `/health`, which never launches a
+  // browser, so an exclusive lease here would be burned for a request that
+  // cannot use it -- and a monitor polling this would exhaust the pool while
+  // reporting everything healthy. The pool serialises browser USE, and a
+  // readiness check does not use a browser.
   const url = baseUrl()
   if (!url) {
     return { ok: false, status: 0 }

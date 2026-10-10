@@ -44,6 +44,14 @@ export type WebrainTier = "free" | "paid" | "admin"
  * Stateless reads only: one call, one answer, nothing held between calls. These
  * are the tools whose cost is a CPU burst plus egress, which is what a shared
  * container can absorb for many tenants.
+ *
+ * `webrain_download` and `webrain_watch` were REMOVED from this set. Their cost
+ * is bandwidth and CPU proportional to the payload -- ytdlp transfer, and
+ * inbound video turned into frames -- which is not the CPU burst this docstring
+ * describes. No route exposed either one, so nothing broke; but the next
+ * `/api/download` added with the free guard would have handed every free tenant
+ * ytdlp on the platform's bandwidth. Cost that scales with payload gets
+ * metered, which is the entire reason these two sets exist.
  */
 export const SHARED_POOL_TOOLS: readonly string[] = [
   "webrain_guide",
@@ -52,8 +60,6 @@ export const SHARED_POOL_TOOLS: readonly string[] = [
   "webrain_serp",
   "webrain_extract",
   "webrain_pdf",
-  "webrain_download",
-  "webrain_watch",
 ]
 
 /**
@@ -83,9 +89,97 @@ export const PAID_ONLY_TOOLS: readonly string[] = [
   "webrain_vision",
   "webrain_eval",
   "webrain_eval_in_frame",
+  // Moved here from the shared set: they are payload-heavy, not
+  // capacity-heavy -- one call moves unbounded bytes, so the cost is the
+  // transfer rather than the concurrency. No route exposes either today,
+  // so no caller's answer changes.
+  "webrain_download",
+  "webrain_watch",
 ]
 
-export type WebrainToolRefusal = "unknown-tool" | "tier"
+/**
+ * Tools that read "the current page" and so need a worker of their own.
+ *
+ * `webrain_extract` returns "structured extraction from the CURRENT page" and
+ * `webrain_pdf(op=page)` saves the current page as a PDF. Neither takes a URL,
+ * so on a shared process "the current page" is whatever the previous caller
+ * left there -- which means a free caller can read a page another tenant
+ * fetched, and a paid one cannot. That is not a gap in the tier sets above; it
+ * is a gap in what a SHARED process can attribute to anybody.
+ *
+ * They stay in `SHARED_POOL_TOOLS` deliberately. What they need is not a tier,
+ * it is exclusivity: on a LEASED worker the caller owns the current page and
+ * both tools are correct, for a free caller as much as for a paid one. So this
+ * is a second axis, and it is checked where the worker is known rather than
+ * where the tier is -- see `webrainTool`.
+ *
+ * Verified: `WEBRAIN_NO_STATE` does NOT cover either of these. It refuses
+ * exactly `profiles`, `launch` and `login`. The shared-worker guard therefore
+ * cannot come from webrain and has to exist here, which is the same conclusion
+ * this file's header reaches about the tenancy boundary itself.
+ */
+export const SHARED_UNSAFE_TOOLS: readonly string[] = [
+  "webrain_extract",
+  "webrain_pdf",
+]
+
+/**
+ * Whether a tool reads state a shared worker cannot attribute to one caller.
+ * @param {unknown} name The tool name as the caller supplied it.
+ * @return {boolean} True when the tool needs an exclusive worker.
+ */
+export const needsExclusiveWorker = (name: unknown): boolean =>
+  typeof name === "string" && SHARED_UNSAFE_TOOLS.includes(name)
+
+/**
+ * Tools that read or write the worker's credential VAULT.
+ *
+ * These four are the stateful names, and they are the ones the vault belongs
+ * to: `profiles` lists and edits stored logins, `login` performs one, `launch`
+ * starts the browser a login needs, and `session` enumerates the sessions those
+ * produce.
+ *
+ * Why they need the CALLER'S OWN worker, and why "exclusive" is not enough
+ * ---------------------------------------------------------------------
+ * webrain's vault is **process-global**, not per-session: *"The unit of tenancy
+ * is the container, not the MCP session. webrain's vault and profiles are
+ * process-global"* (`docs/ADR-2026-09-CRAWL-PROVIDER-ABSTRACTION.md:111`). The
+ * worker pool reuses a worker across tenants. So a profile written on a POOLED
+ * worker outlives the lease that wrote it and is readable by whoever leases
+ * that worker next -- a credential disclosure with nothing to revoke.
+ *
+ * The `leased` axis does not cover this, which is the point: a pooled lease is
+ * exclusive FOR THE CALL, and what persists here is the PROCESS.
+ * `SHARED_UNSAFE` asks whether anyone else is in this worker right now; this
+ * asks whether anything outlives my visit to it, which is a different question.
+ *
+ * Nothing available today is a caller's own worker. `acquireWorkerTarget` has
+ * exactly two sources -- the pool, and the single `WEBRAIN_MCP_URL` -- and
+ * neither is a tenant's leased machine. That join is roadmap `03` Part A.
+ * Until it exists these tools are refused, and this predicate is what makes the
+ * future route fail closed instead of quietly writing a customer's credentials
+ * into a platform worker.
+ */
+export const VAULT_TOOLS: readonly string[] = [
+  "webrain_profiles",
+  "webrain_login",
+  "webrain_launch",
+  "webrain_session",
+]
+
+/**
+ * Whether a tool touches the vault and so needs the caller's own worker.
+ * @param {unknown} name The tool name as the caller supplied it.
+ * @return {boolean} True when the tool must not run on a platform worker.
+ */
+export const needsCallerOwnWorker = (name: unknown): boolean =>
+  typeof name === "string" && VAULT_TOOLS.includes(name)
+
+export type WebrainToolRefusal =
+  | "unknown-tool"
+  | "tier"
+  | "shared-worker"
+  | "own-worker"
 
 export interface WebrainToolDecision {
   allowed: boolean
@@ -163,6 +257,14 @@ export const decideWebrainTool = (
 export const webrainToolRefusalMessage = (
   refusal: WebrainToolRefusal
 ): string => {
+  if (refusal === "own-worker") {
+    return "Needs your own worker: this tool uses the credential vault, " +
+      "which a shared worker keeps between callers"
+  }
+  if (refusal === "shared-worker") {
+    return "Needs a private worker: this tool reads the current page, " +
+      "which a shared process cannot attribute to one caller"
+  }
   if (refusal === "tier") {
     return "Needs a private worker; the shared pool serves stateless work"
   }

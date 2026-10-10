@@ -12,7 +12,11 @@ import assert from "node:assert/strict"
 import {
   PAID_ONLY_TOOLS,
   SHARED_POOL_TOOLS,
+  SHARED_UNSAFE_TOOLS,
+  VAULT_TOOLS,
   decideWebrainTool,
+  needsCallerOwnWorker,
+  needsExclusiveWorker,
   webrainTierFor,
   webrainToolRefusalMessage,
 } from "./webrain-tools.domain"
@@ -47,6 +51,18 @@ describe("the two tool sets", () => {
     const stateful = ["webrain_session", "webrain_profiles", "webrain_launch", "webrain_login"]
     for (const tool of stateful) {
       assert.equal(SHARED_POOL_TOOLS.includes(tool), false, `${tool} must not be shared`)
+    }
+  })
+
+  it("keeps payload-heavy tools out of the shared set", () => {
+    // One call moves an unbounded number of bytes, so the cost is the transfer
+    // rather than the concurrency a shared container can queue behind. Both sat
+    // in the free set with no route exposing either, which is why moving them
+    // changed no caller's answer -- the next `/api/download` added with the free
+    // guard is what would have made it matter.
+    for (const tool of ["webrain_download", "webrain_watch"]) {
+      assert.equal(SHARED_POOL_TOOLS.includes(tool), false, `${tool} must not be shared`)
+      assert.equal(PAID_ONLY_TOOLS.includes(tool), true, `${tool} must be metered`)
     }
   })
 })
@@ -106,6 +122,91 @@ describe("decideWebrainTool", () => {
     assert.equal(decideWebrainTool("plan", "webrain_scrape").tier, "paid")
     assert.equal(decideWebrainTool("free", "webrain_scrape").tier, "free")
     assert.equal(decideWebrainTool("admin", "webrain_scrape").tier, "admin")
+  })
+})
+
+describe("needsExclusiveWorker", () => {
+  it("requires a worker of the caller's own for the current-page tools", () => {
+    // `extract` is "structured extraction from the CURRENT page" and
+    // `pdf(op=page)` saves the current page. Neither takes a URL, so on a shared
+    // process the page being read belongs to whoever called last. This is the
+    // cross-tenant read that the tier sets above cannot express, because the
+    // problem is the WORKER, not the plan.
+    for (const tool of ["webrain_extract", "webrain_pdf"]) {
+      assert.equal(needsExclusiveWorker(tool), true, tool)
+    }
+  })
+
+  it("leaves both of them IN the shared set, because the axis is not a tier", () => {
+    // The tempting "fix" is to move these two into PAID_ONLY_TOOLS. That is wrong
+    // twice over: it would refuse a PAID caller on a leased worker, where both
+    // tools are correct and the current page really is theirs, and it would
+    // replace the real axis with a proxy for it. Asserted so a later reader
+    // cannot simplify it back into a tier check.
+    for (const tool of SHARED_UNSAFE_TOOLS) {
+      assert.equal(SHARED_POOL_TOOLS.includes(tool), true, tool)
+      assert.equal(PAID_ONLY_TOOLS.includes(tool), false, tool)
+    }
+  })
+
+  it("asks nothing of the genuinely stateless reads", () => {
+    for (const tool of ["webrain_scrape", "webrain_serp", "webrain_search"]) {
+      assert.equal(needsExclusiveWorker(tool), false, tool)
+    }
+  })
+
+  it("answers false for a name that is not a string", () => {
+    // A requirement check, not a gate: the allowlist behind it already refuses an
+    // uncatalogued name, so false here cannot let one through. Answering true
+    // would refuse an unknown tool for the wrong reason and hide the
+    // `unknown-tool` refusal that actually applies.
+    for (const value of [undefined, null, 0, false, {}, []]) {
+      assert.equal(needsExclusiveWorker(value), false)
+    }
+  })
+})
+
+describe("needsCallerOwnWorker", () => {
+  it("covers every tool that touches the credential vault", () => {
+    // The vault is PROCESS-GLOBAL (ADR-2026-09-CRAWL-PROVIDER-ABSTRACTION.md:111),
+    // so a profile written on a pooled worker outlives the lease that wrote it and
+    // is readable by whoever leases that worker next. These four are the tools
+    // that read or write it.
+    for (const tool of [
+      "webrain_profiles",
+      "webrain_login",
+      "webrain_launch",
+      "webrain_session",
+    ]) {
+      assert.equal(needsCallerOwnWorker(tool), true, tool)
+      assert.equal(VAULT_TOOLS.includes(tool), true, tool)
+    }
+  })
+
+  it("keeps every vault tool OUT of the shared set", () => {
+    // Belt for the guard in `webrainTool`: a vault tool that drifted into
+    // SHARED_POOL_TOOLS would be reachable on a shared worker, where webrain's own
+    // `WEBRAIN_NO_STATE` is the only thing standing between tenants. Asserted
+    // here so the drift is a red test rather than a production surprise.
+    for (const tool of VAULT_TOOLS) {
+      assert.equal(SHARED_POOL_TOOLS.includes(tool), false, tool)
+    }
+  })
+
+  it("is a DIFFERENT axis from needing an exclusive worker", () => {
+    // `extract` needs a worker nobody else is IN right now; `profiles` needs one
+    // that outlives the visit. A pooled lease satisfies the first and not the
+    // second, which is exactly why one predicate cannot cover both.
+    assert.equal(needsExclusiveWorker("webrain_profiles"), false)
+    assert.equal(needsCallerOwnWorker("webrain_extract"), false)
+    assert.equal(needsExclusiveWorker("webrain_extract"), true)
+    assert.equal(needsCallerOwnWorker("webrain_profiles"), true)
+  })
+
+  it("answers false for a name that is not a string", () => {
+    for (const value of [undefined, null, 0, false, {}, []]) {
+      assert.equal(needsCallerOwnWorker(value), false)
+    }
   })
 })
 

@@ -14,6 +14,8 @@ import * as sessions from "./gfunctions/sessions"
 import * as webauthn from "./gfunctions/webauthn"
 import * as notifications from "./gfunctions/notifications"
 import * as alertFanout from "./gfunctions/alert-fanout"
+import * as browserMeter from "./gfunctions/browser-meter"
+import * as monitors from "./gfunctions/monitors"
 import * as adminUsers from "./gfunctions/admin-users"
 import * as userSettings from "./gfunctions/user-settings"
 // import path, { join } from "node:path"
@@ -67,6 +69,12 @@ export const getMySettings = userSettings.getMySettings
 export const setMyScrapeProvider = userSettings.setMyScrapeProvider
 export const setMyAiKey = userSettings.setMyAiKey
 export const clearMyAiKey = userSettings.clearMyAiKey
+// Notification preferences. An export is what makes a callable deploy at all;
+// an unexported one exists only in the source tree.
+export const getMyNotificationPreferences =
+  userSettings.getMyNotificationPreferences
+export const setMyNotificationPreference =
+  userSettings.setMyNotificationPreference
 
 
 // STRIPE Functions
@@ -92,6 +100,20 @@ export const expireTrialsToFree = stripe.expireTrialsToFree
 export const expireStaleCredits = stripe.expireStaleCredits
 export const downgradePastDueAccounts = stripe.downgradePastDueAccounts
 export const checkStripeCatalogHealth = stripe.checkStripeCatalogHealth
+
+
+// PAGE MONITORING - Function TRIGGERS
+// The scheduled half of `/api/monitor/*`: it claims the monitors whose turn it
+// is and checks them inline. See `gfunctions/monitors.ts` for why this does not
+// go through QStash.
+export const drainDueMonitors = monitors.drainDueMonitors
+
+// The meter that charges for platform browser time (`§1.6`). It must be exported
+// HERE and not only from the gfunctions barrel, because the CLI builds its
+// manifest from this module — an unexported trigger never deploys. Every charge
+// is keyed per block at the ledger, so a retry or an overlapping run is a no-op;
+// see `gfunctions/browser-meter.ts`.
+export const sweepBrowserMeter = browserMeter.sweepBrowserMeter
 
 
 // API SECRET KEYS - Functions

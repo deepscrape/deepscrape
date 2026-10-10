@@ -52,6 +52,31 @@ type AuthResources = {
         dataType: { ownerId?: string }
         action: "read" | "suspend" | "delete"
     }
+    /**
+     * Platform configuration: the webrain MCP token and the egress pool.
+     *
+     * Admin-only by construction, exactly like `account:suspend`: no role in
+     * POLICIES is granted `platform`, so the only path through `canPerform` is
+     * the platform-admin short-circuit. `read` is the status route; `write` is a
+     * credential rotation or a pool replacement.
+     */
+    platform: {
+        dataType: { orgId?: string; ownerId?: string }
+        action: "read" | "write"
+    }
+    /**
+     * Stored artifacts: the shared URL cache and the caller's own objects.
+     *
+     * Granted to `self` only, and that IS the isolation: the routes derive an
+     * object's namespace from the caller's VERIFIED uid, and `self` is the role
+     * that resolves only when the request's ownerId equals that uid. No org
+     * role is granted either action, because "my org's admin may read the files
+     * I downloaded while signed in" is not a rule anyone agreed to.
+     */
+    storage: {
+        dataType: { orgId?: string; ownerId?: string }
+        action: "read" | "write"
+    }
 }
 
 type PermissionCheck<Key extends keyof AuthResources> =
@@ -103,6 +128,10 @@ const POLICIES = {
     organization: {read: true, manage: true},
     // `suspend` is intentionally absent — see the resource comment above.
     account: {read: true, delete: true},
+    // Personal artifacts. Present here (the uid-scoped compat role) and absent
+    // from every org role, which is what keeps one member's stored objects out
+    // of another member's reach.
+    storage: {read: true, write: true},
   },
 } as const satisfies RolePolicies
 

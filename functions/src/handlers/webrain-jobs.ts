@@ -12,20 +12,18 @@
  * them
  * for ANY provider. This supplies that surface for webrain.
  *
- * A synchronous provider behind a job API
- * ---------------------------------------
- * webrain is MCP: one call, one answer. It has no queue and no task id, so
- * there
- * is nothing to poll. Rather than pretend otherwise, the work is done at
- * ENQUEUE
- * and the outcome is persisted immediately — the job is terminal by the time
- * the
- * caller has its id. `/operations` therefore shows real, finished work instead
- * of
- * a progress bar that would never move, which is what a fake queue would have
- * produced. The cost is honest and stated: enqueue is as slow as the batch, so
- * the
- * target list is capped by the shared guard rather than accepted without limit.
+ * A synchronous provider behind a queue
+ * -------------------------------------
+ * webrain is MCP: one call, one answer. It has no queue and no task id, so the
+ * queue is QStash's rather than the worker's. Enqueue writes `In Progress` and
+ * publishes one message per target; each delivery scrapes its own target and
+ * appends the result; the status is then DERIVED from what has landed, so no
+ * worker has to know it was the last one.
+ *
+ * That is what makes `In Progress` reachable. It was not before: the whole
+ * batch ran inline, so the job was terminal by the time the caller had its id
+ * and `/operations` — which has handled a non-final status since it was written
+ * — never saw one.
  *
  * The routes the client actually calls
  * ------------------------------------
@@ -51,7 +49,9 @@
  */
 import { Request, Response } from "express"
 import { randomUUID } from "node:crypto"
+import { FieldValue } from "firebase-admin/firestore"
 import { webrainTool } from "../infrastructure/webrain-mcp"
+import { publishCrawlTarget } from "../infrastructure/qstash"
 import { safeTargetUrls } from "../domain/url-guard.domain"
 import { resolveProvider } from "../domain/scrape-providers.domain"
 import { readStoredProvider } from "../infrastructure/scrape-provider.store"
@@ -68,7 +68,7 @@ export type WebrainJobStatus =
   "In Progress" | "Completed" | "Failed" | "Canceled"
 
 /** One target's outcome, in the shape the result view already renders. */
-interface WebrainJobItem {
+export interface WebrainJobItem {
   url: string
   status: "ok" | "error"
   message: string
@@ -78,7 +78,7 @@ interface WebrainJobItem {
   ms?: number
 }
 
-interface WebrainJobRecord {
+export interface WebrainJobRecord {
   id: string
   uid: string
   status: WebrainJobStatus
@@ -95,6 +95,22 @@ const JOB_COLLECTION = "crawljobs"
 
 const jobRef = (uid: string, taskId: string) =>
   db.collection("users").doc(uid).collection(JOB_COLLECTION).doc(taskId)
+
+/**
+ * The collection the `/operations` dashboard actually lists.
+ *
+ * Distinct from {@link JOB_COLLECTION}: the queue stores `crawljobs`, the
+ * dashboard reads `operations`, and nothing on the job path ever wrote the
+ * latter — which is why a job that ran perfectly was still invisible there.
+ */
+const OPERATIONS_COLLECTION = "operations"
+
+const operationRef = (uid: string, taskId: string) =>
+  db
+    .collection("users")
+    .doc(uid)
+    .collection(OPERATIONS_COLLECTION)
+    .doc(taskId)
 
 /**
  * Reads `challenge` out of whatever shape the tool returned.
@@ -192,17 +208,281 @@ const requireWebrain = async (
   return false
 }
 
+/**
+ * The job's status, derived from what has landed rather than written by the
+ * workers.
+ *
+ * One message per target means workers finish out of order and no single write
+ * knows it was last. Deriving on read removes the coordination entirely: no
+ * counter, no transaction, and no race between two workers that each believe
+ * they finished the job.
+ * @param {*} record The stored job.
+ * @return {*} The status the dashboard should show.
+ */
+export const deriveStatus = (
+  record: Pick<WebrainJobRecord, "status" | "items" | "total">
+): WebrainJobStatus => {
+  if (record.status === "Canceled") {
+    return "Canceled"
+  }
+
+  const landed = record.items?.length ?? 0
+  if (landed < record.total) {
+    return "In Progress"
+  }
+
+  const failed = record.items.filter((item) => item.status === "error").length
+  return failed === record.total ? "Failed" : "Completed"
+}
+
+/**
+ * Scrapes one target and records it. This is the queued unit of work.
+ *
+ * `arrayUnion` is the whole idempotency story: a redelivered message appends an
+ * identical value, which Firestore discards, so a retry cannot double-count.
+ * `failed` is deliberately NOT incremented — it is derived on read, because an
+ * increment would double on precisely the redelivery this guards against.
+ * @param {*} uid The owner.
+ * @param {*} taskId The job.
+ * @param {*} url One already-validated target.
+ * @param {*} accessMode The entitlement resolved when the job was queued.
+ */
+export async function runCrawlTarget(
+  uid: string,
+  taskId: string,
+  url: string,
+  accessMode: string | undefined
+): Promise<void> {
+  const call = await webrainTool("webrain_scrape", accessMode, { url })
+
+  // Transient by definition: the worker was unreachable. Nothing is recorded,
+  // because a retry produces the real outcome — writing "the worker was down"
+  // as this target's result would make the retry look like a duplicate.
+  if (!call.ok && call.transportError) {
+    throw new Error("crawl worker unreachable")
+  }
+
+  await jobRef(uid, taskId).set(
+    {
+      items: FieldValue.arrayUnion({
+        url,
+        status: call.ok ? "ok" : "error",
+        message: call.ok ? "" : failureMessage(call),
+        challenge: challengeOf(call.json),
+        data: call.json,
+        tokens: call.tokens,
+        ms: call.ms,
+      }),
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  )
+}
+
+/**
+ * Records a target that will never land, so the job can settle.
+ *
+ * Called from QStash's failure callback once the retries are exhausted. The row
+ * is an ordinary error item, which is what makes the arithmetic work: with it
+ * the job reaches its total and `deriveStatus` returns Failed instead of
+ * `In Progress` for ever.
+ * @param {*} uid The owner.
+ * @param {*} taskId The job.
+ * @param {*} url The target that never landed.
+ * @param {*} reason Why the delivery gave up.
+ */
+export async function recordCrawlFailure(
+  uid: string,
+  taskId: string,
+  url: string,
+  reason: string
+): Promise<void> {
+  await jobRef(uid, taskId).set(
+    {
+      items: FieldValue.arrayUnion({
+        url,
+        status: "error",
+        message: reason,
+        challenge: null,
+      }),
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  )
+}
+
+/**
+ * Writes the job, publishes one message per target, and answers.
+ *
+ * Shared by the playground and the seeder, which differ only in the field name
+ * carrying their targets. Everything downstream — status, results, cancel — is
+ * already one surface, so this is the only place the two have to agree.
+ *
+ * Publishes BEFORE answering: a task id handed out for messages that were never
+ * queued is a job that never moves, so a publish failure marks the job Failed
+ * and returns 502 rather than leaving the dashboard to wait for ever.
+ * @param {*} uid The owner.
+ * @param {*} urls Already-validated targets.
+ * @param {*} operationId The caller's operation id, if it sent one.
+ * @param {*} operationData The client's own operation row, reused as-is.
+ * @param {*} accessMode The entitlement, carried through to the worker.
+ * @param {*} res The response to answer on.
+ */
+const enqueueTargets = async (
+  uid: string,
+  urls: string[],
+  operationId: string | undefined,
+  operationData: unknown,
+  accessMode: string | undefined,
+  res: Response
+): Promise<void> => {
+  const taskId = randomUUID()
+
+  // Written before publishing, and the id is only handed out once it exists:
+  // the caller's very next `GET` must not race this write and report a job that
+  // does not exist.
+  await jobRef(uid, taskId).set({
+    id: taskId,
+    uid,
+    status: "In Progress",
+    message: `Queued ${urls.length} target(s)`,
+    urls,
+    items: [],
+    total: urls.length,
+    failed: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  })
+
+  // Also written to the collection `/operations` reads. It had writers on the
+  // client and none on this path, so a queued job never appeared on that page.
+  // The client already sends its own operation row, so it is reused rather
+  // than rebuilt: only the fields the server owns are overridden.
+  const supplied =
+    operationData && typeof operationData === "object" ?
+      (operationData as Record<string, unknown>) :
+      {}
+  const author =
+    supplied["author"] && typeof supplied["author"] === "object" ?
+      (supplied["author"] as Record<string, unknown>) :
+      {}
+
+  await operationRef(uid, taskId).set(
+    {
+      ...supplied,
+      id: taskId,
+      task_id: taskId,
+      urls,
+      // The path already binds the owner, so uid comes from the credential and
+      // never from the body.
+      author: { ...author, uid },
+      name:
+        typeof supplied["name"] === "string" ?
+          supplied["name"] :
+          `${urls.length} target(s)`,
+      type:
+        typeof supplied["type"] === "string" ? supplied["type"] : "operation",
+      color:
+        typeof supplied["color"] === "string" ? supplied["color"] : "#64748b",
+      status: "In Progress",
+      created_At: Date.now(),
+    },
+    { merge: true }
+  )
+
+  try {
+    await Promise.all(
+      urls.map((url) =>
+        publishCrawlTarget({ taskId, uid, url, accessMode })
+      )
+    )
+  } catch (error) {
+    console.error("webrain-jobs: publish failed", error)
+    await jobRef(uid, taskId).set(
+      { status: "Failed", message: "Could not queue the job" },
+      { merge: true }
+    )
+    res.status(502).json({
+      error: "Could not queue the job",
+      task_id: taskId,
+    })
+    return
+  }
+
+  res.status(200).json({
+    task_id: taskId,
+    operation_id: operationId ?? taskId,
+    provider: "webrain",
+    status: "In Progress",
+    message: `Queued ${urls.length} target(s)`,
+    total: urls.length,
+    failed: 0,
+  })
+}
+
 export const webrainJobs = {
   /**
-   * `POST /crawl/stream/job` — run the batch now and hand back a finished job.
+   * `POST /seeder/stream/job/multi-research` — the domain seeder's enqueue.
    *
-   * Sequential on purpose: the shared pool caps concurrency per call, so
-   * fanning
-   * out is how one tenant starves the rest. The request is bounded by the
-   * shared
-   * guard's target cap, which is also what keeps this from becoming an
-   * unbounded
-   * inline job.
+   * A separate route because the BODY differs, not the work: the seeder sends
+   * `domains` as bare hostnames, the playground sends `urls`. Status, results
+   * and cancel are already shared — the client rewrites `/seeder` to `/job` for
+   * all three — so this exists only to accept the other field name.
+   * @param {*} req
+   * @param {*} res
+   */
+  async multiSeedEnqueue(req: Request, res: Response): Promise<void> {
+    if (!(await requireWebrain(req, res))) {
+      return
+    }
+
+    const uid = req.user?.uid
+    if (!uid) {
+      res.status(401).json({ error: "Missing user" })
+      return
+    }
+
+    const body = req.body as
+      | {
+          domains?: unknown
+          operation_data?: {
+            id?: unknown
+          }
+        }
+      | undefined
+
+    const domains = body?.domains
+    const raw = Array.isArray(domains) ? domains : []
+    // Bare hostnames are not URLs, and the shared guard rejects anything it
+    // cannot parse, so the scheme is added before it sees them.
+    const urls = safeTargetUrls(
+      raw
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => (/^https?:\/\//i.test(entry) ? entry : `https://${entry}`))
+    )
+
+    if (!urls.length) {
+      res.status(400).json({ error: "Invalid target domains" })
+      return
+    }
+
+    await enqueueTargets(
+      uid,
+      urls,
+      typeof body?.operation_data?.id === "string" ?
+        body.operation_data.id :
+        undefined,
+      body?.operation_data,
+      req.accessMode,
+      res
+    )
+  },
+  /**
+   * `POST /crawl/stream/job` — queue the batch and hand back a live job id.
+   *
+   * Publishes one message per target and returns immediately, leaving the job
+   * `In Progress` rather than finished. The shared guard still caps the target
+   * count, so the number of messages one request can create stays bounded.
    * @param {*} req
    * @param {*} res
    */
@@ -232,63 +512,21 @@ export const webrainJobs = {
       return
     }
 
-    const taskId = randomUUID()
     const operationId =
       typeof body?.operation_data?.id === "string" ?
         body.operation_data.id :
         typeof body?.operation_id === "string" ?
           body.operation_id :
-          taskId
+          undefined
 
-    const started = Date.now()
-    const items: WebrainJobItem[] = []
-
-    for (const url of urls) {
-      const call = await webrainTool("webrain_scrape", req.accessMode, { url })
-      items.push({
-        url,
-        status: call.ok ? "ok" : "error",
-        message: call.ok ? "" : failureMessage(call),
-        challenge: challengeOf(call.json),
-        data: call.json,
-        tokens: call.tokens,
-        ms: call.ms,
-      })
-    }
-
-    const failed = items.filter((item) => item.status === "error").length
-    const record: WebrainJobRecord = {
-      id: taskId,
+    await enqueueTargets(
       uid,
-      status: failed === items.length ? "Failed" : "Completed",
-      message:
-        failed === 0 ?
-          `${items.length} target(s) scraped` :
-          `${items.length - failed} of ${items.length} target(s) scraped`,
       urls,
-      items,
-      total: items.length,
-      failed,
-      createdAt: started,
-      updatedAt: Date.now(),
-    }
-
-    // Persisted before responding: the id the caller is about to receive has to
-    // be
-    // readable the moment it is handed out, or the very next `GET` races the
-    // write
-    // and reports a job that does not exist.
-    await jobRef(uid, taskId).set(record)
-
-    res.status(200).json({
-      task_id: taskId,
-      operation_id: operationId,
-      provider: "webrain",
-      status: record.status,
-      message: record.message,
-      total: record.total,
-      failed: record.failed,
-    })
+      operationId,
+      body?.operation_data,
+      req.accessMode,
+      res
+    )
   },
 
   /**
@@ -333,9 +571,12 @@ export const webrainJobs = {
     }
 
     const record = snapshot.data() as WebrainJobRecord
+    // Derived, not stored: the workers finish out of order and none of them
+    // knows it was the last one.
+    const status = deriveStatus(record)
     sseSend(res, {
-      status: record.status,
-      result: { status: record.status, message: record.message },
+      status,
+      result: { status, message: record.message },
     })
     sseDone(res)
   },
@@ -393,11 +634,12 @@ export const webrainJobs = {
       })
     })
 
+    const settled = deriveStatus(record)
     sseSend(res, {
       status:
-        record.status === "Canceled" ?
+        settled === "Canceled" ?
           "canceled" :
-          record.failed === total ?
+          settled === "Failed" ?
             "error" :
             "completed",
       message: record.message,

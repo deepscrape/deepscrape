@@ -39,6 +39,9 @@ const readIndexConfig = (): {indexes: CompositeIndex[], fieldOverrides: FieldOve
 const COLLECTION_GROUP_FIELDS: Array<[string, string]> = [
   ["login_history_Info", "timestamp"], // analytics drain, range metrics, backfill
   ["billing", "plan"], // expireTrialsToFree
+  ["browserSessions", "idleDeadline"], // the browser-session reaper
+  ["browserSessions", "state"], // listMeterableSessions, the meter sweep
+  ["machines", "created_at"], // listFleetMachines, the admin fleet view
 ]
 
 const COLLECTION_GROUP_COMPOSITES: Array<[string, string[]]> = [

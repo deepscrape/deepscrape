@@ -22,6 +22,7 @@ export type AlertCategory =
     | "new_login_location"
     | "new_trusted_device"
     | "mfa_disabled"
+    | "spend_cap"
 
 /** Subset of the alert document this module reads. */
 export type AlertDocData = {
@@ -67,6 +68,45 @@ const formatWhen = (data: AlertDocData): string => {
  */
 export const presentAlert = (data: AlertDocData): AlertPresentation => {
   const when = formatWhen(data)
+
+  if (data.category === "spend_cap") {
+    // `cap` / `spent` are written as NUMBERS, and `str` above returns "" for
+    // anything that is not a string — so reading them through `meta` would make
+    // every details row silently vanish. Keep the stored type honest and format
+    // at the edge.
+    const capValue = data.metadata?.["cap"]
+    const spentValue = data.metadata?.["spent"]
+    const cap = typeof capValue === "number" ? String(capValue) : ""
+    const spent = typeof spentValue === "number" ? String(spentValue) : ""
+
+    const content: EmailContent = {
+      preheader: cap ?
+        `You reached the ${cap} credit spend cap on your account.` :
+        "You reached the spend cap on your account.",
+      heading: "Spend cap reached",
+      intro: "Your account reached the spending cap you set. Running browser sessions have been stopped and new ones are blocked until the period resets.",
+      details: [
+        ...(spent ? [{ label: "Spent this period", value: `${spent} credits` }] : []),
+        ...(cap ? [{ label: "Your cap", value: `${cap} credits` }] : []),
+        ...(when ? [{ label: "Reached at", value: when }] : []),
+      ],
+      callout: {
+        tone: "warning",
+        text: "Review your sessions, or raise the cap if this was not expected.",
+      },
+      cta: { label: "Review your sessions", url: `${env.APP_ORIGIN}/machines` },
+      footnote: "You receive this because spend cap email alerts are enabled on your account. You can turn them off in notification settings.",
+    }
+
+    return {
+      channels: { email: true, push: true },
+      pushTitle: "Spend cap reached",
+      pushBody: spent && cap ?
+        `You have spent ${spent} of ${cap} credits this period. Sessions are stopped until it resets.` :
+        "Your spend cap was reached, so sessions are stopped until the period resets.",
+      email: { subject: "Spend cap reached on your account", content },
+    }
+  }
 
   if (data.category === "new_login_location") {
     const location = meta(data, "location") || meta(data, "country") || "a new location"

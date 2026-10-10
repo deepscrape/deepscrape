@@ -33,7 +33,7 @@ import { readUserAiKey } from "../gfunctions/user-settings"
  * @param {*} vendorId
  * @param {*} platformKey
  */
-const keyFor = async (
+export const keyFor = async (
     req: Request,
     vendorId: AiVendorId,
     platformKey: string,

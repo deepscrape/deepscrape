@@ -63,11 +63,43 @@ export const onSecurityAlertCreated = onDocumentCreated(
 
       // Single opt-out enforcement point. The alert document itself is never
       // suppressed — it still reaches the bell — only the outbound channels.
-      const notifications = userSnap.data()?.notifications as { securityAlerts?: boolean } | undefined
+      const notifications = userSnap.data()?.notifications as {
+        securityAlerts?: boolean
+        preferences?: Record<string, boolean | string | number>
+      } | undefined
       if (notifications?.securityAlerts === false) return
 
       const to = recipient?.email || ""
       const securityUrl = `${env.APP_ORIGIN}/settings/security`
+
+      // A spend cap alert is a BILLING notice, so it lands on the machine list —
+      // the surface where the customer sees the session that was stopped — and
+      // not on security settings, which have nothing to do with it. `/machines`
+      // is a real route; do not substitute an invented one.
+      //
+      // Email here is OPT IN, unlike the security categories. They are opt OUT
+      // because a security notice is worth an unwanted email; a billing notice is
+      // not, and marketing-adjacent mail costs domain reputation. So the default is
+      // push and bell only, which is also what the unknown-category fallback
+      // already does — the preference is what unlocks mail.
+      //
+      // The preference rides `notifications.preferences`, an open bag that already
+      // exists on the user document, rather than a new named field. That is why
+      // this needed no schema change and no migration, and why the next SaaS
+      // notification needs none either. It also costs no extra read: this document
+      // was already fetched above.
+      //
+      // Known narrow interaction, stated rather than discovered: a customer who
+      // turned security alerts OFF also loses this mail, because that check above
+      // is not category-aware. Left alone deliberately — widening the one existing
+      // opt-out in a money path is a behaviour change that deserves its own
+      // decision, and the affected population is someone who muted security mail.
+      const emailOptedIn =
+        category !== "spend_cap" ||
+        notifications?.preferences?.spendCapEmail === true
+      const linkUrl = category === "spend_cap" ?
+        `${env.APP_ORIGIN}/machines` :
+        securityUrl
 
       const work: Promise<unknown>[] = []
 
@@ -75,12 +107,12 @@ export const onSecurityAlertCreated = onDocumentCreated(
         work.push(sendToUser(uid, {
           title: presentation.pushTitle,
           body: presentation.pushBody,
-          link: securityUrl,
+          link: linkUrl,
           data: { category, alertId: String(event.params.alertId || "") },
         }))
       }
 
-      if (presentation.channels.email && presentation.email && to) {
+      if (emailOptedIn && presentation.channels.email && presentation.email && to) {
         const { subject, content } = presentation.email
         work.push(sendEmail({
           to,

@@ -35,19 +35,54 @@ export const MAX_TARGETS = 50
 
 /**
  * Hosts the crawler must never be pointed at: loopback, IPv4 private ranges,
- * link-local (which is where cloud metadata lives — `169.254.169.254`), IPv6
- * loopback and unique-local, and the internal-only TLDs.
+ * link-local (which is where cloud metadata lives — `169.254.169.254`), the
+ * whole non-routable IPv6 set (loopback, unspecified, unique-local `fc00::/7`,
+ * link-local `fe80::/10`, multicast `ff00::/8`), and the internal-only TLDs.
  */
 export const BLOCKED_HOST =
   // eslint-disable-next-line max-len -- a regex literal cannot be wrapped
-  /^(localhost|\.?0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|.*\.local$|.*\.internal$)/i
+  /^(localhost|\.?0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|::$|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:|ff[0-9a-f]{2}:|.*\.local$|.*\.internal$)/i
 
-/** True when the host resolves into space we must not be able to read.
+/**
+ * Rewrite an IPv4-mapped IPv6 host into dotted IPv4 so the IPv4 rules judge it.
+ *
+ * `new URL("http://[::ffff:169.254.169.254]/").hostname` is
+ * `"[::ffff:a9fe:a9fe]"` — the parser re-encodes the IPv4 as two hex groups —
+ * so matching the text alone cannot see the address underneath. Dotted input
+ * (`::ffff:169.254.169.254`) is handled too, for a caller that never went
+ * through `URL`.
+ * @param {string} host A bracket-free hostname.
+ * @return {string} Dotted IPv4 when the host is mapped, else the host.
+ */
+const unmapIpv4 = (host: string): string => {
+  const hex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i)
+  if (!hex) {
+    return host.replace(/^::ffff:/i, "")
+  }
+  const high = parseInt(hex[1], 16)
+  const low = parseInt(hex[2], 16)
+  return [
+    (high >> 8) & 0xff,
+    high & 0xff,
+    (low >> 8) & 0xff,
+    low & 0xff,
+  ].join(".")
+}
+
+/**
+ * True when the host resolves into space we must not be able to read.
+ *
+ * Brackets are stripped first: `new URL` keeps them on `hostname`, so the
+ * pattern's `::1$` alternative never matched and every bracketed IPv6 literal
+ * passed the guard. Mapped literals are then unwrapped, because the parser's
+ * hex form hides the IPv4 from a text match.
  * @param {*} hostname
  * @return {*}
  */
-export const isBlockedHost = (hostname: string): boolean =>
-  BLOCKED_HOST.test(hostname)
+export const isBlockedHost = (hostname: string): boolean => {
+  const bare = hostname.replace(/^\[|\]$/g, "")
+  return BLOCKED_HOST.test(unmapIpv4(bare))
+}
 
 /**
  * True when a single candidate is a target we are willing to hand to a worker:
@@ -87,3 +122,71 @@ export const isSafeTargetUrl = (candidate: unknown): candidate is string => {
  */
 export const safeTargetUrls = (urls: unknown): string[] =>
   Array.isArray(urls) ? urls.filter(isSafeTargetUrl).slice(0, MAX_TARGETS) : []
+
+/**
+ * One untrusted value trimmed and put past the guard, or undefined.
+ *
+ * The single-field counterpart to `safeTargetUrls`, for the routes that take
+ * ONE url rather than a list. It exists so that "trim it, then ask the guard"
+ * is written once: `/scrape`, `/monitor/create` and any future single-target
+ * route all need exactly this, and a second copy is a second answer to "is this
+ * safe?".
+ * @param {*} value The candidate.
+ * @return {*} The trimmed URL, or undefined when it is not one we may fetch.
+ */
+export const targetUrlFrom = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return isSafeTargetUrl(trimmed) ? trimmed : undefined
+}
+
+/** The schemes a caller-supplied CDP endpoint may use. */
+const CDP_PROTOCOLS: readonly string[] = ["ws:", "wss:", "http:", "https:"]
+
+/**
+ * A caller-supplied CDP endpoint, or undefined when we will not dial it.
+ *
+ * Deliberately a SIBLING of `isSafeTargetUrl` rather than a flag on it, because
+ * the two answer different questions. That one answers "may we FETCH this", and
+ * a `ws://` URL is nothing the fetch path can act on, so widening it would
+ * change the answer for every existing caller. This answers "may a worker DIAL
+ * this", where `ws:` and `wss:` are the *normal* spellings -- the hosted CDP
+ * providers (Browserless, Browserbase, Steel) hand out exactly those, usually
+ * with the token in the path or query.
+ *
+ * Built on `isBlockedHost`, the same predicate `isSafeTargetUrl` uses, and that
+ * is the load-bearing half: a caller-supplied endpoint is an attacker-chosen
+ * address, so it must not resolve into private space. It shares that guard's
+ * documented limit too -- it judges the HOST, not where the host resolves, so
+ * DNS rebinding is out of scope for a one-shot check (see this file's header).
+ *
+ * Credentials in the userinfo are refused. No CDP provider needs them, and a
+ * `wss://user:pass@host` would otherwise be a credential in a field that is
+ * echoed in errors and kept in logs.
+ * @param {*} value The caller-supplied endpoint.
+ * @return {*} The trimmed endpoint, or undefined when it is not one we dial.
+ */
+export const cdpEndpointFrom = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined
+  }
+  const trimmed = value.trim()
+  if (trimmed.length === 0 || trimmed.length > TARGET_URL_MAX_LENGTH) {
+    return undefined
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    if (!CDP_PROTOCOLS.includes(parsed.protocol)) {
+      return undefined
+    }
+    if (parsed.username || parsed.password) {
+      return undefined
+    }
+    return isBlockedHost(parsed.hostname) ? undefined : trimmed
+  } catch {
+    return undefined
+  }
+}

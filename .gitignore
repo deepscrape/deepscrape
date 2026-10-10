@@ -60,6 +60,10 @@ functions/databases/*.BIN
 .env.staging
 .env.dev
 .env.keys
+# Dev-only emulator wiring for the BFF: not a secret, and `bun run bff:dev`
+# reads it, so a fresh clone must have it. The unanchored `.env.dev` above
+# would otherwise swallow it at any depth.
+!bff/.env.dev
 
 *.css.map
 *.css
@@ -76,3 +80,4 @@ tmp-test-output*.txt
 graphify-out/
 .codebase-memory/
 functions/lib/
+stripe_audit.md

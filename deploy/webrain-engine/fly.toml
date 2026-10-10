@@ -1,0 +1,120 @@
+# The shared webrain engine — what `WEBRAIN_MCP_URL` points at.
+#
+# NOT the machine image. Two different things, and conflating them is the
+# mistake this file exists to prevent:
+#
+#   this app              a long-lived SERVICE with one HTTPS endpoint the BFF
+#                         calls. Backs the free tier (serp/scrape/search/guide)
+#                         and the exclusive worker pool.
+#   deploy/browser-session  an IMAGE that Fly pulls once per session machine.
+#                         Never served, never long-running. That is
+#                         `BROWSER_MACHINE_IMAGE`.
+#
+# I2 decides the shape here: a SHARED process may never host a browser, so this
+# runs with `WEBRAIN_NO_STATE=1`, which refuses `webrain_launch`. The free tier
+# is therefore HTTP-only by construction, and anything needing a real browser
+# goes to a per-session machine instead.
+#
+# Deploy:
+#   flyctl deploy --app deepscrape-webrain --config deploy/webrain-engine/fly.toml
+
+app = "deepscrape-webrain"
+
+# Same region as BROWSER_MACHINE_REGION (`iad`), so the BFF, this engine and the
+# session machines are not paying cross-region latency on every call. If that
+# env value ever moves, move this with it.
+primary_region = "iad"
+
+[build]
+  # A pinned tag, never `latest`. The image IS the engine — nothing is
+  # downloaded at runtime — so a floating tag would silently change which
+  # engine every session talks to, which is the failure class the whole
+  # musl/glibc episode belonged to.
+  image = "registry.fly.io/deepscrape-webrain:webrain-2026-10-04"
+
+[env]
+  # A NON-LOOPBACK bind, which makes the token MANDATORY: webrain refuses to
+  # start on 0.0.0.0 or [::] with no token. `WEBRAIN_ALLOW_UNAUTHENTICATED`
+  # must never appear here — it would re-open exactly the hole the gate closes.
+  WEBRAIN_HTTP_ADDR = "0.0.0.0:9223"
+  WEBRAIN_NO_STATE = "1"
+
+  # NOT here: WEBRAIN_HTTP_TOKEN.
+  #
+  # fly.toml is committed, so a token in this file is a token in git history
+  # forever. It goes in `fly secrets`, which is injected into the machine's
+  # environment at boot and never echoed back:
+  #
+  #   flyctl secrets set WEBRAIN_HTTP_TOKEN=<value> --app deepscrape-webrain
+  #
+  # THE SAME VALUE HAS TWO NAMES, and this is the mistake to avoid:
+  #
+  #   WEBRAIN_HTTP_TOKEN   the ENGINE's name for it — a `fly secrets` entry on
+  #                        THIS app.
+  #   WEBRAIN_MCP_TOKEN    the BFF's name for it — an env var in the BFF's
+  #                        FUNCTIONS_ENV_JSON secret.
+  #
+  # One value, two names, two different stores. They must match: the BFF sends
+  # `Authorization: Bearer <WEBRAIN_MCP_TOKEN>` and the engine compares it to
+  # `WEBRAIN_HTTP_TOKEN`. Mismatch is a 401 on every call, and because the
+  # engine is the free tier's path it reads as "search is broken", not as
+  # "a credential is wrong".
+
+[http_service]
+  internal_port = 9223
+  force_https = true
+  # Deliberately NOT scale-to-zero: the free tier calls this on the request
+  # path, so a cold start would land on a customer's /api/scrape. One machine,
+  # always on, is the predictable choice for a shared engine.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+# Explicit size, because the platform default (shared-cpu-1x / 256 MB) is not
+# obviously survivable for a V8 runtime — and a machine that OOMs under a burst
+# reads as "the engine is flaky" rather than "the machine is too small".
+# No browser is ever launched here (`WEBRAIN_NO_STATE=1` refuses launch), so
+# this is sized for HTTP fetches and JS evaluation, not for chromium.
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1gb"
+
+# No health check yet, on purpose. The HTTP surface is token-gated, so an HTTP
+# check would have to carry the bearer header — and a health check that needs a
+# credential starts reporting "unhealthy" the day the credential rotates, which
+# is a worse failure than having no check. Add a TCP check once it is confirmed
+# that a check without the header is not simply treated as a failed one.
+
+# ── What must exist on the BFF side, or this engine is unreachable ────────────
+#
+# `WEBRAIN_MCP_URL` and `WEBRAIN_MCP_TOKEN` both live in the BFF's
+# FUNCTIONS_ENV_JSON secret, and `WEBRAIN_MCP_URL` has NO DEFAULT
+# (`config/env.ts`). So the deploy sequence is:
+#
+#   1. flyctl secrets set WEBRAIN_HTTP_TOKEN=<value> -a deepscrape-webrain
+#   2. flyctl deploy --config deploy/webrain-engine/fly.toml -a deepscrape-webrain
+#   3. the URL is https://mcp.deepscrape.dev  (custom domain; the app's own
+#      https://deepscrape-webrain.fly.dev still works and is the same engine)
+#   4. add to FUNCTIONS_ENV_JSON, then restart the BFF:
+#        "WEBRAIN_MCP_URL": "https://mcp.deepscrape.dev",
+#        "WEBRAIN_MCP_TOKEN": "<same value as step 1>"
+#
+# Prefer the custom domain: it survives the app being renamed or replaced, and
+# it is what the DNS zone already documents. Cert + records, both verified:
+#   flyctl certs add mcp.deepscrape.dev -a deepscrape-webrain
+#   A    mcp.deepscrape.dev -> 66.241.124.140
+#   AAAA mcp.deepscrape.dev -> 2a09:8280:1::1a6:1b87:0
+#
+# Those two MUST stay DNS-ONLY (grey cloud) in Cloudflare. Orange-cloud
+# proxying intercepts the ACME HTTP-01 challenge, so Fly can never validate and
+# the cert never issues. Note `agent` and `ip` in this zone ARE proxied — they
+# can be, because they use Fly's `_acme-challenge` CNAME delegation into
+# flydns.net (DNS-01). This hostname was given plain A/AAAA, so it is HTTP-01
+# and cannot be proxied without switching to the delegation setup first.
+#
+# TRAP, and it fails silently: `SCRAPE_PROVIDER` defaults to `"webrain"` while
+# `WEBRAIN_MCP_URL` has no default. A deployment that sets NEITHER has a broken
+# default scrape path — every `/api/crawl` asks a provider that has no URL — and
+# nothing validates this at boot. Either set `WEBRAIN_MCP_URL` or set
+# `SCRAPE_PROVIDER=crawl4ai` explicitly.
+

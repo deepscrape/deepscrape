@@ -47,6 +47,12 @@ export type BridgedResponse = {
   chunks: string[]
   /** True once a handler wrote SSE frames, which decides how the body is returned. */
   streaming: boolean
+  /**
+   * Mirrors Express's `res.writableEnded`, which `requirePaidAccess`'s `close`
+   * listener reads to tell "the response finished" from "the request was
+   * abandoned" — the difference between consuming a reservation and releasing it.
+   */
+  writableEnded: boolean
 }
 
 const serializeCookie = (
@@ -115,12 +121,67 @@ export const createBridge = (
     sent: false,
     chunks: [],
     streaming: false,
+    writableEnded: false,
   }
 
   const headerBag: Record<string, string> = {}
   request.headers.forEach((value, key) => {
     headerBag[key.toLowerCase()] = value
   })
+
+  /**
+   * The response EVENTS the ported middleware settles on.
+   *
+   * `requirePaidAccess` reserves a credit and then calls `res.once("finish", …)`
+   * to consume it (or `res.once("close", …)` to release it on an abandoned
+   * request); `ai_handler` registers `res.once("drain", …)` for backpressure. A
+   * bare object literal has none of those, so the first paid request through this
+   * bridge threw `res.once is not a function` INSIDE `requirePaidAccess` — which
+   * its own catch turned into a 500 — leaving every `paid`-gated route (crawl, the
+   * AI endpoints, machines, jobs) broken for every paying customer and its
+   * reservation never settled. This is the smallest surface that fixes that; it is
+   * not an attempt to reimplement Node's stream.
+   */
+  type ResEvent = 'finish' | 'close' | 'drain'
+  type ResListener = (event: ResEvent) => unknown
+  const listeners = new Map<ResEvent, Array<{fn: ResListener; once: boolean}>>()
+
+  const addListener = (event: ResEvent, fn: ResListener, once: boolean): void => {
+    const list = listeners.get(event) ?? []
+    list.push({fn, once})
+    listeners.set(event, list)
+  }
+
+  const dropListener = (event: ResEvent, fn: ResListener): void => {
+    const list = listeners.get(event)
+    if (!list) return
+    const at = list.findIndex((entry) => entry.fn === fn)
+    if (at >= 0) list.splice(at, 1)
+  }
+
+  /**
+   * Fire an event, AWAITING each listener.
+   *
+   * Awaited rather than fired-and-forgotten because the `finish` listener's job is
+   * a ledger write: the middleware returns the settlement promise instead of
+   * `void`ing it, so awaiting here means the credit is committed BEFORE the
+   * Response is handed back. Cloud Run can freeze an instance the moment the
+   * response goes out, and a settlement still in flight at that point is simply
+   * lost — which would leave the reservation standing and the customer short.
+   * @param {ResEvent} event The event to fire.
+   * @return {Promise<void>} Resolves once every listener has settled.
+   */
+  const emit = async (event: ResEvent): Promise<void> => {
+    const list = listeners.get(event)
+    if (!list || list.length === 0) return
+
+    // A copy: a `once` listener is removed as it fires, and a listener may
+    // register another.
+    for (const entry of [...list]) {
+      if (entry.once) dropListener(event, entry.fn)
+      await entry.fn(event)
+    }
+  }
 
   const res = {
     /**
@@ -130,6 +191,70 @@ export const createBridge = (
      */
     status(code: number) {
       state.status = code
+      return res
+    },
+    /**
+     * statusCode
+     *
+     * Express exposes the status as a plain property, and the money path READS it
+     * (`const success = res.statusCode >= 200 && res.statusCode < 400`) to decide
+     * whether to consume or release the reserved credit. Without this it read
+     * `undefined`, which is never in 2xx/3xx — so even once `once()` existed, every
+     * successful call would have released its reservation and charged nothing.
+     * Settable as well as readable, because Express allows assignment.
+     * @return {number} The response status.
+     */
+    get statusCode() {
+      return state.status
+    },
+    set statusCode(code: number) {
+      state.status = code
+    },
+    /**
+     * writableEnded
+     * @return {boolean} True once the response was committed.
+     */
+    get writableEnded() {
+      return state.writableEnded
+    },
+    /**
+     * on
+     * @param {ResEvent} event
+     * @param {ResListener} fn
+     * @return {*} This response, for chaining.
+     */
+    on(event: ResEvent, fn: ResListener) {
+      addListener(event, fn, false)
+      return res
+    },
+    /**
+     * once
+     * @param {ResEvent} event
+     * @param {ResListener} fn
+     * @return {*} This response, for chaining.
+     */
+    once(event: ResEvent, fn: ResListener) {
+      addListener(event, fn, true)
+      return res
+    },
+    /**
+     * off
+     * @param {ResEvent} event
+     * @param {ResListener} fn
+     * @return {*} This response, for chaining.
+     */
+    off(event: ResEvent, fn: ResListener) {
+      dropListener(event, fn)
+      return res
+    },
+    /**
+     * removeListener
+     * @param {ResEvent} event
+     * @param {ResListener} fn
+     * @return {*} This response, for chaining.
+     */
+    removeListener(event: ResEvent, fn: ResListener) {
+      dropListener(event, fn)
       return res
     },
     /**
@@ -149,6 +274,7 @@ export const createBridge = (
     json(payload: unknown) {
       state.body = payload
       state.sent = true
+      state.writableEnded = true
       state.headers['Content-Type'] ??= 'application/json; charset=utf-8'
       return res
     },
@@ -160,6 +286,7 @@ export const createBridge = (
     send(payload: unknown) {
       state.body = payload
       state.sent = true
+      state.writableEnded = true
       // Express derives the type from the payload: an object is JSON, a string
       // defaults to text/html. Handlers rely on that (they call bare
       // `res.send({...})`), so mirroring it is not optional.
@@ -234,6 +361,7 @@ export const createBridge = (
       }
       state.streaming = true
       state.sent = true
+      state.writableEnded = true
       return res
     },
     /**
@@ -290,7 +418,7 @@ export const createBridge = (
     user,
   }
 
-  return { req, res: Object.assign(res, { locals: {} }), state }
+  return { req, res: Object.assign(res, { locals: {} }), state, emit }
 }
 
 /** Turn the captured state into a Response.
@@ -413,6 +541,12 @@ export const bridgeHandler =
  *
  * The chain stops as soon as a middleware produces a response (401/403/500/429),
  * which is exactly when Express would stop.
+ *
+ * It also FIRES the response events when the response is ready. Express emitted
+ * `finish` itself; there is no socket here, so the emission has to be explicit —
+ * and not only for tidiness: `requirePaidAccess` consumes a credit reservation
+ * from a `finish` listener, so a bridge that never fires it would charge nobody
+ * while still reserving. See `finalize` below.
  * @param {*} ctx
  * @param {*} chain
  */
@@ -420,7 +554,7 @@ export const runChain = async (
   ctx: BridgeContext,
   chain: ExpressMiddleware[],
 ): Promise<Response> => {
-  const { req, res, state } = createBridge(
+  const { req, res, state, emit } = createBridge(
     ctx.request,
     ctx.body,
     ctx.user,
@@ -432,6 +566,27 @@ export const runChain = async (
     index += 1
   }
 
+  /**
+   * Commit the response, then fire the event the middleware will settle on.
+   *
+   * `finish` is what `requirePaidAccess` listens for, and its listener decides
+   * consume-vs-release from `res.statusCode` — so the status has to be final
+   * before this runs, which is why `toResponse` comes after `emit`. Ordering the
+   * other way round would present the middleware a status that is not yet the one
+   * the caller receives.
+   *
+   * `close` (rather than `finish`) is the honest event when nothing was sent:
+   * `requirePaidAccess` releases its reservation on `close`, which is what a
+   * request that produced no response should do.
+   * @param {'finish'|'close'} event The event to fire.
+   * @return {Promise<Response>} The built response.
+   */
+  const finalize = async (event: 'finish' | 'close'): Promise<Response> => {
+    state.writableEnded = event === 'finish'
+    await emit(event)
+    return toResponse(state)
+  }
+
   try {
     while (index < chain.length) {
       const before = index
@@ -439,7 +594,7 @@ export const runChain = async (
       await chain[index]!(req as never, res as never, next as never)
 
       if (state.sent) {
-        return toResponse(state)
+        return await finalize('finish')
       }
 
       // A middleware that neither advanced the chain nor answered would spin
@@ -451,11 +606,17 @@ export const runChain = async (
   } catch (error) {
     console.error('bff: express chain threw', error)
 
+    // `close`, not `finish`: the call did not succeed, so a reservation must be
+    // RELEASED. The middleware's listener reads `res.statusCode`, which still
+    // holds 200 on this path — emitting `finish` would hand it a success and
+    // consume credits for work that never ran.
+    await emit('close')
+
     return new Response(JSON.stringify({ error: 'Internal error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  return toResponse(state)
+  return await finalize(state.sent ? 'finish' : 'close')
 }

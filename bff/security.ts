@@ -50,6 +50,34 @@ if (isProd && !COOKIE_SECRET) {
   throw new Error('COOKIE_SECRET (or CSRF_COOKIE_SECRET) is required in production')
 }
 
+/**
+ * Refuse to boot a production BFF that would authenticate anyone.
+ *
+ * `firebase-admin` accepts UNSIGNED `alg:none` tokens whenever
+ * FIREBASE_AUTH_EMULATOR_HOST is set -- that is how the Auth emulator issues
+ * them, having no signing key. Paired with PRODUCTION=true, any caller can
+ * hand-craft a token for any uid: no secret to steal and no forgery to perform.
+ * Confirmed against a real token from this project, whose header is
+ * `{"alg":"none","typ":"JWT"}` with an empty signature segment.
+ *
+ * Sits beside the COOKIE_SECRET guard rather than in `server.ts` because the
+ * entry point's imports are evaluated before its own body runs, so a check
+ * placed there would run AFTER this one and could be masked by any earlier
+ * throw -- which is exactly what happened when it was tried there.
+ *
+ * Throws rather than warns, unlike the missing-config checks inside
+ * `functions/`. A missing Upstash URL degrades a feature; this combination
+ * silently turns authentication off, and a warning would leave a running
+ * service believing every unsigned token it is handed.
+ */
+if (isProd && process.env['FIREBASE_AUTH_EMULATOR_HOST']) {
+  throw new Error(
+    'FIREBASE_AUTH_EMULATOR_HOST must not be set in production: ' +
+    'firebase-admin would accept unsigned tokens, so any caller could forge ' +
+    'one for any uid',
+  )
+}
+
 const CSRF_SECRET_COOKIE = '_csrf_secret'
 const CSRF_COOKIE = '_csrf'
 

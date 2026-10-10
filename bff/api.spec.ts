@@ -9,8 +9,9 @@ const call = (path: string, method = 'GET') =>
 
 /**
  * Every live route from `ReverseAPIProxy`, with concrete path params. The port
- * transcribed 23 registrations by hand, so the table is the thing most likely to
- * be wrong — and a dropped '/api' prefix or a typo'd segment shows up as a 404.
+ * transcribed the registrations by hand, so the table is the thing most likely
+ * to be wrong — and a dropped '/api' prefix or a typo'd segment shows up as a
+ * 404.
  */
 const ROUTES: Array<[string, string]> = [
   ['GET', '/api/orgs'],
@@ -29,13 +30,36 @@ const ROUTES: Array<[string, string]> = [
   ['POST', '/api/openai/chat/completions'],
   ['POST', '/api/groq/chat/completions'],
   ['POST', '/api/crawl'],
+  ['POST', '/api/serp'],
+  ['POST', '/api/scrape'],
+  ['POST', '/api/search'],
+  ['POST', '/api/extract'],
+  ['POST', '/api/pdf'],
+  ['GET', '/api/monitor/list'],
+  ['GET', '/api/monitor/checks'],
+  ['POST', '/api/monitor/create'],
+  ['POST', '/api/monitor/update'],
+  ['POST', '/api/monitor/delete'],
+  ['GET', '/api/storage/list'],
+  ['GET', '/api/storage/settings'],
+  ['POST', '/api/storage/save'],
+  ['POST', '/api/storage/presign'],
+  ['POST', '/api/storage/settings'],
   ['POST', '/api/machines/deploy'],
+  ['GET', '/api/browser/session'],
+  ['POST', '/api/browser/session'],
+  ['POST', '/api/browser/session/session-1/keepalive'],
+  ['POST', '/api/browser/session/session-1/close'],
   ['PUT', '/api/orgs/org-1'],
   ['PUT', '/api/machines/machine/machine-1/start'],
   ['PUT', '/api/machines/machine/machine-1/suspend'],
   ['PUT', '/api/machines/machine/machine-1/stop'],
   ['DELETE', '/api/orgs/org-1/members/user-1'],
   ['DELETE', '/api/machines/machine/machine-1'],
+  ['GET', '/api/webrain/config'],
+  ['POST', '/api/webrain/config/token'],
+  ['POST', '/api/webrain/config/proxies'],
+  ['POST', '/api/vision'],
 ]
 
 describe('/api routes', () => {

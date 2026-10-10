@@ -41,7 +41,13 @@ const environment = {
     // base resolves against whatever origin served the page.
     assetsUri: "/assets/",
     wsUrl: "wss://agent.deepscrape.dev", //  || "ws://crawlagent.fly.dev"
-    nekoUrl: "wss://neko-rtc.fly.dev",
+    // `nekoUrl` was REMOVED 2026-10-10 at the owner's instruction. It pinned
+    // every build to one external WebRTC host (`wss://neko-rtc.fly.dev`) that
+    // this repo does not control, so "which host is my browser on" was a
+    // build-time constant rather than a per-session fact. The viewer
+    // (`core/components/browser/`) is KEPT as a reference for a per-session
+    // transport -- see `docs/roadmap/09-interactive-live-view-and-vault.md`,
+    // which records the upstream projects (`m1k1o/neko`, `m1k1o/neko-rooms`).
     firebaseConfig: {
         apiKey: env["API_KEY"],
         authDomain: env["AUTH_DOMAIN"],
@@ -62,8 +68,6 @@ const environment = {
     JINAAI_API_KEY: "", // env["JINAAI_API_KEY"],
     GROQ_API_KEY: "", // env["GROQ_API_KEY"],
     GOOGLE_API_KEY: "", // env["GOOGLE_API_KEY"],
-    CRAWL4AI_API_KEY: "", // env["CRAWL4AI_API_KEY"],
-    API_CRAWL4AI_URL: env["API_CRAWL4AI_URL"] || "https://crawlagent.fly.dev",
     API_ARACHNEFLY_URL: env["API_ARACHNEFLY_URL"] || "https://arachnefly.fly.dev",
     API_ANTHROPIC: "https://api.anthropic.com",
     API_OPENAI: "https://api.openai.com",

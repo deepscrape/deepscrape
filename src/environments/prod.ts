@@ -3,7 +3,6 @@ export const environment = {
   "emulators": false,
   "assetsUri": "/assets/",
   "wsUrl": "wss://agent.deepscrape.dev",
-  "nekoUrl": "wss://neko-rtc.fly.dev",
   "firebaseConfig": {
     "apiKey": "AIzaSyC7GSMBH9_61g7x5LI_hj3vvGOeuvUAXaI",
     "authDomain": "libnet-d76db.firebaseapp.com",
@@ -21,9 +20,7 @@ export const environment = {
   "JINAAI_API_KEY": "",
   "GROQ_API_KEY": "",
   "GOOGLE_API_KEY": "",
-  "CRAWL4AI_API_KEY": "",
   "API_ARACHNEFLY_URL": "https://arachne.deepscrape.dev",
-  "API_CRAWL4AI_URL": "https://agent.deepscrape.dev",
   "API_ANTHROPIC": "https://api.anthropic.com",
   "API_OPENAI": "https://api.openai.com",
   "API_GROQ": "https://api.groq.com",

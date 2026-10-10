@@ -29,6 +29,7 @@ export const CLIENT_ANALYTICS_EVENTS = [
   "crawlpack_created",
   "machine_deployed",
   "machine_stopped",
+  "machine_task_executed",
   "org_created",
   "invitation_accepted",
   "api_key_created",

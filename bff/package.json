@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "cd .. && bun run ./bff/server.ts",
-    "dev": "cd .. && bun --watch run ./bff/server.ts",
+    "start": "cd .. && bun --env-file=bff/.env.dev run ./bff/server.ts",
+    "dev": "cd .. && bun --env-file=bff/.env.dev --watch run ./bff/server.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "docker:image": "docker build -f ../Dockerfile -t deepscrape-bff:local ..",

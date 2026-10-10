@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createBridge, toResponse } from './bridge'
+import { createBridge, runChain, toResponse } from './bridge'
 
 /**
  * The facade mediates every reused Express handler, so its shape is load-bearing.
@@ -112,5 +112,126 @@ describe('bridge: Express response surface', () => {
     const { state } = createBridge(new Request('http://localhost/x'), {})
 
     expect(toResponse(state).status).toBe(500)
+  })
+})
+
+/**
+ * The response EVENTS, which the credit-charging path settles on.
+ *
+ * `requirePaidAccess` reserves a credit and registers `res.once("finish", …)` to
+ * consume it. The bridged `res` was a bare object literal with no event surface, so
+ * that call threw INSIDE the middleware, its own catch answered 500, and every
+ * `paid`-gated route (crawl, the AI endpoints, machines, the job surface) failed
+ * for every paying customer — while leaving the reservation unsettled, so the
+ * customer lost the credit too. `streaming.spec.ts` could not have caught it: its
+ * guard is a stub that "refuses the way requirePaidAccess does" and never touches
+ * `once`. These drive the real call.
+ */
+describe('bridge: response events the money path settles on', () => {
+  test('once("finish") exists, fires once, and can read the final status', async () => {
+    const seen: Array<number | undefined> = []
+
+    const paidish = (_req: unknown, res: unknown, next: () => void) => {
+      const r = res as { once: (e: string, f: () => void) => void; statusCode?: number }
+      // The exact call that used to throw `res.once is not a function`.
+      r.once('finish', () => seen.push(r.statusCode))
+      next()
+    }
+
+    const handler = (_req: unknown, res: unknown) => {
+      const r = res as { status: (c: number) => { json: (p: unknown) => unknown } }
+      r.status(201).json({ ok: true })
+    }
+
+    const response = await runChain(
+      { request: new Request('http://localhost/api/crawl', { method: 'POST' }) },
+      [paidish as never, handler as never],
+    )
+
+    expect(response.status).toBe(201)
+    // 201, NOT undefined. An undefined status is never in 2xx/3xx, so the
+    // middleware's own predicate would have released the reservation and charged
+    // nothing even after `once` existed.
+    expect(seen).toEqual([201])
+  })
+
+  test('a call that throws fires close, not finish, so a reservation is released', async () => {
+    const fired: string[] = []
+
+    const paidish = (_req: unknown, res: unknown, next: () => void) => {
+      const r = res as { once: (e: string, f: () => void) => void }
+      r.once('finish', () => fired.push('finish'))
+      r.once('close', () => fired.push('close'))
+      next()
+    }
+
+    const boom = () => {
+      throw new Error('handler blew up')
+    }
+
+    const response = await runChain(
+      { request: new Request('http://localhost/api/crawl', { method: 'POST' }) },
+      [paidish as never, boom as never],
+    )
+
+    expect(response.status).toBe(500)
+    // Only close: emitting finish here would hand the listener the still-200 status
+    // and consume credits for work that never ran.
+    expect(fired).toEqual(['close'])
+  })
+
+  test('a settlement promise returning from a listener is awaited before the response', async () => {
+    const order: string[] = []
+
+    const paidish = (_req: unknown, res: unknown, next: () => void) => {
+      const r = res as { once: (e: string, f: () => Promise<void>) => void }
+      // This is what `requirePaidAccess` now does with its ledger write. If the
+      // bridge did not await it, the settlement could be lost when the platform
+      // freezes the instance as soon as the response is written.
+      r.once('finish', async () => {
+        await Promise.resolve()
+        order.push('settled')
+      })
+      next()
+    }
+
+    const handler = (_req: unknown, res: unknown) => {
+      ;(res as { json: (p: unknown) => unknown }).json({ ok: true })
+    }
+
+    await runChain(
+      { request: new Request('http://localhost/api/crawl', { method: 'POST' }) },
+      [paidish as never, handler as never],
+    )
+
+    expect(order).toEqual(['settled'])
+  })
+
+  test('a registered drain listener does not throw, and finish still fires once', async () => {
+    let ticks = 0
+
+    const streamingish = (_req: unknown, res: unknown, next: () => void) => {
+      const r = res as {
+        once: (e: string, f: () => void) => void
+        write: (chunk: string) => boolean
+      }
+      // `ai_handler` registers this on the streaming path; the bridge's write()
+      // always succeeds, so drain is registered and never emitted.
+      r.once('drain', () => (ticks += 100))
+      r.write('frame')
+      r.once('finish', () => (ticks += 1))
+      next()
+    }
+
+    const handler = (_req: unknown, res: unknown) => {
+      ;(res as { end: () => unknown }).end()
+    }
+
+    await runChain(
+      { request: new Request('http://localhost/api/anthropic/messages', { method: 'POST' }) },
+      [streamingish as never, handler as never],
+    )
+
+    expect(ticks).toBe(1)
   })
 })

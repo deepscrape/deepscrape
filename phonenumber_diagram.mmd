@@ -1,8 +1,0 @@
-graph TD
-    A[User enters phone number] --> B[Firebase sends SMS code]
-    B --> C[User enters verification code]
-    C --> D{Verify code}
-    D -->|Valid| E[Create/Link user account]
-    D -->|Invalid| F[Show error]
-    E --> G[Store user data in Firestore]
-    G --> H[Redirect to dashboard]

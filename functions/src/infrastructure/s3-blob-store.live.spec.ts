@@ -27,18 +27,15 @@ import assert from "node:assert/strict"
 import {
   createS3BlobStore,
   tigrisConfigFrom,
+  type S3BucketConfig,
   type TigrisEnvValues,
 } from "./s3-blob-store"
-
-/** Opt-in, because this suite writes to a real bucket. */
-const LIVE = process.env["RUN_LIVE_BLOB"] === "1"
 
 /**
  * The five values the S3 config needs, from the process environment.
  *
- * Read inside the test rather than at module load, so a skipped run reads
- * nothing and a run with the values absent fails on its own assertion rather
- * than at import time. The values are never printed.
+ * Read at call time rather than captured at module load, so a skipped run reads
+ * nothing. The values are never printed.
  * @return {TigrisEnvValues} The environment's Tigris values.
  */
 const liveValues = (): TigrisEnvValues => ({
@@ -49,12 +46,34 @@ const liveValues = (): TigrisEnvValues => ({
   secretAccessKey: process.env["TIGRIS_SECRET_ACCESS_KEY"] ?? "",
 })
 
+/**
+ * The live config, or null when this environment cannot satisfy it.
+ *
+ * `tigrisConfigFrom` THROWS on a partially configured deployment, and that is
+ * right in production -- a half-migrated bucket must not silently fall back to
+ * GCS. In a test the throw is the wrong shape: setting the opt-in without the
+ * values produced a RED suite that read like an adapter failure, when the truth
+ * was "this box is not configured". So the decision to run is taken from
+ * whether the values are complete, and the opt-in alone does not force a run.
+ * @return {S3BucketConfig | null} The config, or null when unconfigured.
+ */
+const liveConfig = (): S3BucketConfig | null => {
+  try {
+    return tigrisConfigFrom(liveValues())
+  } catch {
+    return null
+  }
+}
+
+/** Runs only when opted in AND the environment can satisfy it. */
+const LIVE = process.env["RUN_LIVE_BLOB"] === "1" && liveConfig() !== null
+
 /** A namespace of our own, so a run cannot reach a real artifact key. */
 const PREFIX = `__blobstore-selftest/${Date.now()}/`
 
 describe("the S3 adapter against a real bucket", {skip: !LIVE}, () => {
   it("round-trips put, stat, list, a signed URL and delete", async () => {
-    const config = tigrisConfigFrom(liveValues())
+    const config = liveConfig()
     assert.ok(config, "RUN_LIVE_BLOB=1 but the TIGRIS_* values are incomplete")
 
     const store = createS3BlobStore(config)
@@ -82,7 +101,10 @@ describe("the S3 adapter against a real bucket", {skip: !LIVE}, () => {
     )
 
     const url = await store.signedUrl(key, 60)
-    assert.ok(url.startsWith("http"), `signed url looks wrong: ${url}`)
+    // The URL is deliberately NOT interpolated into this message: a signed URL
+    // is a bearer credential in a query string, and a failing assertion is the
+    // one place it would reach a log or a transcript.
+    assert.ok(url.startsWith("http"), "signedUrl must return an http(s) URL")
 
     await store.delete(key)
     assert.equal(await store.stat(key), null, "delete must remove the object")

@@ -13,7 +13,9 @@ import { ClipboardbuttonComponent } from 'src/app/core/components/clipboardbutto
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component';
 import { AiToolCall, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, newToolCallAccumulator, openaiToolTurns, resolveToolCall, setAIModel } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
-import { AiAPIService, AiFetchService, SearchService, WebrainToolsService } from 'src/app/core/services';
+import { AiAPIService, AiFetchService, BucketStorageService, SearchService, WebrainToolsService } from 'src/app/core/services';
+// Not in the services barrel: every existing consumer imports it direct, so this follows them.
+import { BrowserSessionService } from 'src/app/core/services/browser-session.service';
 import { AIModel, SERP_DEFAULTS, SerpEngine } from 'src/app/core/types';
 
 export interface ChatMessage {
@@ -97,6 +99,8 @@ export class ChataiComponent {
     private readonly tools = inject(WebrainToolsService);
     private readonly serp = inject(SearchService);
     private readonly scraper = inject(AiFetchService);
+    private readonly sessions = inject(BrowserSessionService);
+    private readonly storage = inject(BucketStorageService);
     private readonly destroyRef = inject(DestroyRef);
     private readonly scroller = viewChild<ElementRef<HTMLElement>>('scroller');
 
@@ -276,18 +280,7 @@ export class ChataiComponent {
         const args = resolution.call.args;
         const route = resolution.tool.name;
 
-        const source: Observable<unknown> =
-            route === 'search'
-                ? this.tools.search({ ...args })
-                : route === 'serp'
-                    ? this.serp.search({
-                        ...SERP_DEFAULTS,
-                        query: String(args['query'] ?? ''),
-                        ...(args['engine'] ? { engine: args['engine'] as SerpEngine } : {}),
-                    })
-                    : route === 'scrape'
-                        ? this.scraper.scrape(String(args['url'] ?? ''))
-                        : of({ error: `No dispatcher for the tool "${route}".` });
+        const source = this.dispatch(route, args);
 
         return source.pipe(
             map(envelope => ({ call, content: toolResultText(envelope) })),
@@ -295,6 +288,44 @@ export class ChataiComponent {
                 of({ call, content: `The tool "${route}" failed: ${failureLine(error)}` }),
             ),
         );
+    }
+
+    /**
+     * Which service answers a tool name.
+     *
+     * A switch rather than a lookup table, because each route takes a DIFFERENT
+     * argument shape and goes through a different existing service -- the payload is
+     * the reason these cannot be collapsed into one generic call.
+     *
+     * Every branch reuses the service the UI already uses, so the route's own guard
+     * (`paid`, `perm(...)`) is the only thing deciding access. Nothing here widens
+     * what a caller may do; a refusal simply arrives as an error the model can read.
+     * @param {string} route The resolved tool name.
+     * @param {Record<string, unknown>} args The arguments the model supplied.
+     * @return {Observable<unknown>} The route's reply.
+     */
+    private dispatch(
+        route: string,
+        args: Record<string, unknown>,
+    ): Observable<unknown> {
+        switch (route) {
+            case 'search':
+                return this.tools.search({ ...args });
+            case 'serp':
+                return this.serp.search({
+                    ...SERP_DEFAULTS,
+                    query: String(args['query'] ?? ''),
+                    ...(args['engine'] ? { engine: args['engine'] as SerpEngine } : {}),
+                });
+            case 'scrape':
+                return this.scraper.scrape(String(args['url'] ?? ''));
+            case 'list_sessions':
+                return this.sessions.list();
+            case 'list_storage':
+                return this.storage.list();
+            default:
+                return of({ error: `No dispatcher for the tool "${route}".` });
+        }
     }
 
     private fail(error: unknown): void {

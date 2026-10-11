@@ -76,7 +76,13 @@ describe('offered tools', () => {
   it('offers only the tools marked available', () => {
     const offered = availableTools().map(tool => tool.name);
 
-    expect(offered).toEqual(['search', 'scrape', 'serp']);
+    expect(offered).toEqual([
+      'search',
+      'scrape',
+      'serp',
+      'list_sessions',
+      'list_storage',
+    ]);
   });
 
   it('defines every tool it offers', () => {

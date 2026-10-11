@@ -88,7 +88,7 @@ export const AI_VENDORS: readonly AiVendorDescriptor[] = [
     internalKey: true,
     minAccess: "paid",
     byok: true,
-    envKeyName: "CLAUDE_API_KEY",
+    envKeyName: "ANTHROPIC_API_KEY",
     notes:
       "Chat and streaming completions. Platform key is a plan entitlement.",
   },

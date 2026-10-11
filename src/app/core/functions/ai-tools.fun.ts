@@ -1,5 +1,6 @@
 /**
- * The webrain tools a chat model may call, in both provider dialects.
+ * The tools a chat model may call: the webrain worker routes and two read-only
+ * platform reads, in both provider dialects.
  *
  * Why this is not the panel's table
  * ---------------------------------
@@ -12,7 +13,7 @@
  * this is a second axis rather than a second copy, the same distinction
  * `AI_MODEL_VENDOR` and `isGroqModel` make.
  *
- * Which tools are OFFERED, and why not all seven
+ * Which tools are OFFERED, and why not all of them
  * ---------------------------------------------
  * Every tool below is defined, but only the `available` ones reach a model. The
  * rest fail for most callers for reasons the ROUTE owns, not the model:
@@ -225,6 +226,44 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
     ),
     path: '/api/extract/schema',
     available: false,
+  },
+
+  // ---- Platform read tools -------------------------------------------------
+  //
+  // A second family, and the distinction is the guard rather than the vendor.
+  // The webrain tools above reach a scraping worker; these two read this
+  // platform's own records, through the SAME services the UI already uses
+  // (`BrowserSessionService.list`, `BucketStorageService.list`), so the route's
+  // own `perm(...)` and `paid` guards apply unchanged -- exactly the property
+  // roadmap 7.1 requires.
+  //
+  // Why only these two, and never a machine list: `GET /api/machines` is
+  // `guard([paid, perm('machine','read')])`, so it refuses every free caller.
+  // Offering it would hand most users a tool that reliably fails, which is the
+  // reason `vision` is `false` too. Read-only and free-reachable is the bar.
+  //
+  // Nothing here spends. A session cannot be started, extended or closed through
+  // these, and no presigned URL is ever minted -- `presign` returns a 5-minute
+  // credential and is deliberately not exposed.
+  {
+    name: 'list_sessions',
+    description:
+      'List the browser sessions the caller currently has open, with mode, browser ' +
+      'kind, state and expiry. Use when asked what sessions are running or what is ' +
+      'still costing money. Read-only: cannot start, extend or close one.',
+    parameters: object({}),
+    path: '/api/browser/session',
+    available: true,
+  },
+  {
+    name: 'list_storage',
+    description:
+      'List the files the caller has saved, with key, size and the source URL each ' +
+      'was saved from. Covers their own files and the shared ones. Read-only: ' +
+      'cannot upload, delete or sign a download link.',
+    parameters: object({}),
+    path: '/api/storage/list',
+    available: true,
   },
 ];
 

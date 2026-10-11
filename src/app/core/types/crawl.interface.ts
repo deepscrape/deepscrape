@@ -522,9 +522,6 @@ export type CrawlJobType = 'playground' | 'operation'
  */
 export type CrawlProvider = 'crawl4ai' | 'webrain'
 
-/** Iterable form, for a picker. Keep in step with {@link CrawlProvider}. */
-export const CRAWL_PROVIDERS: readonly CrawlProvider[] = ['crawl4ai', 'webrain']
-
 /**
  * A pack's kind. Wider than {@link CrawlProvider} on purpose: pack documents already
  * exist that carry `spider`, which this union has to keep accepting.

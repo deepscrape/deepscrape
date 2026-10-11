@@ -18,7 +18,8 @@ rg -o "'/api/[a-z0-9/:_-]+'" deepscrape/bff/api.ts
 
 ## 1. The headline: there is no unserved frontend feature
 
-`route-parity`: **57 BFF routes · 18 client bases · 0 client calls with no route.**
+`route-parity`: **62 BFF routes · 19 client bases · 0 client calls with no route** (re-measured
+2026-10-11; this line read 57/18 when first written, and the frame route was added since).
 
 So the question "which frontend features have no backend?" answers **none**. The real hole is the
 inverse, and it is large: **the services expose far more than the frontend reaches.**
@@ -203,7 +204,7 @@ arachnefly route and it has no consumer — YAGNI until a proxy-assignment UI ex
 | Region | Why it waits |
 |---|---|
 | Fleet lifecycle actions, admin session reclaim | arachnefly's `MachineOwnershipMiddleware` has **no admin bypass**; moving an idle deadline suspends a customer's billing machine. Needs owner sign-off. |
-| `TransactionsComponent` | dead and unrouted. Needs a ledger-list endpoint to wire, or deletion. Product call. |
+| ~~`TransactionsComponent`~~ | **CORRECTED 2026-10-11 — the claim was stale and false.** It is routed (`billing.route.ts:40`), linked from the nav (`_nav.ts:206`), and calls `billingService.getUsageReport()` with four ranges, rendering invoices, payments and a summary. It needs no endpoint and no deletion. The only open question is whether `/billing/transactions` belongs in the nav. |
 | crawlagent's fate | LEGACY / do-not-push, yet still a live default and until this week was the websocket host. Its SSE + WS surface is now orphaned (§3). |
 
 ### Rebuild vs refactor
@@ -223,7 +224,7 @@ arachnefly route and it has no consumer — YAGNI until a proxy-assignment UI ex
 |---|---|---|
 | crawlagent's `routers/websocket_router.py`, WS/SSE handlers | frontend no longer dials crawlagent at all | it is the legacy reference; confirm before deleting |
 | `BrowserComponent` + neko cluster | already unmounted; kept as the prototype for roadmap `09` | owner said keep as reference |
-| `TransactionsComponent` | unrouted, unreferenced | product decision |
+| ~~`TransactionsComponent`~~ | **NOT a deletion candidate — removed 2026-10-11.** It is routed, nav-linked and calls a live callable; the "unrouted, unreferenced" evidence above was false. | — |
 
 ---
 

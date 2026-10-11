@@ -108,8 +108,12 @@ one.
 
 - The knowledge graph is 14 commits stale and must be refreshed before it can be trusted for
   structure queries; the MCP server also needs this root re-allowed.
-- `src/app/pages/user/billing/transactions/**` is orphaned — no route, no nav entry, and dead
-  i18n keys. Delete it or restore the route; leaving it is the failure mode decision 7 names.
+- ~~`src/app/pages/user/billing/transactions/**` is orphaned — no route, no nav entry, and dead
+  i18n keys. Delete it or restore the route; leaving it is the failure mode decision 7 names.~~
+  **CORRECTED 2026-10-11: this was false.** The component is routed (`billing.route.ts:40`), is in
+  the nav (`_nav.ts:206`), and is the one page that *does* consume the `invoices[]`/`payments[]`
+  arrays the next bullet calls ignored. The next bullet and this one were both stale and were
+  contradicting each other.
 - `getBillingUsage` still returns `invoices[]` and `payments[]` arrays the usage page ignores.
 - The card mirror (decision 3) is the strongest candidate for deletion in favour of a live
   `paymentMethods.list` call resolved from the caller's token, which would also make a

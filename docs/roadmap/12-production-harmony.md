@@ -148,7 +148,7 @@ Ordered, cheapest first. **Correctness before features**, and note how many are 
 | 3 | ~~**Two undeployed collection-group indexes** (`state` and `idleDeadline`, both on `browserSessions` — this row previously said `idleDeadline` was on `machines`, which was wrong).~~ **DONE 2026-10-11**: deployed to the `easyscrape` database, both `READY` with `COLLECTION_GROUP` scope. | done | `firestore.indexes.json`; §5 of the skill |
 | 4 | ~~**`GET /api/pricing/estimate`** (roadmap `07` Part F)~~ built 2026-10-11. It was never a missing feature: handler, domain function and client all existed, and the route was not registered. | done | `bff/api.ts` |
 | 5 | **Fleet lifecycle actions** (`/api/admin/machines`) and **admin session reclaim** need an owner sign-off: arachnefly's `MachineOwnershipMiddleware` has **no admin bypass**, and moving a session's idle deadline suspends a customer's live, still-billing machine. **Narrowed 2026-10-11:** the session READ now exists (`GET /api/admin/sessions`, bound in `bff/api.ts`), so the open gap is the ACTIONS only — reclaim still moves another tenant's deadline. | **decision** | `05` Part D; `admin-sessions.component.*`; `handlers/session-fleet.ts` |
-| 6 | **`TransactionsComponent` is dead** — no route (the billing table has `paymentmethods`, `plans`, `plan-details`, `usage`, `rates`, `success`, `cancel`, `passes`) and no reference. Wiring it needs a ledger-list endpoint; deleting it needs no work. | **product decision** | `routes/user/billing.route.ts` |
+| 6 | ~~**`TransactionsComponent` is dead**~~ — **CORRECTED 2026-10-11: false, and this row was inherited into an audit as fact.** It IS routed (`billing.route.ts:40`), IS referenced (`_nav.ts:206`), and calls `billingService.getUsageReport()`. It needs no ledger endpoint. Remaining question is nav placement only. | **product decision (nav placement)** | `routes/user/billing.route.ts`; `_nav.ts` |
 | 7 | **crawlagent is wired as a live default in places** (`API_CRAWL4AI_URL` → `crawlagent.fly.dev`; `SCRAPE_PROVIDER` frozen provider). That is intended — `crawl4ai` is a supported *frozen* provider — but the legacy pool's contract must not be extended. | decision already made | `config/env.ts`; `scrape-providers.domain.ts` |
 
 Closed during this audit: the `SCRAPE_PROVIDER` comment/code drift (the comment now states
@@ -165,7 +165,7 @@ Closed during this audit: the `SCRAPE_PROVIDER` comment/code drift (the comment 
 | `FirestoreCacheService` (`core/services/firestore-cache.service.ts`) | referenced nowhere outside itself | **removed** |
 | `PlutoService` + `PLUTO_ID` + spec | a third-party payments call on a personal domain, superseded by Stripe; the token's only two consumers were its own providers | **removed** |
 | `pages/landpage/` (4 files) | the marketing home is `pages/home`; this shell is referenced by nothing | **removed** |
-| `TransactionsComponent` | dead, but a plausible product surface | **kept — decide §4.6** |
+| ~~`TransactionsComponent`~~ | **not dead — corrected 2026-10-11.** Routed at `billing.route.ts:40`, linked at `_nav.ts:206`, calls `getUsageReport()`. | **kept — nav placement only** |
 | `BrowserComponent` + neko cluster (6 files) | dead, but the prototype for `09` | **kept — decided §3** |
 
 Gates after the removals: app `tsc` **0**, `bun run build` **0** (34.8 s, no budget errors),
@@ -190,7 +190,9 @@ Ordered. Steps 1–3 are correctness and cost nothing to decide.
 4. Owner sign-off on the **two admin action classes** (§4.5) — or accept read-only as the answer,
    which is what the code does today.
 5. ~~`GET /api/pricing/estimate` (§4.4) — the last absent pricing surface.~~ Built 2026-10-11.
-6. Decide `TransactionsComponent` (§4.6): wire it against the credit ledger, or delete it.
+6. ~~Decide `TransactionsComponent` (§4.6): wire it against the credit ledger, or delete it.~~
+   **Resolved 2026-10-11 — it was already wired.** Routed, nav-linked, calling `getUsageReport()`.
+   There is nothing to wire and nothing to delete; only nav placement is a product call.
 7. Phase 4 (`04-organizations-and-billing.md`) — BYO Fly org + `computeSource`. **Not started**,
    and it is the only remaining *feature* block.
 
@@ -217,8 +219,8 @@ honour, two indexes to publish, one small route, and three decisions.
 ## 8. The owner's ten-item list, re-measured 2026-10-10
 
 Asked for directly, so it is answered item by item against the code rather than against the plan.
-Measurements: `bunx tsx scripts/route-parity.ts` → **57 routes / 18 client bases / 0 client calls
-with no route**; a class-name orphan sweep over 189 components + services → **4 dead surfaces** (§5).
+Measurements: `bunx tsx scripts/route-parity.ts` → **62 routes / 19 client bases / 0 client calls
+with no route** (re-measured 2026-10-11; read 57/18 when first written); a class-name orphan sweep over 189 components + services → **4 dead surfaces** (§5).
 
 | # | Item | Status | Evidence |
 |---|---|---|---|
@@ -233,7 +235,7 @@ with no route**; a class-name orphan sweep over 189 components + services → **
 | 7 | Crawl packs | **built** | 5 tabs; the `machines` tab was deliberately moved to `/machines` |
 | 8 | Dashboard | **built** | the neko WebRTC viewer was unmounted on purpose (§3) |
 | 9 | Analytics | **built** | `admin-analytics` + `firestore-analytics` + `analytics-range` |
-| 10 | Payments | **built, one dead surface** | plans, plan-details, usage, rates, success, cancel, passes, paymentmethods — but `TransactionsComponent` is **unrouted** |
+| 10 | Payments | **built** | plans, plan-details, usage, rates, success, cancel, passes, paymentmethods, and `TransactionsComponent` — **which is routed and wired, not dead** (`billing.route.ts:40`, corrected 2026-10-11) |
 
 ### The dead / legacy ledger, re-measured
 
@@ -242,7 +244,7 @@ with no route**; a class-name orphan sweep over 189 components + services → **
 | `BrowserComponent` + its client stack | dead, **kept** — the prototype for roadmap `09` (§3) |
 | `FirestoreCacheService` | dead — no reference outside itself |
 | `LandPageComponent` (whole `pages/landpage/`) | dead — the marketing home is `pages/home` |
-| `TransactionsComponent` | dead, unrouted — item 10's product decision |
+| ~~`TransactionsComponent`~~ | **NOT dead — removed from this ledger 2026-10-11.** Routed and nav-linked; see §4.6. |
 
 **Repeatedly reverted:** the `FirestoreCacheService` and `pages/landpage/` deletions, and the
 `graph` resource work, have each been restored by a `git` operation in this tree. Two writers are

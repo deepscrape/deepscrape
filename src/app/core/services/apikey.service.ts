@@ -301,13 +301,44 @@ export class ApiKeyService {
         return Date.now().toString(36) + Math.random().toString(36).substr(2);
     }
 
+    /**
+     * A key body from the platform CSPRNG.
+     *
+     * `Math.random()` is not one. It is a fast seedable PRNG whose internal state is
+     * recoverable from its output, and this string is a bearer credential -- the one
+     * value on this platform whose whole job is to be unguessable. A key that nothing
+     * verifies yet is still a key that will, so the generator is fixed now rather than
+     * after something starts reading it.
+     *
+     * The rejection loop is not decoration either: `byte % 62` over a 256-value byte
+     * favours the first eight characters of the alphabet, which shrinks the effective
+     * keyspace by exactly the amount the modulo bias leaks.
+     * @param {number} length
+     * @return {string}
+     */
     private generateRandomKey(length: number = 32): string {
         const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        let result = '';
-        for (let i = 0; i < length; i++) {
-            result += characters.charAt(Math.floor(Math.random() * characters.length));
+        // 248 is the largest multiple of 62 below 256, so discarding 248..255 is what
+        // makes every character equally likely.
+        const ceiling = 248;
+        const out: string[] = [];
+        const bytes = new Uint8Array(length);
+
+        while (out.length < length) {
+            globalThis.crypto.getRandomValues(bytes);
+
+            for (const byte of bytes) {
+                if (byte < ceiling) {
+                    out.push(characters.charAt(byte % 62));
+
+                    if (out.length === length) {
+                        break;
+                    }
+                }
+            }
         }
-        return result;
+
+        return out.join('');
     }
 
     generateFakeKey(size: number = 32, start: number = 0): string {

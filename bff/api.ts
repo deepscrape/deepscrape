@@ -35,6 +35,7 @@ import {
   webrainVault,
   webrainVision,
 } from '../functions/src/handlers/webrain-tools'
+import { browserVault } from '../functions/src/handlers/vault'
 import { schemaCompiler } from '../functions/src/handlers/schema-compiler'
 import {
   monitorChecks,
@@ -352,6 +353,21 @@ api.post(
 api.post(
   '/api/browser/session/vault',
   h(guard([access, perm('crawl', 'execute'), webrainVault])),
+)
+
+// The durable vault: the platform's own storage for a cookie jar, so a profile
+// outlives the machine it was captured on (`handlers/vault.ts`).
+//
+// A DIFFERENT route from `/api/browser/session/vault` above, and the difference
+// is which side owns the bytes. That one drives the WORKER's vault ops, which
+// need a browser and are refused for non-admins; this one only stores, reads,
+// lists and forgets what a caller hands it, so it needs no worker, no session
+// and no endpoint. `access`, not `paid`, because the thing being bounded is
+// abuse (`VAULT_MAX_ENTRIES`) rather than the caller's plan -- and the published
+// claim about profiles does not name a tier.
+api.post(
+  '/api/browser/vault',
+  h(guard([access, perm('crawl', 'execute'), browserVault])),
 )
 
 // ── pricing ──────────────────────────────────────────────────────────────────

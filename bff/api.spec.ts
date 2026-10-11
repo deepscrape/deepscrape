@@ -48,6 +48,7 @@ const ROUTES: Array<[string, string]> = [
   ['POST', '/api/machines/deploy'],
   ['GET', '/api/browser/session'],
   ['POST', '/api/browser/session'],
+  ['POST', '/api/browser/vault'],
   ['POST', '/api/browser/session/session-1/keepalive'],
   ['POST', '/api/browser/session/session-1/close'],
   ['PUT', '/api/orgs/org-1'],

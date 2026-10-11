@@ -14,6 +14,7 @@ import {
   isSafeVaultName,
   toPublicVaultEntry,
   vaultBlobKey,
+  vaultKeyPrefix,
   vaultEntryId,
   vaultKeySecretId,
 } from "./vault-entry.domain"
@@ -81,6 +82,16 @@ describe("vaultBlobKey", () => {
       vaultBlobKey("u1", "github", "work"),
       vaultBlobKey("u2", "github", "work"),
     )
+  })
+
+  it("sits under the prefix a purge sweeps", () => {
+    // The account purge walks `vaultKeyPrefix(uid)` and nothing else in this
+    // namespace, so a blob key that was not under it would be un-erasable -- a
+    // credential outliving the account.
+    const key = vaultBlobKey("u1", "github", "work")
+
+    assert.ok(key.startsWith(vaultKeyPrefix("u1")))
+    assert.equal(key.startsWith(vaultKeyPrefix("u2")), false)
   })
 })
 

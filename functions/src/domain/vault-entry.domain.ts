@@ -94,6 +94,24 @@ export const vaultEntryId = (service: string, profile: string): string =>
   `${service}:${profile}`
 
 /**
+ * The object-key prefix every entry of one caller lives under.
+ *
+ * Exists so ERASURE can sweep by prefix. `purgeAccountBlobs` walks the artifact
+ * namespace derived from a uid, and the vault namespace is a SIBLING of that
+ * one, not a child -- so a purge that knew only `userObjectKeyPrefix` would
+ * leave every vault payload behind: a credential outliving the account that
+ * owned it. Two namespaces is what keeping entries out of the artifact listing
+ * costs, since the storage page renders that listing.
+ *
+ * Unlike the artifact prefix this one carries the RAW uid. That is the specified
+ * shape (`vault/<uid>/...`), it never leaves the platform bucket, and the
+ * account purge has to be able to derive it from a uid alone.
+ * @param {string} uid The verified caller uid.
+ * @return {string} The key prefix, trailing slash included.
+ */
+export const vaultKeyPrefix = (uid: string): string => `vault/${uid}/`
+
+/**
  * Where an entry's payload lives in the shared artifact bucket.
  *
  * Derived from the identity, never stored -- see this file's header. The `vault/`
@@ -108,7 +126,7 @@ export const vaultBlobKey = (
   uid: string,
   service: string,
   profile: string,
-): string => `vault/${uid}/${service}/${profile}.json`
+): string => `${vaultKeyPrefix(uid)}${service}/${profile}.json`
 
 /**
  * The Secret Manager id for a caller's vault key.

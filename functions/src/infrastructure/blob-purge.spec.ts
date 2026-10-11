@@ -20,6 +20,7 @@ import {
 } from "./blob-purge"
 import {LIST_LIMIT, userObjectKeyPrefix} from "../domain/storage-scope.domain"
 import type {BlobStore, StoredBlob} from "./blob-store.port"
+import {vaultKeyPrefix} from "../domain/vault-entry.domain"
 
 /**
  * One page of fake objects, keyed so a wrong prefix is visible.
@@ -35,18 +36,30 @@ const pageOf = (size: number, tag: string): StoredBlob[] =>
   }))
 
 /**
- * A store that answers each page in turn, then an empty one.
- * @param {Array} pages The pages to hand back, in order; each is a `StoredBlob[]`.
+ * A store that answers two namespaces: the artifact one from `pages`, the vault
+ * one from `vaultPages`.
+ *
+ * Split by namespace because a purge walks BOTH, and one shared queue would let
+ * either namespace's pages satisfy the other's assertions -- which is the
+ * confusion this file exists to catch rather than to have.
+ * @param {Array} pages Artifact-namespace pages, in order.
+ * @param {Array} vaultPages Vault-namespace pages, in order. Empty by default.
  * @return {object} The fake store, the keys it deleted, the prefixes asked for.
  */
-const storeOver = (pages: StoredBlob[][]) => {
+const storeOver = (pages: StoredBlob[][], vaultPages: StoredBlob[][] = []) => {
   const deleted: string[] = []
   const prefixes: string[] = []
   let call = 0
+  let vaultCall = 0
 
   const store = {
     list: async (prefix: string) => {
       prefixes.push(prefix)
+      if (prefix.startsWith("vault/")) {
+        const vaultPage = vaultPages[vaultCall] ?? []
+        vaultCall += 1
+        return vaultPage
+      }
       const page = pages[call] ?? []
       call += 1
       return page
@@ -60,16 +73,36 @@ const storeOver = (pages: StoredBlob[][]) => {
 }
 
 describe("purgeAccountBlobs", () => {
-  it("sweeps the caller's OWN derived namespace, and nothing else", async () => {
+  it("sweeps both of the caller's namespaces, and nothing else", async () => {
     const {store, deleted, prefixes} = storeOver([pageOf(2, "a")])
     const count = await purgeAccountBlobs("uid-1", store)
 
     assert.equal(count, 2)
     assert.deepEqual(deleted, ["a/0", "a/1"])
-    // The load-bearing assertion: the prefix is the one derived from this uid.
-    assert.deepEqual(prefixes, [userObjectKeyPrefix("uid-1")])
+    // The load-bearing assertion: both prefixes are derived from this uid, so
+    // neither can reach another account's objects.
+    assert.deepEqual(prefixes, [
+      userObjectKeyPrefix("uid-1"),
+      vaultKeyPrefix("uid-1"),
+    ])
     assert.ok(prefixes[0].startsWith("users/"))
     assert.equal(prefixes[0].includes("uid-1"), false, "prefix must not hold a raw uid")
+  })
+
+  it("deletes the vault payload that no artifact prefix reaches", async () => {
+    // Why the second namespace exists: a vault key is `vault/<uid>/...`, a
+    // SIBLING of the artifact prefix, so a one-namespace sweep left a credential
+    // behind. This is the case that fails if the second walk is removed.
+    const {store, deleted} = storeOver(
+      [pageOf(1, "art")],
+      [pageOf(2, "vault/uid-1/github")],
+    )
+
+    const count = await purgeAccountBlobs("uid-1", store)
+
+    assert.equal(count, 3)
+    assert.ok(deleted.includes("vault/uid-1/github/0"))
+    assert.ok(deleted.includes("vault/uid-1/github/1"))
   })
 
   it("uses a different namespace per caller, so one cannot reach another", async () => {
@@ -79,7 +112,11 @@ describe("purgeAccountBlobs", () => {
     await purgeAccountBlobs("uid-1", first.store)
     await purgeAccountBlobs("uid-2", second.store)
 
+    // Both namespaces, and both differ per caller: a sweep that shared a prefix
+    // between accounts would delete a stranger's objects.
     assert.notEqual(first.prefixes[0], second.prefixes[0])
+    assert.notEqual(first.prefixes[1], second.prefixes[1])
+    assert.equal(first.prefixes[1], vaultKeyPrefix("uid-1"))
   })
 
   it("answers zero when no platform bucket is configured", async () => {
@@ -97,8 +134,9 @@ describe("purgeAccountBlobs", () => {
 
     assert.equal(count, LIST_LIMIT + 3)
     assert.equal(deleted.length, LIST_LIMIT + 3)
-    // Two listings: the full one, then the short one that ended the walk.
-    assert.equal(prefixes.length, 2)
+    // Three listings: the full artifact page, the short one that ended that
+    // walk, then the vault namespace's single empty answer.
+    assert.equal(prefixes.length, 3)
   })
 
   it("stops at its page ceiling instead of looping forever", async () => {

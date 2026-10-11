@@ -27,47 +27,48 @@
  * third party's storage and delete. Only the platform bucket is ours to clean.
  */
 import {LIST_LIMIT, userObjectKeyPrefix} from "../domain/storage-scope.domain"
+import {vaultKeyPrefix} from "../domain/vault-entry.domain"
 import type {BlobStore} from "./blob-store.port"
 import {getPlatformBlobStore} from "./platform-blob-store"
 
 /**
- * Pages a purge will walk before giving up on one account.
+ * Pages a purge will walk before giving up on one NAMESPACE.
  *
  * A ceiling rather than an unbounded loop, because this runs inside a scheduled
  * function that has a timeout and a batch of other accounts behind it. Running
  * out of budget is logged rather than silently truncating, so an account that
- * really does hold more than this is visible instead of assumed clean.
+ * really does hold more than this is visible instead of assumed clean. It is per
+ * namespace because each one is a separate listing walk and each can be
+ * separately endless.
  */
 export const BLOB_PURGE_MAX_PAGES = 25
 
 /**
- * Delete every object one caller owns in the platform bucket.
+ * Every namespace in the platform bucket that belongs to one account.
  *
- * Best-effort by contract: returns what it removed and lets a genuine failure
- * propagate, so the caller decides whether it is fatal. The purge treats an
- * object-store outage as one account's problem, never as a reason to skip
- * everyone else's erasure -- the same rule the secret loop follows.
- *
- * `store` is a PARAMETER rather than a lookup, for the reason
- * `planWorkerAcquisition` takes its pool the same way: supply is not this
- * module's business, and a caller that resolves it here cannot be tested without
- * an emulator. The default resolves the platform bucket, so production callers
- * pass one argument and a spec passes a fake.
+ * Two, and both are required. The artifact namespace is keyed by the HASHED uid;
+ * the vault namespace by the raw one, because `vaultBlobKey` is specified that
+ * way and a purge has to derive it from a uid alone. Neither is a prefix of the
+ * other, so a sweep that knew one would leave the other behind -- and what it
+ * would leave behind in the vault is a credential.
  * @param {string} uid The account being erased.
- * @param {BlobStore | null} store The platform store, or null when none exists.
- * @return {Promise<number>} How many objects were deleted.
+ * @return {string[]} The prefixes to sweep.
  */
-export const purgeAccountBlobs = async (
-  uid: string,
-  store: BlobStore | null = getPlatformBlobStore(),
-): Promise<number> => {
-  if (!store) {
-    // No platform bucket is configured, so nothing of ours can be holding this
-    // account's bytes. A complete answer, not a failure to have tried.
-    return 0
-  }
+const purgePrefixes = (uid: string): string[] => [
+  userObjectKeyPrefix(uid),
+  vaultKeyPrefix(uid),
+]
 
-  const prefix = userObjectKeyPrefix(uid)
+/**
+ * Delete every object under one prefix, up to the page ceiling.
+ * @param {BlobStore} store The platform store.
+ * @param {string} prefix The namespace to sweep.
+ * @return {Promise<number>} How many objects this walk deleted.
+ */
+const purgePrefix = async (
+  store: BlobStore,
+  prefix: string,
+): Promise<number> => {
   let deleted = 0
 
   for (let page = 0; page < BLOB_PURGE_MAX_PAGES; page += 1) {
@@ -86,8 +87,46 @@ export const purgeAccountBlobs = async (
   }
 
   console.warn(
-    `Blob purge hit its page ceiling (${BLOB_PURGE_MAX_PAGES}) for ${uid}; ` +
+    `Blob purge hit its page ceiling (${BLOB_PURGE_MAX_PAGES}) for ${prefix}; ` +
     `${deleted} objects deleted so far.`,
   )
+  return deleted
+}
+
+/**
+ * Delete every object one caller owns in the platform bucket.
+ *
+ * Best-effort by contract: returns what it removed and lets a genuine failure
+ * propagate, so the caller decides whether it is fatal. The purge treats an
+ * object-store outage as one account's problem, never as a reason to skip
+ * everyone else's erasure -- the same rule the secret loop follows.
+ *
+ * `store` is a PARAMETER rather than a lookup, for the reason
+ * `planWorkerAcquisition` takes its pool the same way: supply is not this
+ * module's business, and a caller that resolves it here cannot be tested without
+ * an emulator. The default resolves the platform bucket, so production callers
+ * pass one argument and a spec passes a fake.
+ *
+ * A failure in the first namespace therefore aborts the whole purge rather than
+ * being swallowed: a partial erasure that reports success is worse than one that
+ * throws, and the caller (`purgeOneAccount`) is already retry-safe.
+ * @param {string} uid The account being erased.
+ * @param {BlobStore | null} store The platform store, or null when none exists.
+ * @return {Promise<number>} How many objects were deleted.
+ */
+export const purgeAccountBlobs = async (
+  uid: string,
+  store: BlobStore | null = getPlatformBlobStore(),
+): Promise<number> => {
+  if (!store) {
+    // No platform bucket is configured, so nothing of ours can be holding this
+    // account's bytes. A complete answer, not a failure to have tried.
+    return 0
+  }
+
+  let deleted = 0
+  for (const prefix of purgePrefixes(uid)) {
+    deleted += await purgePrefix(store, prefix)
+  }
   return deleted
 }

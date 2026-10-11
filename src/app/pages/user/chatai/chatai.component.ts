@@ -4,12 +4,17 @@ import { FormControl, FormsModule, Validators } from '@angular/forms';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { TranslateModule } from '@ngx-translate/core';
 import { MarkdownModule } from 'ngx-markdown';
+import { Observable } from 'rxjs/internal/Observable';
+import { forkJoin } from 'rxjs/internal/observable/forkJoin';
+import { of } from 'rxjs/internal/observable/of';
+import { catchError } from 'rxjs/internal/operators/catchError';
+import { map } from 'rxjs/internal/operators/map';
 import { ClipboardbuttonComponent } from 'src/app/core/components/clipboardbutton/clipboardbutton.component';
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component';
-import { setAIModel } from 'src/app/core/functions';
+import { AiToolCall, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, newToolCallAccumulator, openaiToolTurns, resolveToolCall, setAIModel } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
-import { AiAPIService } from 'src/app/core/services';
-import { AIModel } from 'src/app/core/types';
+import { AiAPIService, AiFetchService, SearchService, WebrainToolsService } from 'src/app/core/services';
+import { AIModel, SERP_DEFAULTS, SerpEngine } from 'src/app/core/types';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -89,6 +94,9 @@ export class ChataiComponent {
     );
 
     private readonly ai = inject(AiAPIService);
+    private readonly tools = inject(WebrainToolsService);
+    private readonly serp = inject(SearchService);
+    private readonly scraper = inject(AiFetchService);
     private readonly destroyRef = inject(DestroyRef);
     private readonly scroller = viewChild<ElementRef<HTMLElement>>('scroller');
 
@@ -96,6 +104,16 @@ export class ChataiComponent {
     readonly draft = signal('');
     readonly streaming = signal(false);
     readonly failed = signal(false);
+
+    /**
+     * The tool running right now, or empty.
+     *
+     * A chip rather than a transcript turn: it is transient UI state, and a turn would
+     * have to be excluded from the history handed back to the model on the next send.
+     * The raw tool name is shown, not prose -- identifiers like `search` are not
+     * translated, the same way a model id is not.
+     */
+    readonly toolRunning = signal('');
 
     private readonly system = "You are deepscrape's assistant. Reply in concise markdown.";
 
@@ -136,26 +154,158 @@ export class ChataiComponent {
         this.streaming.set(true);
         this.failed.set(false);
 
-        const stream = request.provider === 'claude'
-            ? this.ai.sendToClaudeAI(request.messages, this.modelAI.value.name, this.system)
-            : this.ai.sendToOpenAI(request.messages, this.modelAI.value.name);
+        // The array is the conversation the PROVIDER sees. It is extended in place once a
+        // tool round adds turns, so the answering round reads the calls and their results
+        // rather than being asked the original question again.
+        this.stream(request, request.messages, true);
+    }
 
-        stream
+    /**
+     * One round against the picked provider.
+     *
+     * Streams even when a tool is offered, because a model that decides to call one
+     * usually writes a sentence first, and a non-streaming round would freeze on it.
+     * The trade is that a tool call has to be reassembled from fragments, which is what
+     * the accumulator is for.
+     *
+     * `offerTools` is false on the answering round: offering them again would invite
+     * another call instead of the answer the user is waiting for.
+     * @param {ChatRequest} request Which dialect, and the turns to send.
+     * @param {Array} messages The provider-side conversation, extended in place.
+     * @param {boolean} offerTools Whether this round may call a tool.
+     * @return {void}
+     */
+    private stream(
+        request: ChatRequest,
+        messages: Array<{ role: string; content: unknown }>,
+        offerTools: boolean,
+    ): void {
+        const claude = request.provider === 'claude';
+        const offered = offerTools ? availableTools() : undefined;
+        const accumulator = newToolCallAccumulator();
+
+        const source = claude
+            ? this.ai.sendToClaudeAI(messages, this.modelAI.value.name, this.system, offered)
+            : this.ai.sendToOpenAI(messages, this.modelAI.value.name, undefined, offered);
+
+        source
             .pipe(takeUntilDestroyed(this.destroyRef))
             .subscribe({
                 // Each emission is a DELTA, not the accumulated text.
-                next: chunk => this.appendToReply(chunk?.content ?? ''),
-                error: (error: unknown) => {
-                    console.error('AI chat stream failed:', error);
-                    // Drop the empty placeholder, or the transcript keeps a spinner forever.
-                    this.messages.update(list =>
-                        list[list.length - 1]?.content ? list : list.slice(0, -1),
-                    );
-                    this.failed.set(true);
-                    this.streaming.set(false);
+                next: chunk => {
+                    // Claude reports a call as a raw SSE event, OpenAI as a delta on the
+                    // chunk. The two accumulators are the only place that difference lives.
+                    if (claude) {
+                        if (chunk?.event) {
+                            accumulateAnthropic(accumulator, chunk.event);
+                        }
+                    } else if (chunk?.toolCalls) {
+                        accumulateOpenAi(accumulator, chunk.toolCalls);
+                    }
+
+                    this.appendToReply(chunk?.content ?? '');
                 },
-                complete: () => this.streaming.set(false),
+                error: (error: unknown) => this.fail(error),
+                complete: () => {
+                    const calls = finishToolCalls(accumulator);
+
+                    if (!offerTools || calls.length === 0) {
+                        this.streaming.set(false);
+                        return;
+                    }
+
+                    this.runTools(request, messages, calls);
+                },
             });
+    }
+
+    /**
+     * Execute the model's calls, then let it answer.
+     *
+     * ONE round, deliberately. A second round is a spend decision rather than a chat
+     * feature: a model that keeps calling a tool would bill the caller per round with no
+     * ceiling, and nothing here has one yet. This is the seam to widen when it does.
+     * @param {ChatRequest} request Which dialect, and the turns to send.
+     * @param {Array} messages The provider-side conversation, extended in place.
+     * @param {AiToolCall[]} calls The calls to run, in the order the model emitted them.
+     * @return {void}
+     */
+    private runTools(
+        request: ChatRequest,
+        messages: Array<{ role: string; content: unknown }>,
+        calls: readonly AiToolCall[],
+    ): void {
+        // `forkJoin` keeps the order `calls` declared, which matters: the results are
+        // matched to the calls positionally by the turn builders.
+        forkJoin(calls.map(call => this.execute(call))).subscribe({
+            next: results => {
+                messages.push(
+                    ...(request.provider === 'claude'
+                        ? anthropicToolTurns(calls, results)
+                        : openaiToolTurns(calls, results)),
+                );
+
+                this.toolRunning.set('');
+                this.stream(request, messages, false);
+            },
+            error: (error: unknown) => this.fail(error),
+        });
+    }
+
+    /**
+     * Run one call and reduce it to the text the model gets back.
+     *
+     * Never errors, from either branch. A refused call and a failed route are both
+     * ANSWERS the model can act on ("that tool is unavailable"), and letting either
+     * reject would abort the whole round -- so one flaky tool would kill a transcript
+     * that could have carried on. `resolveToolCall` runs first, because the name and the
+     * arguments are model output: untrusted input at a trust boundary, and nothing
+     * reaches a route because a model asked.
+     * @param {AiToolCall} call One call as the model emitted it.
+     * @return {Observable<ToolCallResult>} The call paired with its result text.
+     */
+    private execute(call: AiToolCall): Observable<ToolCallResult> {
+        const resolution = resolveToolCall(call);
+
+        if (!resolution.ok) {
+            return of({ call, content: refusalText(resolution) });
+        }
+
+        this.toolRunning.set(resolution.tool.name);
+
+        const args = resolution.call.args;
+        const route = resolution.tool.name;
+
+        const source: Observable<unknown> =
+            route === 'search'
+                ? this.tools.search({ ...args })
+                : route === 'serp'
+                    ? this.serp.search({
+                        ...SERP_DEFAULTS,
+                        query: String(args['query'] ?? ''),
+                        ...(args['engine'] ? { engine: args['engine'] as SerpEngine } : {}),
+                    })
+                    : route === 'scrape'
+                        ? this.scraper.scrape(String(args['url'] ?? ''))
+                        : of({ error: `No dispatcher for the tool "${route}".` });
+
+        return source.pipe(
+            map(envelope => ({ call, content: toolResultText(envelope) })),
+            catchError((error: unknown) =>
+                of({ call, content: `The tool "${route}" failed: ${failureLine(error)}` }),
+            ),
+        );
+    }
+
+    private fail(error: unknown): void {
+        console.error('AI chat stream failed:', error);
+        // Drop the empty placeholder, or the transcript keeps a spinner forever.
+        this.messages.update(list =>
+            list[list.length - 1]?.content ? list : list.slice(0, -1),
+        );
+        this.toolRunning.set('');
+        this.failed.set(true);
+        this.streaming.set(false);
     }
 
     onKeydown(event: KeyboardEvent): void {
@@ -180,4 +330,54 @@ export class ChataiComponent {
             return [...list.slice(0, -1), { ...last, content: last.content + delta }];
         });
     }
+}
+
+/** How much of a route's answer the model is shown. */
+const TOOL_RESULT_LIMIT = 6000;
+
+/**
+ * A route's answer as text for the model, capped.
+ *
+ * JSON rather than a per-route summary: the three envelopes carry three different
+ * payloads, and naming their fields here would be exactly the drift
+ * `webrain-tools.interface.ts` refuses to commit. The cap is the point -- one scrape of
+ * a large page would otherwise spend the whole context window on a single tool result,
+ * and the caller pays for that again on the next round.
+ *
+ * Exported and pure so the spec can pin it without standing up the component.
+ */
+export function toolResultText(envelope: unknown): string {
+    const text = JSON.stringify(envelope) ?? '';
+
+    return text.length > TOOL_RESULT_LIMIT
+        ? text.slice(0, TOOL_RESULT_LIMIT) + '… [truncated]'
+        : text;
+}
+
+/**
+ * Why a call was refused, as something the model can act on.
+ *
+ * Addressed to the model rather than the user, so it is English prose and not a
+ * translation key -- the rule the tool descriptions already follow. A refusal that said
+ * only "error" would leave the model with no way to correct itself, which is the whole
+ * reason this path exists instead of silently dropping the call.
+ *
+ * Exported and pure so the spec can pin it.
+ */
+export function refusalText(
+    resolution: Extract<ToolCallResolution, { ok: false }>,
+): string {
+    switch (resolution.reason) {
+        case 'unknown-tool':
+            return `There is no tool named "${resolution.name}". Call only the tools you were offered.`;
+        case 'not-offered':
+            return `The tool "${resolution.name}" is not available here. Answer without it.`;
+        default:
+            return `The arguments for "${resolution.name}" could not be read. Send valid JSON.`;
+    }
+}
+
+/** A transport failure as one line, for the model. */
+function failureLine(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }

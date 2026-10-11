@@ -3,11 +3,13 @@ import {
   accumulateAnthropic,
   accumulateOpenAi,
   anthropicToolCalls,
+  anthropicToolTurns,
   anthropicTools,
   availableTools,
   finishToolCalls,
   newToolCallAccumulator,
   openaiToolCalls,
+  openaiToolTurns,
   openaiTools,
   replyText,
   resolveToolCall,
@@ -304,5 +306,87 @@ describe('replyText', () => {
     expect(
       replyText({ content: [{ type: 'tool_use', id: 'x', name: 'search' }] }, 'claude')
     ).toBe('');
+  });
+});
+
+/**
+ * The turns a tool round appends to the conversation.
+ *
+ * These shapes are protocol contracts rather than preferences: Anthropic rejects a
+ * `tool_result` with no preceding assistant `tool_use` block, and OpenAI rejects
+ * Anthropic's shape outright. Neither failure is visible to `tsc` or to a component
+ * test -- it appears only against a live provider, which is what makes it worth
+ * pinning here.
+ */
+describe('tool result turns', () => {
+  const calls: AiToolCall[] = [
+    { id: 'a', name: 'search', args: { q: 'x' } },
+    { id: 'b', name: 'pdf', args: { op: 'page' } },
+  ];
+  const results = [
+    { call: calls[0], content: '{"status":"ok"}' },
+    { call: calls[1], content: 'The tool "pdf" is not available here.' },
+  ];
+
+  it('echoes every call before reporting any result, for Claude', () => {
+    const turns = anthropicToolTurns(calls, results);
+
+    expect(turns.length).toBe(2);
+    expect(turns[0].role).toBe('assistant');
+    expect(turns[0].content).toEqual([
+      { type: 'tool_use', id: 'a', name: 'search', input: { q: 'x' } },
+      { type: 'tool_use', id: 'b', name: 'pdf', input: { op: 'page' } },
+    ]);
+    expect(turns[1].role).toBe('user');
+    expect(turns[1].content).toEqual([
+      { type: 'tool_result', tool_use_id: 'a', content: '{"status":"ok"}' },
+      {
+        type: 'tool_result',
+        tool_use_id: 'b',
+        content: 'The tool "pdf" is not available here.',
+      },
+    ]);
+  });
+
+  it('answers a refused call too, because a missing result is a 400', () => {
+    // The refusal IS the result. Omitting it would leave a `tool_use` block with
+    // nothing answering it, which Anthropic rejects before it reads the question.
+    const refused = anthropicToolTurns([calls[1]], [results[1]]);
+    const blocks = refused[1].content as { tool_use_id: string }[];
+
+    expect(blocks.length).toBe(1);
+    expect(blocks[0].tool_use_id).toBe('b');
+  });
+
+  it('uses a different shape for OpenAI, with arguments as a JSON string', () => {
+    const turns = openaiToolTurns(calls, results);
+
+    expect(turns.length).toBe(3);
+    expect(turns[0].role).toBe('assistant');
+    // `null`, not an empty string: an assistant turn that carries calls has no text.
+    expect(turns[0].content).toBeNull();
+    expect(turns[0].tool_calls).toEqual([
+      {
+        id: 'a',
+        type: 'function',
+        function: { name: 'search', arguments: '{"q":"x"}' },
+      },
+      {
+        id: 'b',
+        type: 'function',
+        function: { name: 'pdf', arguments: '{"op":"page"}' },
+      },
+    ]);
+    // ONE turn per result, each joined back by id -- not one combined user turn.
+    expect(turns[1]).toEqual({
+      role: 'tool',
+      tool_call_id: 'a',
+      content: '{"status":"ok"}',
+    });
+    expect(turns[2]).toEqual({
+      role: 'tool',
+      tool_call_id: 'b',
+      content: 'The tool "pdf" is not available here.',
+    });
   });
 });

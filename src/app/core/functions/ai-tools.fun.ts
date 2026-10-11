@@ -307,6 +307,92 @@ export const openaiTools = (
   }));
 
 /**
+ * One executed tool call, paired with the text the model gets back.
+ *
+ * Paired rather than two parallel arrays, because the pairing IS the contract: a
+ * result belongs to the call whose id it echoes, and two lists can drift out of
+ * step in a way one list of pairs cannot.
+ */
+export interface ToolCallResult {
+  readonly call: AiToolCall;
+  /** The text handed to the model, already truncated by the caller. */
+  readonly content: string;
+}
+
+/**
+ * The turns an Anthropic conversation needs after a tool round.
+ *
+ * TWO turns, and both are required. Anthropic rejects a `tool_result` whose
+ * `tool_use_id` has no preceding assistant `tool_use` block, and a block array is
+ * the only shape that can carry one -- a string content cannot. So the caller
+ * cannot skip the echo and send only the results.
+ *
+ * `input` is the arguments object ALREADY DECODED, because this is a
+ * re-serialization of what the model asked for rather than a fresh guess at it.
+ *
+ * Every call needs a result, refused ones included: a `tool_use` with no matching
+ * `tool_result` is itself a 400, so a refusal has to be reported AS a result rather
+ * than by omitting it.
+ * @param {AiToolCall[]} calls The calls the model emitted, in order.
+ * @param {ToolCallResult[]} results One per call, in the same order.
+ * @return {Array} The two turns to append.
+ */
+export const anthropicToolTurns = (
+  calls: readonly AiToolCall[],
+  results: readonly ToolCallResult[]
+): { role: string; content: unknown }[] => [
+  {
+    role: 'assistant',
+    content: calls.map(call => ({
+      type: 'tool_use',
+      id: call.id,
+      name: call.name,
+      input: call.args,
+    })),
+  },
+  {
+    role: 'user',
+    content: results.map(result => ({
+      type: 'tool_result',
+      tool_use_id: result.call.id,
+      content: result.content,
+    })),
+  },
+];
+
+/**
+ * The turns an OpenAI-shaped conversation needs after a tool round.
+ *
+ * A different shape for the same reason the parsers are two functions: here the
+ * assistant turn carries a `tool_calls` array beside a `content` of `null`,
+ * arguments go back as a JSON STRING, and each result is its own `role: 'tool'`
+ * turn joined by `tool_call_id` rather than one combined user turn. Sending
+ * Anthropic's shape here is a 400.
+ * @param {AiToolCall[]} calls The calls the model emitted, in order.
+ * @param {ToolCallResult[]} results One per call, in the same order.
+ * @return {Array} The turns to append: one assistant echo, then one per result.
+ */
+export const openaiToolTurns = (
+  calls: readonly AiToolCall[],
+  results: readonly ToolCallResult[]
+): { role: string; content: unknown; tool_calls?: unknown; tool_call_id?: string }[] => [
+  {
+    role: 'assistant',
+    content: null,
+    tool_calls: calls.map(call => ({
+      id: call.id,
+      type: 'function',
+      function: { name: call.name, arguments: JSON.stringify(call.args) },
+    })),
+  },
+  ...results.map(result => ({
+    role: 'tool',
+    tool_call_id: result.call.id,
+    content: result.content,
+  })),
+];
+
+/**
  * The tool calls in an Anthropic reply.
  *
  * Anthropic arrives already parsed: `content` is an array of typed blocks and a

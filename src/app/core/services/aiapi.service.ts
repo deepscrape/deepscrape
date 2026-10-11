@@ -176,7 +176,7 @@ export class AiAPIService {
     })
   }
 
-  sendToClaudeAI(content: string | { role: string, content: string }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string, tools?: readonly AiToolSpec[]): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
+  sendToClaudeAI(content: string | { role: string, content: unknown }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string, tools?: readonly AiToolSpec[]): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
     // The provider is not a decision on this path -- the method IS Claude. The old
     // switch call returned these same two fields unchanged, and the fourth element
     // of its tuple was never read here.
@@ -342,7 +342,7 @@ export class AiAPIService {
     // return this.subjectClaudeAI.asObservable()
   }
 
-  sendToOpenAI(content: string | { role: string, content: string }[], modelName: string = 'gpt-4o-mini', sys?: string, tools?: readonly AiToolSpec[]): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
+  sendToOpenAI(content: string | { role: string, content: unknown }[], modelName: string = 'gpt-4o-mini', sys?: string, tools?: readonly AiToolSpec[]): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
 
     // Groq and OpenAI speak the same wire protocol, so the model name is the whole
     // decision: it picks the endpoint and the key, and nothing else.

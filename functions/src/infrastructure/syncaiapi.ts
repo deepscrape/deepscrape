@@ -16,6 +16,9 @@ import {
 } from "../handlers"
 import { auth, db } from "../app/config"
 import { BillingSnapshot, getBillingAccessMode, isChargeableAccessMode, resolveBillingPricingPolicy } from "../domain"
+// Not in the domain barrel, so imported from the module itself -- the shape
+// `bff/api.ts` already uses for the same type.
+import { AiVendorId, resolveAiKeySource } from "../domain/user-ai-settings.domain"
 import { consumeBillingCredits, releaseBillingCredits, reserveBillingCredits } from "../app/billing-credits"
 import { requirePermission } from "./authz.middleware"
 import { authErrorCode as getAuthErrorCode } from "./auth-error"
@@ -361,6 +364,92 @@ class ReverseAPIProxy {
         } catch (error) {
             console.error("Payment gate check failed:", error)
             res.status(500).json({ error: "internal", code: "internal" })
+        }
+    }
+
+    /**
+     * requirePaidOrByok
+     *
+     * Admits a PAID caller exactly as `requirePaidAccess` does, and admits a FREE
+     * caller only when they have stored their own key for this vendor.
+     *
+     * Why the entitlement guard and not the handler: the decision has to run before
+     * the handler, and the one thing this gate was missing is that a free caller
+     * bringing their own key costs the platform nothing. `user-ai-settings.domain.ts`
+     * has said so all along — `resolveAiKeySource` answers `source: "user"` for a
+     * free caller with a key — the route table simply never asked. Fixing it on the
+     * route leaves every other `paid` route untouched.
+     *
+     * The paid path is DELEGATED, not re-implemented. Pricing and credit reservation
+     * live in `requirePaidAccess`, and a second copy here is how the two drift — one
+     * route charging 2 credits and its neighbour charging none.
+     *
+     * What this does NOT decide is which key is used. `keyFor` owns that and refuses
+     * the platform fallback for a free caller, so a key that vanishes between this
+     * check and the read is an error rather than free credit.
+     *
+     * ponytail: a paid caller reads the billing document twice, once here and once in
+     * the delegated `requirePaidAccess`. Stash the snapshot on `req` and reuse it
+     * there if AI-call volume ever makes that one read matter.
+     * @param {*} vendor
+     */
+    requirePaidOrByok(vendor: AiVendorId) {
+        return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+            const uid = req.user?.uid
+            if (!uid) {
+                res.status(401).json({ error: "unauthorized", code: "unauthorized" })
+                return
+            }
+
+            if (isPlatformAdminRequest(req)) {
+                await this.requirePaidAccess(req, res, next)
+                return
+            }
+
+            try {
+                const now = Date.now()
+                const billingSnap = await db.doc(`users/${uid}/billing/current`).get()
+                const accessMode = getBillingAccessMode(
+                    billingSnap.data() as BillingSnapshot | undefined,
+                    now,
+                )
+
+                if (accessMode !== "free") {
+                    await this.requirePaidAccess(req, res, next)
+                    return
+                }
+
+                // The free branch asks the DOMAIN rather than restating its rule. That
+                // is the whole point: the defect this fixes was the guard holding one
+                // opinion and `resolveAiKeySource` holding another, so the verdict comes
+                // from the resolver and the guard only enacts it.
+                //
+                // Presence only, and deliberately loose about the entry's SHAPE: the
+                // authoritative read is `readUserAiKey`, and re-deriving its legacy
+                // migration here would be a second opinion on the document layout.
+                const keysSnap = await db.doc(`users/${uid}/private/ai`).get()
+                const stored = (keysSnap.data() ?? {})[vendor as string]
+                const hasUserKey =
+                    stored !== undefined && stored !== null && stored !== ""
+
+                const resolution = resolveAiKeySource(vendor, accessMode, hasUserKey)
+
+                if (!resolution.allowed) {
+                    res.status(402).json({
+                        error: "payment_required",
+                        code: "payment_required",
+                        message:
+                            "A paid plan, or your own key for this vendor, is required",
+                    })
+                    return
+                }
+
+                req.accessMode = "free"
+                next()
+            } catch (error) {
+                console.error("Paid-or-Byok gate check failed:", error)
+                res.status(500).json({ error: "internal", code: "internal" })
+            }
         }
     }
 

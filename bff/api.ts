@@ -19,6 +19,7 @@ import type {
   AuthAction,
   AuthResource,
 } from '../functions/src/domain/authz.domain'
+import type { AiVendorId } from '../functions/src/domain/user-ai-settings.domain'
 import {
   anthropicAICore,
   groqAICore,
@@ -105,6 +106,19 @@ const bind = <F extends (...args: never[]) => unknown>(
 const jwt = bind(proxy.isJwtAuth, proxy)
 const paid = bind(proxy.requirePaidAccess, proxy)
 const access = bind(proxy.resolveAccess, proxy)
+
+/**
+ * Paid, OR free with the caller's own key for that vendor.
+ *
+ * A factory rather than a flat middleware because the vendor is a property of the
+ * ROUTE, and the guard has to know which field of the caller's key document to look
+ * for. The paid path is delegated inside `requirePaidAccess`, so pricing and credit
+ * reservation stay in one place instead of being restated per route.
+ * @param {*} vendor
+ * @return {*}
+ */
+const paidOrByok = (vendor: AiVendorId): ExpressMiddleware =>
+  proxy.requirePaidOrByok(vendor) as unknown as ExpressMiddleware
 
 /**
  * The org methods are `private` arrow properties on `ReverseAPIProxy`, which is
@@ -197,17 +211,23 @@ api.delete(
 )
 
 // ── AI cores ─────────────────────────────────────────────────────────────────
+// `paidOrByok`, not `paid`: these are the routes a caller can pay for with their own
+// vendor key, so a free account that stored one is admitted. Everything downstream is
+// unchanged -- the price is still charged to a paid caller, and `keyFor` refuses the
+// platform fallback for a free one, so the platform never pays for a plan that does
+// not include it. `/api/crawl` stays on `paid`: there is no BYOK equivalent for the
+// scraper, so a key from another vendor must not unlock it.
 api.post(
   '/api/anthropic/messages',
-  h(guard([paid, perm('ai', 'execute'), anthropicAICore])),
+  h(guard([paidOrByok('anthropic'), perm('ai', 'execute'), anthropicAICore])),
 )
 api.post(
   '/api/openai/chat/completions',
-  h(guard([paid, perm('ai', 'execute'), openaiAICore])),
+  h(guard([paidOrByok('openai'), perm('ai', 'execute'), openaiAICore])),
 )
 api.post(
   '/api/groq/chat/completions',
-  h(guard([paid, perm('ai', 'execute'), groqAICore])),
+  h(guard([paidOrByok('groq'), perm('ai', 'execute'), groqAICore])),
 )
 // `scrapeMiddleware` chooses the provider (SCRAPE_PROVIDER) rather than naming one
 // here, so both hosts reach the same implementation without a code change in each.
@@ -575,9 +595,12 @@ api.post('/api/jobs/crawl/failed', async ({ request, set }) => {
 })
 
 // `/jina/:url` keeps the URL as a single path segment, as Express did.
+// `paidOrByok('jina')` for the same reason as the three AI cores: jina is a BYOK
+// vendor too, and leaving one of the four on the old rule is how the guard and the
+// domain module drift apart again.
 api.get(
   '/api/jina/:url',
-  h(guard([paid, perm('ai', 'execute'), jinaAICrawl])),
+  h(guard([paidOrByok('jina'), perm('ai', 'execute'), jinaAICrawl])),
 )
 
 // ── machines ─────────────────────────────────────────────────────────────────

@@ -23,12 +23,18 @@ import { readUserAiKey } from "../gfunctions/user-settings"
  * spend their own quota, and charging them to ours is both a surprise and, at
  * scale, our cost.
  *
- * ponytail: the caller passes the platform key, so a vendor with no platform key
- * still works when the user has stored one. Note the ceiling — a FREE plan cannot
- * reach these routes at all, because they are `paid`-gated in the route table and
- * that runs before this. So BYOK today means "your own quota on a paid plan", not
- * "free access with your own key". Lifting that means teaching `requirePaidAccess`
- * about vendor keys, which is a change to the entitlement guard, not to this file.
+ * The free case is the one that must never fall through
+ * ----------------------------------------------------
+ * A FREE caller only reaches these routes because `requirePaidOrByok` found a key
+ * for this vendor, so the platform must never pay for one. The fallback below is
+ * therefore refused outright rather than taken when the read comes back empty:
+ * `readUserAiKey` returns null for a secret purged while its metadata survived, and
+ * honouring `?? platformKey` there would spend our credits on a plan that does not
+ * include them — the exact bug `user-ai-settings.domain.ts` names. A race with no
+ * silent charge beats a race that bills us.
+ *
+ * The window is narrow on purpose: the guard has already confirmed a key exists, so
+ * this is a purged-secret race rather than a normal path.
  * @param {*} req
  * @param {*} vendorId
  * @param {*} platformKey
@@ -42,7 +48,17 @@ export const keyFor = async (
     if (!uid) {
         return platformKey
     }
-    return (await readUserAiKey(uid, vendorId)) ?? platformKey
+
+    const userKey = await readUserAiKey(uid, vendorId)
+
+    if (req.accessMode === "free") {
+        if (!userKey) {
+            throw new Error(`free-byok-key-missing:${vendorId}`)
+        }
+        return userKey
+    }
+
+    return userKey ?? platformKey
 }
 
 const toSingleParam = (value: string | string[] | undefined): string =>

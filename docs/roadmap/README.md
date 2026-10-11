@@ -72,10 +72,12 @@ of all four repos.
 
 Two headline measurements, because they change what work is actually left:
 
-- **The frontend↔BFF wiring is CLOSED.** 56 BFF routes, 18 client roots, **0** client calls with no
-  route, and the 8 routes that appear client-less are each explained (3 computed paths, 3
-  variable-passed paths, 2 webrain→platform callbacks). Measure with
-  `bunx tsx scripts/route-parity.ts`. So what remains is **product completeness, not wiring** — which
+- **The frontend↔BFF wiring is CLOSED.** **0** client calls with no route, and every route that
+  appears client-less is accounted for (computed paths, variable-passed paths, webrain→platform
+  callbacks). Measure with `bunx tsx scripts/route-parity.ts`, and read the counts from its output
+  rather than from here: this paragraph said 56 routes and 8 client-less routes while
+  [`12-production-harmony.md`](./12-production-harmony.md) said 57 and 9, which is what a number
+  written down twice does. So what remains is **product completeness, not wiring** — which
   is why Phase 3 is short.
 - **`POST /machine/mcp/:id` is confirmed absent from arachnefly's 13 routes.** Step 11's frame route
   cannot be built on anything present; adding it bypasses the webrain tier allowlist, so it is an

@@ -111,19 +111,14 @@ const purgePrefix = async (
  * being swallowed: a partial erasure that reports success is worse than one that
  * throws, and the caller (`purgeOneAccount`) is already retry-safe.
  * @param {string} uid The account being erased.
- * @param {BlobStore | null} store The platform store, or null when none exists.
+ * @param {BlobStore} store The platform store. Resolved by default; a spec
+ *   injects a fake.
  * @return {Promise<number>} How many objects were deleted.
  */
 export const purgeAccountBlobs = async (
   uid: string,
-  store: BlobStore | null = getPlatformBlobStore(),
+  store: BlobStore = getPlatformBlobStore(),
 ): Promise<number> => {
-  if (!store) {
-    // No platform bucket is configured, so nothing of ours can be holding this
-    // account's bytes. A complete answer, not a failure to have tried.
-    return 0
-  }
-
   let deleted = 0
   for (const prefix of purgePrefixes(uid)) {
     deleted += await purgePrefix(store, prefix)

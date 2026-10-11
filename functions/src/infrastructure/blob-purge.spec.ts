@@ -119,11 +119,6 @@ describe("purgeAccountBlobs", () => {
     assert.equal(first.prefixes[1], vaultKeyPrefix("uid-1"))
   })
 
-  it("answers zero when no platform bucket is configured", async () => {
-    // Not a failure: with no bucket of ours, nothing of ours can hold the bytes.
-    assert.equal(await purgeAccountBlobs("uid-1", null), 0)
-  })
-
   it("stops at the first short page rather than walking its budget", async () => {
     const {store, deleted, prefixes} = storeOver([
       pageOf(LIST_LIMIT, "full"),

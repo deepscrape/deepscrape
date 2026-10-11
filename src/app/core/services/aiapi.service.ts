@@ -22,10 +22,6 @@ import { AuthService } from './auth.service';
 })
 export class AiAPIService {
 
-  private CLAUDE_API_KEY: string
-  private OPENAI_API_KEY: string
-
-  private GROQ_API_KEY: string
   private claudeAiEndpoint: string
   private openAiEndpoint: string
 
@@ -130,8 +126,10 @@ export class AiAPIService {
       tools: anthropicTools(tools),
     }, {
       headers: new HttpHeaders({
-        'api-key': `Bearer ${this.authService.token}`,
-        'x-api-key': this.CLAUDE_API_KEY,
+        // The CALLER's token, in the header the BFF's `isJwtAuth` actually reads.
+        // The provider key is never sent from here: the BFF resolves it itself with
+        // `keyFor(req, vendor, env.KEY)`, preferring the caller's own stored key.
+        'Authorization': `Bearer ${this.authService.token}`,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
         'anthropic-dangerous-direct-browser-access': 'true',
@@ -159,9 +157,9 @@ export class AiAPIService {
     modelName: string,
     tools?: readonly AiToolSpec[]
   ): Observable<unknown> {
-    const isGroq = isGroqModel(modelName)
-    const apiEndpoint = isGroq ? this.groqAiEndpoint : this.openAiEndpoint
-    const API_KEY = isGroq ? this.GROQ_API_KEY : this.OPENAI_API_KEY
+    const apiEndpoint = isGroqModel(modelName)
+      ? this.groqAiEndpoint
+      : this.openAiEndpoint
 
     return this.http.post(apiEndpoint, {
       model: modelName,
@@ -171,8 +169,8 @@ export class AiAPIService {
       ...(tools && tools.length > 0 ? { tools: openaiTools(tools) } : {}),
     }, {
       headers: new HttpHeaders({
-        'api-key': `Bearer ${this.authService.token}`,
-        'Authorization': `Bearer ${API_KEY}`,
+        // The CALLER's token, not a provider key. See `askClaudeOnce`.
+        'Authorization': `Bearer ${this.authService.token}`,
         'content-type': 'application/json',
       }),
     })
@@ -184,10 +182,10 @@ export class AiAPIService {
     // of its tuple was never read here.
     const model = modelName
     const apiEndpoint = this.claudeAiEndpoint
-    const API_KEY = this.CLAUDE_API_KEY
     const headers = new HttpHeaders({
-      'api-key': `Bearer ${this.authService.token}`, // Replace with your actual API key`,
-      'x-api-key': API_KEY,
+      // The CALLER's token, in the header `isJwtAuth` reads. Nothing else: a provider
+      // key must never come from the browser, and the BFF resolves it with `keyFor`.
+      'Authorization': `Bearer ${this.authService.token}`,
       'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
       "anthropic-dangerous-direct-browser-access": "true",
@@ -332,12 +330,14 @@ export class AiAPIService {
     const model = modelName
     const isGroq = isGroqModel(modelName)
     const apiEndpoint = isGroq ? this.groqAiEndpoint : this.openAiEndpoint
-    const API_KEY = isGroq ? this.GROQ_API_KEY : this.OPENAI_API_KEY
+    // Kept: `chooseUsage` below reads it to pick which vendor's `usage` field to
+    // parse, and Groq nests that field differently.
     const apiName = isGroq ? 'groqai' : 'openai'
 
     const headers = new HttpHeaders({
-      'api-key': `Bearer ${this.authService.token}`, // Replace with your actual API key`,
-      'Authorization': `Bearer ${API_KEY}`,
+      // The CALLER's token, in the header `isJwtAuth` reads. The provider key is the
+      // BFF's to resolve -- see `sendToClaudeAI`.
+      'Authorization': `Bearer ${this.authService.token}`,
       'content-type': 'application/json',
     })
 

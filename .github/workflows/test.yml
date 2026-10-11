@@ -51,6 +51,15 @@ jobs:
       - name: Check OnPush safety
         run: bun scripts/check-onpush.mjs
 
+      # No gate catches a client that builds a path the BFF does not serve.
+      # Three did: /api/vision, /api/pricing/estimate and
+      # /api/browser/session/:id/frame each shipped as a 404 because the client
+      # computed the path and nothing compared it to the route table. This also
+      # checks the static suffix after a dynamic segment, which is what the third
+      # one was.
+      - name: Check route parity
+        run: bun scripts/route-parity.ts
+
       # No gate validates the i18n catalogues, and nothing else can: tsc does not read
       # templates, Karma compiles only what a spec imports, and the build bundles the
       # JSON without checking that a referenced key is in it. So a missing key ships

@@ -220,6 +220,120 @@ function clientBaseFor(source: string): string {
   return segment === '' ? '/api' : `/api${segment}`;
 }
 
+/**
+ * The STATIC part of a path that follows a DYNAMIC segment.
+ *
+ * This is the blind spot the header above calls out, and it is the one that cost
+ * three live 404s. `browser-session.service.ts` builds `/frame` as
+ * `base + '/' + encodeURIComponent(id) + '/frame?n=' + nonce`: the id is
+ * unknowable statically, so the rule above skips it — but `/frame` is a literal,
+ * and whether a route ends in it is decidable without running anything. Nothing
+ * checked that, so `GET /api/browser/session/:id/frame` was never registered and
+ * every poll 404'd while the transport, the client and 11 specs passed.
+ *
+ * Two shapes carry it, and both are read:
+ *  - concat after a non-literal operand: `encodeURIComponent(id) + '/frame'`
+ *  - template tail after an interpolation: `` `${id}/frame` ``
+ *
+ * A suffix that contains `:` or `${` is skipped: that is a whole path with its
+ * own parameter names, and comparing parameter names across two files reports
+ * differences in spelling rather than in routes.
+ * @return {Array<[string, string]>} `[suffix, declaringFile]`, deduped and sorted.
+ */
+function dynamicSuffixes(): Array<[string, string]> {
+  const found = new Map<string, string>();
+
+  const keep = (raw: string, where: string): void => {
+    const path = raw.split('?')[0];
+
+    if (path.length < 2 || !path.startsWith('/') || path.includes(':') || path.includes('${')) {
+      return;
+    }
+
+    if (!found.has(path)) {
+      found.set(path, where);
+    }
+  };
+
+  for (const file of serviceFiles(CLIENT_DIR)) {
+    const source = readFileSync(file, 'utf8').replace(/\s+/g, ' ');
+    const where = file.replace(ROOT, '.').replace(/\\/g, '/');
+
+    // `) + '/frame'` / `} + '/frame'` — a literal joined to a computed operand.
+    for (const match of source.matchAll(/[)\]}]\s*\+\s*'([^']*)'/g)) {
+      keep(match[1], where);
+    }
+
+    // `` `${id}/frame` `` — everything after the last interpolation.
+    for (const match of source.matchAll(/`[^`]*\$\{[^}]*\}([^`]*)`/g)) {
+      keep(match[1], where);
+    }
+  }
+
+  return [...found.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+/**
+ * Whether some route ends with this suffix, comparing SEGMENTS.
+ *
+ * Segment-wise rather than `endsWith`, so a route parameter matches a concrete
+ * suffix: `/frame` is served by `/api/browser/session/:id/frame`. A plain string
+ * comparison would also have to spell the parameter's name the same way, which is
+ * a difference between two files, not a difference in routes.
+ * @param {string} suffix The static tail the client appends.
+ * @param {string[]} routes The served route table.
+ * @return {boolean} True when a route ends in it.
+ */
+function suffixServed(suffix: string, routes: readonly string[]): boolean {
+  const segments = (path: string): string[] => path.split('/').filter(Boolean);
+  const want = segments(suffix);
+
+  return routes.some(route => {
+    const have = segments(route);
+
+    return (
+      have.length >= want.length &&
+      have.slice(have.length - want.length).every(
+        (segment, index) => segment === want[index] || segment.startsWith(':')
+      )
+    );
+  });
+}
+
+/**
+ * Route literals across EVERY BFF module, not just the served table.
+ *
+ * The suffix check asks a tail question, so it must see every module that
+ * registers a path. `bff/api.ts` is one; `bff/oauth.ts` is another and is mounted
+ * elsewhere. Reading only `api.ts` reported the five `/oauth/phone/*` and
+ * `/oauth/email/*` literals as unrouted when every one IS served -- the harness
+ * crying wolf, which this file's own header warns is how a harness loses its
+ * audience and gets ignored.
+ *
+ * The mount prefix is deliberately not reconstructed. The comparison is
+ * segment-wise on the tail, so `/oauth/email/verification` answers for
+ * `/email/verification` without knowing what it is mounted under.
+ * @return {string[]} Path literals from every non-spec module under `bff/`.
+ */
+function bffRouteLiterals(): string[] {
+  const found = new Set<string>();
+  const dir = join(ROOT, 'bff');
+
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.ts') || entry.endsWith('.spec.ts')) {
+      continue;
+    }
+
+    const source = readFileSync(join(dir, entry), 'utf8');
+
+    for (const match of source.matchAll(/'(\/[A-Za-z][A-Za-z0-9\-_/.:]*)'/g)) {
+      found.add(match[1]);
+    }
+  }
+
+  return [...found];
+}
+
 const routes = quotedRoutes(readFileSync(BFF_TABLE, 'utf8'));
 const clients = clientRoots();
 
@@ -295,6 +409,36 @@ console.log(
 
 for (const [methodPath, where] of orphanMethods) {
   console.log(`  ${methodPath}  <- ${where}`);
+}
+
+// The check the three above cannot make, and the one that would have caught the
+// frame route. A suffix appended after a dynamic segment is a literal, so whether
+// a route ends in it is decidable without running anything -- and nothing decided
+// it until now.
+console.log('');
+const suffixes = dynamicSuffixes();
+// `routes` is the served table the three advisory lists above read. The gate below
+// reads EVERY module instead, because a suffix is served by any router, not only
+// by the one `api.ts` registers.
+const allRouteLiterals = bffRouteLiterals();
+const orphanSuffixes = suffixes.filter(
+  ([suffix]) => !suffixServed(suffix, allRouteLiterals)
+);
+
+console.log(
+  `DYNAMIC SUFFIXES WITH NO ROUTE (${orphanSuffixes.length} of ${suffixes.length} checked)`
+);
+
+for (const [suffix, where] of orphanSuffixes) {
+  console.log(`  ${suffix}  <- ${where}`);
+}
+
+// This list is a GATE, unlike the three above. Those compare spellings and can
+// disagree harmlessly; a suffix with no route is a request that WILL 404, which is
+// the defect this file exists to prevent. The three above stay advisory so a false
+// alarm cannot train the next reader to ignore a real one.
+if (orphanSuffixes.length > 0) {
+  process.exitCode = 1;
 }
 
 if (process.env['PARITY_LIST']) {

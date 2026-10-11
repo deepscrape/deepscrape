@@ -1,10 +1,15 @@
 import {
   AI_TOOLS,
+  accumulateAnthropic,
+  accumulateOpenAi,
   anthropicToolCalls,
   anthropicTools,
   availableTools,
+  finishToolCalls,
+  newToolCallAccumulator,
   openaiToolCalls,
   openaiTools,
+  replyText,
   resolveToolCall,
   toolByName,
   type AiToolCall,
@@ -172,5 +177,132 @@ describe('reply parsing', () => {
     expect(anthropicToolCalls(null)).toEqual([]);
     expect(openaiToolCalls({})).toEqual([]);
     expect(openaiToolCalls({ choices: [] })).toEqual([]);
+  });
+});
+
+/**
+ * The streaming accumulators.
+ *
+ * This is where the fragments get assembled, and it is the part a streamed reply
+ * turns into a dispatch. OpenAI sends arguments split MID-TOKEN and identifies the
+ * call by `index`, not by `id`; Anthropic sends the name before the arguments and
+ * the arguments as `partial_json`. Getting either wrong produces a call that parses
+ * to nothing, which is the failure the `malformed` flag exists to make visible.
+ */
+describe('streaming tool-call assembly', () => {
+  it('joins OpenAI argument fragments, taking id and name from the first chunk', () => {
+    const acc = newToolCallAccumulator();
+
+    accumulateOpenAi(acc, [
+      {
+        index: 0,
+        id: 'call_a',
+        function: { name: 'scrape', arguments: '{"url":"https://e' },
+      },
+    ]);
+    accumulateOpenAi(acc, [{ index: 0, function: { arguments: '.com"}' } }]);
+
+    expect(finishToolCalls(acc)).toEqual([
+      { id: 'call_a', name: 'scrape', args: { url: 'https://e.com' } },
+    ]);
+  });
+
+  it('keeps parallel OpenAI calls apart by index', () => {
+    const acc = newToolCallAccumulator();
+
+    accumulateOpenAi(acc, [
+      { index: 0, id: 'a', function: { name: 'search', arguments: '{"q":"x"}' } },
+      { index: 1, id: 'b', function: { name: 'scrape', arguments: '{"url":"u"}' } },
+    ]);
+
+    expect(finishToolCalls(acc).map(call => call.id)).toEqual(['a', 'b']);
+  });
+
+  it('assembles Anthropic calls from content_block_start plus partial_json', () => {
+    const acc = newToolCallAccumulator();
+
+    accumulateAnthropic(acc, {
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'tool_use', id: 'tu_1', name: 'search' },
+    });
+    accumulateAnthropic(acc, {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '{"q":' },
+    });
+    accumulateAnthropic(acc, {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '"cats"}' },
+    });
+
+    expect(finishToolCalls(acc)).toEqual([
+      { id: 'tu_1', name: 'search', args: { q: 'cats' } },
+    ]);
+  });
+
+  it('ignores text blocks and deltas that have no start', () => {
+    const acc = newToolCallAccumulator();
+
+    accumulateAnthropic(acc, {
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text' },
+    });
+    accumulateAnthropic(acc, {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '{"q":"x"}' },
+    });
+
+    // A text block is not a call, and a delta with no start cannot invent one.
+    // Either mistake would dispatch a tool the model never chose.
+    expect(finishToolCalls(acc)).toEqual([]);
+  });
+
+  it('marks a truncated stream rather than treating it as no arguments', () => {
+    const acc = newToolCallAccumulator();
+
+    accumulateOpenAi(acc, [
+      { index: 0, id: 'a', function: { name: 'scrape', arguments: '{"url":' } },
+    ]);
+
+    const calls = finishToolCalls(acc);
+
+    expect(calls[0].malformed).toBeTrue();
+    expect(resolveToolCall(calls[0]).ok).toBeFalse();
+  });
+
+  it('drops a call that never received a name', () => {
+    const acc = newToolCallAccumulator();
+
+    // A fragment with no name cannot be dispatched, and it is an incomplete stream
+    // rather than a tool the model chose.
+    accumulateAnthropic(acc, {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '{}' },
+    });
+
+    expect(finishToolCalls(acc)).toEqual([]);
+  });
+});
+
+describe('replyText', () => {
+  it('reads text blocks for Claude and message.content for OpenAI', () => {
+    expect(
+      replyText({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }, 'claude')
+    ).toBe('ab');
+    expect(replyText({ choices: [{ message: { content: 'hi' } }] }, 'openai')).toBe('hi');
+  });
+
+  it('returns an empty string rather than throwing on an unexpected shape', () => {
+    expect(replyText(null, 'claude')).toBe('');
+    expect(replyText({}, 'openai')).toBe('');
+    // A tool-only Claude reply carries no text block at all.
+    expect(
+      replyText({ content: [{ type: 'tool_use', id: 'x', name: 'search' }] }, 'claude')
+    ).toBe('');
   });
 });

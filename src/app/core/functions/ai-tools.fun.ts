@@ -364,36 +364,211 @@ export const openaiToolCalls = (reply: unknown): AiToolCall[] => {
   return calls.map(call => {
     const fn = (call as { function?: { name?: unknown; arguments?: unknown } })
       ?.function;
-    const raw = fn?.arguments;
-    let args: Record<string, unknown> = {};
-    let malformed = false;
-
-    if (typeof raw === 'string' && raw.length > 0) {
-      try {
-        const parsed: unknown = JSON.parse(raw);
-
-        // A parsed `null`, array or scalar is not an arguments object either.
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          args = parsed as Record<string, unknown>;
-        } else {
-          malformed = true;
-        }
-      } catch {
-        malformed = true;
-      }
-    } else if (raw !== null && typeof raw === 'object') {
-      args = raw as Record<string, unknown>;
-    }
-    // A missing `raw` stays valid: a tool that takes no arguments legitimately
-    // arrives with the field absent, and that is not a parse failure.
+    const decoded = decodeArguments(fn?.arguments);
 
     return {
       id: String((call as { id?: unknown })?.id ?? ''),
       name: String(fn?.name ?? ''),
-      args,
-      // Omitted rather than `false`, so a well-formed call still compares equal to
-      // the plain `{id, name, args}` shape a caller builds.
-      ...(malformed ? { malformed: true } : {}),
+      args: decoded.args,
+      ...(decoded.malformed ? { malformed: true } : {}),
     };
   });
+};
+
+/**
+ * Decode a provider's `arguments` payload into an object.
+ *
+ * ONE place decides what "unreadable" means, because the non-streaming parser and
+ * both streaming accumulators need the same answer. A second copy would be a second
+ * opinion on whether a truncated fragment is a refusal or an empty call -- and the
+ * first version of this got exactly that wrong by treating a fragment as `{}`.
+ * @param {unknown} raw A JSON string, an object, or nothing at all.
+ * @return {{args: Record<string, unknown>, malformed: boolean}} The decoded arguments.
+ */
+const decodeArguments = (
+  raw: unknown
+): { args: Record<string, unknown>; malformed: boolean } => {
+  // Absent is not malformed: a tool that takes no arguments legitimately arrives
+  // with the field missing, and refusing that would break every no-arg tool.
+  if (raw === undefined || raw === null || raw === '') {
+    return { args: {}, malformed: false };
+  }
+
+  if (typeof raw === 'object') {
+    return Array.isArray(raw)
+      ? { args: {}, malformed: true }
+      : { args: raw as Record<string, unknown>, malformed: false };
+  }
+
+  if (typeof raw !== 'string') {
+    return { args: {}, malformed: true };
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? { args: parsed as Record<string, unknown>, malformed: false }
+      : { args: {}, malformed: true };
+  } catch {
+    return { args: {}, malformed: true };
+  }
+};
+
+/** Tool calls being assembled from a stream, keyed by the provider's own index. */
+export type ToolCallAccumulator = Map<
+  number,
+  { id: string; name: string; raw: string }
+>;
+
+/** A fresh accumulator. */
+export const newToolCallAccumulator = (): ToolCallAccumulator => new Map();
+
+/**
+ * Fold one OpenAI streaming chunk into the accumulator.
+ *
+ * OpenAI identifies the call being built by `index`, NOT by `id`: the id arrives
+ * once on the first fragment, and the NAME can arrive in a different fragment from
+ * the arguments. So id and name are taken from the first fragment that carries each,
+ * while arguments are CONCATENATED -- they are fragments of one JSON document, not
+ * separate values, and parsing any single one would fail.
+ * @param {ToolCallAccumulator} acc The accumulator to mutate.
+ * @param {unknown} deltas One chunk's `choices[0].delta.tool_calls`.
+ * @return {void}
+ */
+export const accumulateOpenAi = (
+  acc: ToolCallAccumulator,
+  deltas: unknown
+): void => {
+  if (!Array.isArray(deltas)) {
+    return;
+  }
+
+  for (const entry of deltas) {
+    const index = Number((entry as { index?: unknown })?.index ?? 0);
+    const fn = (entry as { function?: { name?: unknown; arguments?: unknown } })
+      ?.function;
+    const current = acc.get(index) ?? { id: '', name: '', raw: '' };
+
+    acc.set(index, {
+      id: current.id || String((entry as { id?: unknown })?.id ?? ''),
+      name: current.name || String(fn?.name ?? ''),
+      raw: current.raw + (typeof fn?.arguments === 'string' ? fn.arguments : ''),
+    });
+  }
+};
+
+/**
+ * Fold one Anthropic streaming event into the accumulator.
+ *
+ * Two differences from OpenAI, and both matter here: the id and name arrive on
+ * `content_block_start`, BEFORE any arguments, and the arguments come as
+ * `input_json_delta.partial_json`. Events for blocks that are not `tool_use` are
+ * ignored rather than guessed at, so a text block cannot be mistaken for a call.
+ * @param {ToolCallAccumulator} acc The accumulator to mutate.
+ * @param {unknown} event One parsed SSE event.
+ * @return {void}
+ */
+export const accumulateAnthropic = (
+  acc: ToolCallAccumulator,
+  event: unknown
+): void => {
+  const type = (event as { type?: unknown })?.type;
+  const index = Number((event as { index?: unknown })?.index ?? 0);
+
+  if (type === 'content_block_start') {
+    const block = (
+      event as { content_block?: { type?: unknown; id?: unknown; name?: unknown } }
+    )?.content_block;
+
+    if (block?.type === 'tool_use') {
+      acc.set(index, {
+        id: String(block.id ?? ''),
+        name: String(block.name ?? ''),
+        raw: '',
+      });
+    }
+    return;
+  }
+
+  if (type === 'content_block_delta') {
+    const partial = (event as { delta?: { type?: unknown; partial_json?: unknown } })
+      ?.delta;
+
+    if (partial?.type !== 'input_json_delta' || typeof partial.partial_json !== 'string') {
+      return;
+    }
+
+    const current = acc.get(index);
+
+    // A delta with no start is a protocol surprise rather than a call. Skipping it
+    // keeps the accumulator from inventing an entry that has no name, which
+    // `finishToolCalls` would then drop anyway.
+    if (current) {
+      acc.set(index, { ...current, raw: current.raw + partial.partial_json });
+    }
+  }
+};
+
+/**
+ * The calls an accumulator assembled, in index order.
+ *
+ * Ordered by index because that is the order the model emitted them; any other
+ * order would hand the model its own results out of sequence, which reads as a
+ * different question. A call with no name is dropped: it cannot be dispatched, and
+ * it is a fragment the stream never completed rather than a tool the model chose.
+ * @param {ToolCallAccumulator} acc The accumulator.
+ * @return {AiToolCall[]} The calls, arguments decoded.
+ */
+export const finishToolCalls = (acc: ToolCallAccumulator): AiToolCall[] =>
+  [...acc.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, call]) => {
+      const decoded = decodeArguments(call.raw);
+
+      return {
+        id: call.id,
+        name: call.name,
+        args: decoded.args,
+        ...(decoded.malformed ? { malformed: true } : {}),
+      };
+    })
+    .filter(call => call.name.length > 0);
+
+/**
+ * The assistant's text in a non-streaming reply.
+ *
+ * Both dialects return text in a different place, and every caller that renders an
+ * answer needs the same string, so it is read here rather than in the component.
+ * @param {unknown} reply The parsed response body.
+ * @param {'claude' | 'openai'} provider Which dialect to read.
+ * @return {string} The text, or an empty string when the reply carried none.
+ */
+export const replyText = (
+  reply: unknown,
+  provider: 'claude' | 'openai'
+): string => {
+  if (provider === 'claude') {
+    const content = (reply as { content?: unknown })?.content;
+
+    if (!Array.isArray(content)) {
+      return '';
+    }
+
+    return content
+      .filter(
+        (block): block is { text: string } =>
+          typeof block === 'object' &&
+          block !== null &&
+          (block as { type?: unknown }).type === 'text' &&
+          typeof (block as { text?: unknown }).text === 'string'
+      )
+      .map(block => block.text)
+      .join('');
+  }
+
+  const content = (
+    reply as { choices?: { message?: { content?: unknown } }[] }
+  )?.choices?.[0]?.message?.content;
+
+  return typeof content === 'string' ? content : '';
 };

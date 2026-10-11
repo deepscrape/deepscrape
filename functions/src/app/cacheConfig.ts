@@ -15,7 +15,15 @@ export const sanitizeUpstashRestUrl = (value: string): string => {
     let normalized = value.trim().replace(/\/+$/, "")
 
     // Deduplicate malformed hostnames like *.upstash.io.upstash.io
-    normalized = normalized.replace(/\.upstash\.io\.upstash\.io(\/|$)/, ".upstash.io$1")
+    const deduped = normalized.replace(/\.upstash\.io\.upstash\.io(\/|$)/, ".upstash.io$1")
+    if (deduped !== normalized) {
+        // Production's value is malformed and works only because of the line above.
+        // Warn rather than repair in silence: the silence is what let a broken value
+        // live in prod, and it is what makes this regex look unused to the next
+        // reader who is tidying up. Never log the value -- it names the database.
+        console.warn("UPSTASH_REDIS_REST_URL has a duplicated host suffix; reassign it")
+    }
+    normalized = deduped
 
     return /^https?:\/\//i.test(normalized) ? normalized : `https://${normalized}`
 }

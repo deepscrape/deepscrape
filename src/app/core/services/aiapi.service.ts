@@ -6,7 +6,7 @@ import { catchError } from 'rxjs/internal/operators/catchError';
 import { map } from 'rxjs/internal/operators/map';
 import { tap } from 'rxjs/internal/operators/tap';
 import { environment } from 'src/environments/environment';
-import { arrayBufferToString, customUrlEncoder, isGroqModel, sanitizeJSON } from '../functions';
+import { anthropicTools, arrayBufferToString, customUrlEncoder, isGroqModel, openaiTools, sanitizeJSON, type AiToolSpec } from '../functions';
 import { API_ANTHROPIC, API_GROQAI, API_JINAAI, API_OPENAI } from '../variables';
 import { scan } from 'rxjs/internal/operators/scan';
 import { claudeAiApiStreamData, CrawlPack, CrawlTask, JinaOptions } from '../types';
@@ -95,6 +95,87 @@ export class AiAPIService {
         })
 
       )
+  }
+
+  /**
+   * One Claude round WITH tools, non-streaming, returning the parsed reply.
+   *
+   * Why not the streaming path beside it
+   * -----------------------------------
+   * A tool call has to be read whole before anything runs, and Anthropic streams
+   * one as `input_json_delta` fragments while the streaming methods here emit
+   * decoded TEXT. Accumulating those fragments would mean a second stream parser
+   * for a reply that is not text. `stream` is simply absent from the body, so the
+   * reply arrives parsed and `anthropicToolCalls` can read it.
+   *
+   * Only the tool round loses streaming. The caller renders the FINAL answer,
+   * which this returns whole.
+   * @param {Array} messages The conversation, as the streaming methods take it.
+   * @param {string} modelName The model id.
+   * @param {string} system The system prompt.
+   * @param {Array} tools The specs to offer, from `availableTools()`.
+   * @return {Observable<unknown>} The parsed response body.
+   */
+  askClaudeOnce(
+    messages: { role: string, content: unknown }[],
+    modelName: string,
+    system: string,
+    tools: readonly AiToolSpec[]
+  ): Observable<unknown> {
+    return this.http.post(this.claudeAiEndpoint, {
+      model: modelName,
+      max_tokens: 4096,
+      system,
+      messages,
+      tools: anthropicTools(tools),
+    }, {
+      headers: new HttpHeaders({
+        'api-key': `Bearer ${this.authService.token}`,
+        'x-api-key': this.CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      }),
+    })
+  }
+
+  /**
+   * One OpenAI-shaped round WITH tools, non-streaming, returning the parsed reply.
+   *
+   * The vendor is decided by `isGroqModel` exactly as `sendToOpenAI` decides it, so
+   * a Groq model offered a tool reaches Groq rather than OpenAI. They speak the same
+   * wire protocol, so endpoint and key are the whole difference.
+   *
+   * `tools` is omitable rather than sent empty on the answering round: an empty
+   * array is rejected by some providers, and offering tools there would invite
+   * another call rather than an answer.
+   * @param {Array} messages The conversation, system turn included by the caller.
+   * @param {string} modelName The model id.
+   * @param {Array} tools The specs to offer; omit for the answering round.
+   * @return {Observable<unknown>} The parsed response body.
+   */
+  askOpenAiOnce(
+    messages: { role: string, content: unknown }[],
+    modelName: string,
+    tools?: readonly AiToolSpec[]
+  ): Observable<unknown> {
+    const isGroq = isGroqModel(modelName)
+    const apiEndpoint = isGroq ? this.groqAiEndpoint : this.openAiEndpoint
+    const API_KEY = isGroq ? this.GROQ_API_KEY : this.OPENAI_API_KEY
+
+    return this.http.post(apiEndpoint, {
+      model: modelName,
+      max_tokens: 8000,
+      temperature: 0,
+      messages,
+      ...(tools && tools.length > 0 ? { tools: openaiTools(tools) } : {}),
+    }, {
+      headers: new HttpHeaders({
+        'api-key': `Bearer ${this.authService.token}`,
+        'Authorization': `Bearer ${API_KEY}`,
+        'content-type': 'application/json',
+      }),
+    })
   }
 
   sendToClaudeAI(content: string | { role: string, content: string }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string): Observable<{ content: string, role: string, usage: any | null }> {

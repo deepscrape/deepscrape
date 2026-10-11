@@ -82,6 +82,7 @@ describe('offered tools', () => {
       'serp',
       'list_sessions',
       'list_storage',
+      'list_machines',
     ]);
   });
 

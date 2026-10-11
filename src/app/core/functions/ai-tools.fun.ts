@@ -237,14 +237,17 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
   // own `perm(...)` and `paid` guards apply unchanged -- exactly the property
   // roadmap 7.1 requires.
   //
-  // Why only these two, and never a machine list: `GET /api/machines` is
-  // `guard([paid, perm('machine','read')])`, so it refuses every free caller.
-  // Offering it would hand most users a tool that reliably fails, which is the
-  // reason `vision` is `false` too. Read-only and free-reachable is the bar.
+  // A machine list IS offered, which reverses an earlier position in this file.
+  // `GET /api/machines` is `guard([paid, perm('machine','read')])`, so a free
+  // caller is refused -- but that is not the failure class `vision` is in. This
+  // one fails for callers who genuinely have no machines to list, and the refusal
+  // reaches the model as a readable answer, which is what the tool loop exists to
+  // convert. The bar is "fails for EVERYONE", not "fails for some".
   //
   // Nothing here spends. A session cannot be started, extended or closed through
-  // these, and no presigned URL is ever minted -- `presign` returns a 5-minute
-  // credential and is deliberately not exposed.
+  // these, no machine can be deployed or destroyed, and no presigned URL is ever
+  // minted -- `presign` returns a 5-minute credential and is deliberately not
+  // exposed.
   {
     name: 'list_sessions',
     description:
@@ -263,6 +266,16 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
       'cannot upload, delete or sign a download link.',
     parameters: object({}),
     path: '/api/storage/list',
+    available: true,
+  },
+  {
+    name: 'list_machines',
+    description:
+      'List the dedicated machines the caller owns, with name, state, region and ' +
+      'kind. Use when asked what machines exist or what is running. Needs a paid ' +
+      'plan. Read-only: cannot deploy, start, stop or destroy one.',
+    parameters: object({}),
+    path: '/api/machines',
     available: true,
   },
 ];

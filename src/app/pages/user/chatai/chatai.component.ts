@@ -13,7 +13,7 @@ import { ClipboardbuttonComponent } from 'src/app/core/components/clipboardbutto
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component';
 import { AiToolCall, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, newToolCallAccumulator, openaiToolTurns, resolveToolCall, setAIModel } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
-import { AiAPIService, AiFetchService, BucketStorageService, SearchService, WebrainToolsService } from 'src/app/core/services';
+import { AiAPIService, AiFetchService, BucketStorageService, DeploymentService, SearchService, WebrainToolsService } from 'src/app/core/services';
 // Not in the services barrel: every existing consumer imports it direct, so this follows them.
 import { BrowserSessionService } from 'src/app/core/services/browser-session.service';
 import { AIModel, SERP_DEFAULTS, SerpEngine } from 'src/app/core/types';
@@ -101,6 +101,7 @@ export class ChataiComponent {
     private readonly scraper = inject(AiFetchService);
     private readonly sessions = inject(BrowserSessionService);
     private readonly storage = inject(BucketStorageService);
+    private readonly deployment = inject(DeploymentService);
     private readonly destroyRef = inject(DestroyRef);
     private readonly scroller = viewChild<ElementRef<HTMLElement>>('scroller');
 
@@ -323,6 +324,8 @@ export class ChataiComponent {
                 return this.sessions.list();
             case 'list_storage':
                 return this.storage.list();
+            case 'list_machines':
+                return this.deployment.listMine();
             default:
                 return of({ error: `No dispatcher for the tool "${route}".` });
         }

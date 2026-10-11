@@ -19,6 +19,7 @@ import { BillingSnapshot, getBillingAccessMode, isChargeableAccessMode, resolveB
 // Not in the domain barrel, so imported from the module itself -- the shape
 // `bff/api.ts` already uses for the same type.
 import { AiVendorId, resolveAiKeySource } from "../domain/user-ai-settings.domain"
+import { API_KEY_INDEX_COLLECTION, apiKeyIndexId, isPlatformApiKey } from "../domain/api-key-index.domain"
 import { consumeBillingCredits, releaseBillingCredits, reserveBillingCredits } from "../app/billing-credits"
 import { requirePermission } from "./authz.middleware"
 import { authErrorCode as getAuthErrorCode } from "./auth-error"
@@ -110,6 +111,50 @@ class ReverseAPIProxy {
         }
 
         const token = authHeader.split(" ")[1]
+
+        // A platform key rather than a Firebase ID token. Resolved through the same
+        // index `createMyApiKey` writes, and shaped into `req.user` so every
+        // `perm(...)` and `paid` guard downstream applies UNCHANGED -- one
+        // authorization model, not a second one that has to be kept in step.
+        //
+        // Deliberately not a second middleware: `guard()` puts `jwt` first on every
+        // route, so teaching this function about keys makes all of them accept one,
+        // including routes added later.
+        if (isPlatformApiKey(token)) {
+            try {
+                const entry = await db
+                    .doc(`${API_KEY_INDEX_COLLECTION}/${apiKeyIndexId(token)}`)
+                    .get()
+                const uid = entry.data()?.["uid"]
+
+                // One response for "never a key" and "deleted key". Whether a given
+                // string was ever valid is not something an unauthenticated caller
+                // should be able to learn, and deletion is exactly what revokes a key:
+                // the index entry is the only thing that authenticated it.
+                if (!entry.exists || typeof uid !== "string" || uid.length === 0) {
+                    res.status(401).json({
+                        error: "Unauthorized: Invalid token",
+                        code: "invalid_token",
+                    })
+                    return
+                }
+
+                // Narrowed to the one field the guards read. Anything else a decoded
+                // token carries (`email`, `admin`, custom claims) is absent rather than
+                // invented, so a key FAILS CLOSED on every check that reads one -- it
+                // is not an admin and carries no claims.
+                //
+                // `req.authToken` is deliberately NOT set: `handlers/machines.ts` and
+                // the heartbeat forward that raw value to other services as an identity
+                // token, and a platform key must not travel onward wearing that hat.
+                req.user = { uid } as unknown as typeof req.user
+                next()
+            } catch (error) {
+                console.error("API key verification failed:", error)
+                res.status(500).json({ error: "internal", code: "internal" })
+            }
+            return
+        }
 
         try {
             const decodedToken = await auth.verifyIdToken(token, true)
@@ -392,6 +437,7 @@ class ReverseAPIProxy {
      * the delegated `requirePaidAccess`. Stash the snapshot on `req` and reuse it
      * there if AI-call volume ever makes that one read matter.
      * @param {*} vendor
+     * @return {*}
      */
     requirePaidOrByok(vendor: AiVendorId) {
         return async (req: Request, res: Response, next: NextFunction): Promise<void> => {

@@ -10,6 +10,7 @@ import { HttpsError } from "firebase-functions/v2/https"
 // site changes. Includes createBootstrapAdminPasswordAccount and enableTotpMfa.
 import { guardedOnCall as onCallv2 } from "../infrastructure/callable-limiter"
 import { env, functionsEnvJson } from "../config/env"
+import { API_KEY_INDEX_COLLECTION, apiKeyIndexId } from "../domain/api-key-index.domain"
 
 const bootstrapAdminEmails = new Set(
     env.ADMIN_EMAILS
@@ -650,8 +651,27 @@ export const createMyApiKey = onCallv2(async (req) => {
         const secretName = `users_${userId}_apikey_${newApiKeyDoc.id}`
         const secretPath = await saveToSecretManager(secretName, apiKey.key)
 
+        // The lookup direction, and the reason this feature could not work before:
+        // nothing could go from a presented key back to a uid. See
+        // `api-key-index.domain.ts`. Written BEFORE the metadata, so a key that can
+        // authenticate is never a key nobody can find.
+        //
+        // A failure here fails the whole call rather than logging and continuing:
+        // minting a credential nothing can resolve is worse than refusing to mint it.
+        const keyHash = apiKeyIndexId(apiKey.key)
+
+        await db.collection(API_KEY_INDEX_COLLECTION).doc(keyHash).set({
+            uid: userId,
+            keyId: newApiKeyDoc.id,
+            created_At: new Date(),
+        })
+
+        // `keyHash` on the metadata too, so deletion can drop the index entry without
+        // reading the secret back out of Secret Manager. A digest is not a credential,
+        // which is what makes it safe to keep beside the metadata.
         await newApiKeyDoc.set({
             secretPath,
+            keyHash,
             permissions: apiKey.permissions || [],
             name: apiKey.name,
             default: apiKey.default,
@@ -725,6 +745,8 @@ export const deleteMyApiKey = onCallv2(async (req) => {
         type?: string
         permissions?: string[]
         secretPath?: string
+        /** Absent for keys minted before the index existed. */
+        keyHash?: string
         created_At?: Date
         created_By?: string
     } | undefined
@@ -750,6 +772,15 @@ export const deleteMyApiKey = onCallv2(async (req) => {
     const auditRef = db.collection(`users/${userId}/apikey_audit`).doc()
 
     const batch = db.batch()
+
+    // The index entry is the ONLY thing that can authenticate this key, so it must not
+    // outlive the key it points at. Conditional rather than assumed: `keyHash` is
+    // absent for keys minted before the index existed, and those were never
+    // verifiable, so there is no entry to remove.
+    if (typeof apiKeyData?.keyHash === "string" && apiKeyData.keyHash) {
+        batch.delete(db.doc(`${API_KEY_INDEX_COLLECTION}/${apiKeyData.keyHash}`))
+    }
+
     batch.set(auditRef, {
         action: "deleted",
         apiKeyId,

@@ -113,8 +113,7 @@ respectively, which is correct (both are gated surfaces, not user-facing dashboa
   that rendered as raw text. What remains uncheckable is a key built at runtime
   (`'PREFIX_' + value`): those are covered only by the prefix check, which proves the namespace
   exists, not that the value does.
-- **No template coverage in the code graph** — 151 `parse_partial` ranges in `src`, all `.html`/`.scss`.
-  This is why every template claim needs `bun run build`.
+- **The code graph sees templates only partially** — 74 files with `parse_partial` ranges plus 10 whole-file failures (all `.scss`/`.mmd`), measured 2026-10-11 after a full re-index. This is why every template claim needs `bun run build`. **And do not read `check_index_coverage`'s `not_tracked` as absence:** it is a scope-bookkeeping signal (`scopes: 0`) that survives a re-index, while the graph demonstrably holds `bff/` (205 nodes), `functions/` (2084) and `scripts/` (138). The freshness question is answered by looking a symbol up by name, not by that table.
 - `docs/ADR-2026-10-BROWSER-SESSIONS.md:64` asserts a zero-result sweep for `webrtc|rtc|neko|vnc|mjpeg|sse`
   and claims no WebSocket server exists. **Both were already false** and are now doubly stale. Not yet corrected.
 

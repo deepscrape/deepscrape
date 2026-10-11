@@ -37,7 +37,7 @@ making a failure impossible rather than handling it. Anything not verified in so
 | 3.1 | `core` ← `app` dependency | The graph shows `app → src` 75 calls and **`src → app` 13** — a reverse dependency from core into the app layer, i.e. a cycle. **MEASURE** to confirm which symbols cross. |
 | 3.2 | RxJS import style | The repo declares deep imports (`rxjs/internal/operators/map`) as the convention and applies it inconsistently — `operations.component.ts` and others import from `rxjs` directly. Consistency, and deep imports help tree-shaking. |
 | 3.3 | `AiKeysService.describe` | Fan-in **213** — the single hottest symbol in the codebase. Either a genuine hub worth splitting or a graph artefact. **MEASURE.** |
-| 3.4 | Tooling | The code graph is blind to templates: **85 unusable ranges, all `.html`/`.scss`** (75 `parse_partial` + 10 `parse_unusable`). Not a code defect, but it is why template claims always need grep + `bun run build`. |
+| 3.4 | Tooling | The code graph sees templates only partially: **74 files carry `parse_partial` ranges and 10 fail whole-file** (measured 2026-10-11 after a full re-index; it was 75 + 10). Not exclusively `.html`/`.scss` — the partial list includes a `.ps1`. Not a code defect, but it is why template claims always need grep + `bun run build`. |
 
 ## Tier 4 — feature gaps (not compression; listed so they are not mistaken for waste)
 

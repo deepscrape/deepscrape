@@ -286,23 +286,45 @@ Adding Qwen or DeepSeek to the CLIENT list first would ship broken dropdown item
 routes by vendor (`isGroqModel`, else the OpenAI endpoint), so a `deepseek-chat` name would be
 posted to OpenAI and 400.
 
-### 7.4 Where chat tool-calling stands, and the exact blocker
+### 7.4 Where chat tool-calling stands: the loop runs
 
 **Built and committed:** the tool specs with a JSON Schema per dialect; the gate on model output
 (`resolveToolCall`, refusing an unknown name, a real-but-unoffered tool, and unusable
 arguments); the streaming accumulators (`accumulateAnthropic` / `accumulateOpenAi` /
-`finishToolCalls`); `decodeArguments` as the single definition of "unreadable"; and both stream
-parsers now CARRY tool calls instead of discarding them. `ai-tools.fun.spec.ts` is 21 specs.
+`finishToolCalls`); `decodeArguments` as the single definition of "unreadable"; both stream
+parsers carrying tool calls instead of discarding them; the `tools` parameter on both streaming
+methods; the provider-shaped result turns (`anthropicToolTurns` / `openaiToolTurns`); and the
+loop itself in `chatai`.
 
-**Not built, and the blocker is specific: `sendToClaudeAI` and `sendToOpenAI` do not accept a
-`tools` parameter.** The stream can carry a tool call, but the request cannot OFFER a tool, so
-the model will never call one. Those two signatures and their request bodies are the next edit;
-only then does the loop in `chatai` have anything to receive.
+**The loop, as built:** stream round one WITH the tools offered, feeding each chunk to that
+dialect's accumulator; at end of stream, assemble the calls and execute them through the same
+`resolveToolCall` gate the server path uses; append the provider's own turns; then stream a
+second round with the tools WITHHELD. ONE round only — a second is a spend decision, and nothing
+has a ceiling yet. This is the seam to widen when it does.
 
-**Scope rule for the dispatcher when it lands:** added ONE AT A TIME, each behind the guard its
+**Two shapes that are protocol, not preference:** Anthropic rejects a `tool_result` with no
+preceding `tool_use` block, and OpenAI rejects Anthropic's shape outright. A refused call is
+therefore answered AS a result, because a `tool_use` with nothing answering it is itself a 400.
+Neither failure is visible to `tsc` or to a component test — it appears only against a live
+provider, which is why both builders are pure and pinned by specs.
+
+`execute` deliberately never errors. A refusal and a failed route are both answers the model can
+act on, so letting either reject would abort a transcript that could have carried on: one flaky
+tool must not kill the turn.
+
+**Now unused, and this needs a decision.** `askClaudeOnce`, `askOpenAiOnce`, `replyText`,
+`anthropicToolCalls` and `openaiToolCalls` have **no app consumer** — a grep finds them only in
+`ai-tools.fun.spec.ts`. They were built as a non-streaming tool round, and the loop streams
+instead (a model that calls a tool usually writes a sentence first, and a non-streaming round
+freezes on it). Deleting them and correcting this section belong in ONE commit: this session
+already had to correct two roadmap claims about code reported gone that was not, and a deletion
+that leaves its own documentation behind is a third instance of that.
+
+**Scope rule for the dispatcher, as landed:** added ONE AT A TIME, each behind the guard its
 route already carries. `search` / `scrape` / `serp` are free. A browser session or a job is a
 money path, gets its own `available` flag, and gets reviewed on its own — never switched on in
-bulk.
+bulk. `extract` / `pdf` / `vision` / `extract_schema` remain `available: false` for the reasons
+the registry states, and flipping a flag is the entire change needed to offer one.
 
 ### 7.5 One consequence worth not rediscovering
 

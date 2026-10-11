@@ -175,6 +175,54 @@ export const VAULT_TOOLS: readonly string[] = [
 export const needsCallerOwnWorker = (name: unknown): boolean =>
   typeof name === "string" && VAULT_TOOLS.includes(name)
 
+/**
+ * The two vault ops that move the cookie jar in the PAYLOAD.
+ *
+ * `cookies` reads a jar out of a browser and `setcookies` writes one into a
+ * browser. Neither opens `profiles_dir()/<service>/<profile>`, which is the
+ * whole difference between them and the five file-backed ops beside them in
+ * `VAULT_OPS`. So there is no state to leave behind on a platform worker.
+ */
+export const ENDPOINT_COOKIE_OPS: readonly string[] = ["cookies", "setcookies"]
+
+/**
+ * Whether a call is one of those cookie ops AND names a browser of its own.
+ *
+ * The endpoint is the entire safety argument. Without one, a cookie call reads
+ * or writes the jar of whatever browser the pooled worker
+ * happens to hold, which
+ * is a disclosure of another tenant's session -- exactly what `VAULT_TOOLS`
+ * refuses. With one, the request touches a browser the caller supplied and the
+ * jar travels in the request body, so a platform worker
+ * keeps nothing and a free
+ * caller costs nothing.
+ *
+ * The address itself is vetted at the trust boundary, in `vaultArguments` via
+ * `cdpEndpointFrom`; this only has to notice that one was given.
+ * @param {unknown} toolName The tool name as the caller supplied it.
+ * @param {Record<string, unknown> | undefined} args The mapped worker arguments
+ * @return {boolean} True when the call is safe on any tier.
+ */
+export const isEndpointCookieCall = (
+  toolName: unknown,
+  args: Record<string, unknown> | undefined
+): boolean => {
+  if (toolName !== "webrain_session" || !args) {
+    return false
+  }
+
+  const op = args["op"]
+  if (
+    typeof op !== "string" ||
+    !ENDPOINT_COOKIE_OPS.includes(op.toLowerCase())
+  ) {
+    return false
+  }
+
+  const endpoint = args["cdp_url"]
+  return typeof endpoint === "string" && endpoint.trim().length > 0
+}
+
 export type WebrainToolRefusal =
   | "unknown-tool"
   | "tier"
@@ -215,11 +263,13 @@ export const webrainTierFor = (accessMode: string | undefined): WebrainTier => {
  * refusal is the point, not an oversight.
  * @param {*} accessMode
  * @param {*} toolName
+ * @param {*} args
  * @return {*}
  */
 export const decideWebrainTool = (
   accessMode: string | undefined,
-  toolName: unknown
+  toolName: unknown,
+  args?: Record<string, unknown>
 ): WebrainToolDecision => {
   const tier = webrainTierFor(accessMode)
 
@@ -228,6 +278,14 @@ export const decideWebrainTool = (
   }
 
   if (tier === "admin") {
+    return { allowed: true, tier }
+  }
+
+  // Ahead of the tier allowlist, and not a hole in it: the reason the vault ops
+  // sit behind a tier is the worker's process-global vault, which a cookie call
+  // with the caller's own endpoint never opens. Every other op on this tool is
+  // still refused below, and a cookie call without an endpoint still is too.
+  if (isEndpointCookieCall(toolName, args)) {
     return { allowed: true, tier }
   }
 

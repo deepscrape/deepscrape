@@ -115,6 +115,53 @@ describe("vaultArguments", () => {
     assert.deepEqual(mapped.ok ? mapped.args : {}, {op: "cookies"})
   })
 
+  it("forwards the caller's own browser for the cookie pair", () => {
+    const mapped = vaultArguments({
+      op: "cookies",
+      cdp_url: "  wss://chrome.example.net  ",
+    })
+    assert.equal(mapped.ok, true)
+    assert.equal(
+      mapped.ok ? mapped.args["cdp_url"] : undefined,
+      "wss://chrome.example.net",
+      "trimmed, and the only argument the cookie ops need",
+    )
+  })
+
+  it("refuses an endpoint it cannot use instead of dropping it", () => {
+    // Dropping it would run the caller against the platform's own browser while
+    // they believe it is theirs, and the jar they read would be that pooled
+    // worker's browser. A 400 is the honest answer.
+    for (const endpoint of [
+      "ws://127.0.0.1:9222",
+      "wss://user:secret@chrome.example.net",
+      "ftp://chrome.example.net",
+      9222,
+    ]) {
+      const mapped = vaultArguments({
+        op: "setcookies",
+        cookies: [{}],
+        cdp_url: endpoint,
+      })
+      assert.equal(mapped.ok, false, String(endpoint))
+    }
+  })
+
+  it("does not forward an endpoint to a vault-backed op", () => {
+    // Only the cookie pair is exempt from the own-worker rule, so only the
+    // cookie pair carries an endpoint. Widening this is a separate decision:
+    // what it would buy, an admin pointing save_state at a named browser, is
+    // not asked for by anything today.
+    const mapped = vaultArguments({
+      op: "save_state",
+      service: "github",
+      profile: "me",
+      cdp_url: "wss://chrome.example.net",
+    })
+    assert.equal(mapped.ok, true)
+    assert.equal(mapped.ok ? mapped.args["cdp_url"] : undefined, undefined)
+  })
+
   it("accepts a cookie jar inline and echoes the op", () => {
     const jar = [{name: "sid", value: "x", domain: "example.com"}]
     const mapped = vaultArguments({op: "setcookies", cookies: jar})

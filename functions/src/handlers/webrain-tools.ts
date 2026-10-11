@@ -43,7 +43,7 @@ import {
   integer,
   nonEmptyString,
 } from "./serp"
-import { targetUrlFrom } from "../domain/url-guard.domain"
+import { cdpEndpointFrom, targetUrlFrom } from "../domain/url-guard.domain"
 import { isSafeVaultName } from "../domain/vault-entry.domain"
 import {
   webrainTool,
@@ -702,8 +702,10 @@ const VAULT_OPS: readonly string[] = [
   "save_state",
   "restore_state",
   "close_launch",
-  // The cookie pair. Already payload-based on the worker, so these are what let
-  // a logged-in jar move between machines TODAY. Full `state.json` is still
+  // The cookie pair. Payload-based on the worker -- the jar travels in the
+  // request and nothing is opened in `profiles_dir()`, which is what makes them
+  // the two ops a non-admin may run, and only while they name their own browser
+  // with `cdp_url` (`isEndpointCookieCall`). Full `state.json` is still
   // file-only on the worker, which is why a profile is not portable end to end
   // yet -- see the header of `webrain-vault.spec.ts`.
   "cookies",
@@ -823,6 +825,31 @@ export const vaultArguments = (body: unknown): ToolArguments => {
     const port = integer(source?.["port"])
     if (port !== undefined && port > 0) {
       args["port"] = port
+    }
+  }
+
+  // The cookie pair may name a browser of the caller's own,
+  // and that endpoint is
+  // the only reason a non-admin may run either op at all -- see
+  // `isEndpointCookieCall`. It crosses the same guard `/serp` uses,
+  // because it is
+  // an address a worker will connect to. A supplied-but-unusable one is REFUSED
+  // rather than dropped: dropping it would run the caller against
+  // the platform's
+  // own browser while the caller believes it is theirs.
+  if (op === "cookies" || op === "setcookies") {
+    const named = source?.["cdp_url"]
+    if (named !== undefined && named !== null && named !== "") {
+      const cdpUrl = cdpEndpointFrom(named)
+      if (!cdpUrl) {
+        return {
+          ok: false,
+          error:
+            "op=" + op +
+            " needs a cdp_url of ws(s) or http(s) to a non-private host",
+        }
+      }
+      args["cdp_url"] = cdpUrl
     }
   }
 

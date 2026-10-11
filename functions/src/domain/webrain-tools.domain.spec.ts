@@ -15,6 +15,7 @@ import {
   SHARED_UNSAFE_TOOLS,
   VAULT_TOOLS,
   decideWebrainTool,
+  isEndpointCookieCall,
   needsCallerOwnWorker,
   needsExclusiveWorker,
   webrainTierFor,
@@ -207,6 +208,100 @@ describe("needsCallerOwnWorker", () => {
     for (const value of [undefined, null, 0, false, {}, []]) {
       assert.equal(needsCallerOwnWorker(value), false)
     }
+  })
+})
+
+describe("isEndpointCookieCall", () => {
+  it("covers exactly the two payload cookie ops", () => {
+    for (const op of ["cookies", "setcookies"]) {
+      assert.equal(
+        isEndpointCookieCall("webrain_session", {
+          op,
+          cdp_url: "wss://chrome.example.net",
+        }),
+        true,
+        op,
+      )
+    }
+  })
+
+  it("excludes every op that opens the worker's vault", () => {
+    // These five write or read `profiles_dir()/<service>/<profile>`, so an
+    // endpoint does not make them safe: what they leave behind outlives the
+    // lease. Listed individually so a sixth file-backed op has to be added here.
+    for (const op of [
+      "profiles",
+      "login",
+      "save_state",
+      "restore_state",
+      "close_launch",
+    ]) {
+      assert.equal(
+        isEndpointCookieCall("webrain_session", {
+          op,
+          cdp_url: "wss://chrome.example.net",
+        }),
+        false,
+        op,
+      )
+    }
+  })
+
+  it("needs an endpoint of its own, not just the right op", () => {
+    for (const args of [
+      {op: "cookies"},
+      {op: "cookies", cdp_url: "   "},
+      {op: "cookies", cdp_url: 9222},
+      {op: "cookies", cdp_url: null},
+    ]) {
+      assert.equal(
+        isEndpointCookieCall("webrain_session", args),
+        false,
+        JSON.stringify(args),
+      )
+    }
+  })
+
+  it("does not answer for another tool that also takes an op", () => {
+    assert.equal(
+      isEndpointCookieCall("webrain_vision", {
+        op: "cookies",
+        cdp_url: "wss://chrome.example.net",
+      }),
+      false,
+    )
+    assert.equal(isEndpointCookieCall("webrain_session", undefined), false)
+  })
+})
+
+describe("decideWebrainTool, with a browser of the caller's own", () => {
+  it("allows the cookie pair for a FREE caller", () => {
+    // What the paid tier protects is the worker's process-global vault and the
+    // shared pool. A cookie call with the caller's own endpoint opens neither.
+    const decision = decideWebrainTool("free", "webrain_session", {
+      op: "setcookies",
+      cdp_url: "wss://chrome.example.net",
+    })
+    assert.equal(decision.allowed, true)
+    assert.equal(decision.refusal, undefined)
+  })
+
+  it("still refuses that same free caller the file-backed ops", () => {
+    for (const op of ["login", "save_state", "restore_state", "profiles"]) {
+      const decision = decideWebrainTool("free", "webrain_session", {
+        op,
+        cdp_url: "wss://chrome.example.net",
+      })
+      assert.equal(decision.allowed, false, op)
+      assert.equal(decision.refusal, "tier", op)
+    }
+  })
+
+  it("still refuses the cookie pair to a free caller with NO endpoint", () => {
+    // The exemption is the endpoint, so without one nothing changed.
+    const decision = decideWebrainTool("free", "webrain_session", {op: "cookies"})
+    assert.equal(decision.allowed, false)
+    assert.equal(decision.refusal, "tier")
   })
 })
 

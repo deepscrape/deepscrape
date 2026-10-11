@@ -42,6 +42,7 @@ import { env } from "../config/env"
 import { withPlatformProxy } from "../domain/webrain-proxy.domain"
 import {
   decideWebrainTool,
+  isEndpointCookieCall,
   needsCallerOwnWorker,
   needsExclusiveWorker,
   webrainToolRefusalMessage,
@@ -185,7 +186,7 @@ export const webrainTool = async (
   accessMode: string | undefined,
   args: Record<string, unknown> = {}
 ): Promise<WebrainToolResult> => {
-  const decision = decideWebrainTool(accessMode, name)
+  const decision = decideWebrainTool(accessMode, name, args)
   if (!decision.allowed) {
     return {
       ok: false,
@@ -201,7 +202,17 @@ export const webrainTool = async (
   // function can reach is the caller's own machine -- see `VAULT_TOOLS`. Admin
   // is exempt to match the allowlist's own decision (an operator diagnosing a
   // failure needs the tool that failed), and the smoke probe depends on it.
-  if (decision.tier !== "admin" && needsCallerOwnWorker(name)) {
+  //
+  // The cookie pair is the one exception, because it is the one pair that does
+  // not need the caller's MACHINE: it needs the caller's BROWSER, which is what
+  // a caller-supplied `cdp_url` is. It is also the one pair that keeps nothing
+  // open -- the jar is in the payload, not in `profiles_dir()`. Both halves are
+  // required, and `isEndpointCookieCall` is the single place that says so.
+  if (
+    decision.tier !== "admin" &&
+    !isEndpointCookieCall(name, args) &&
+    needsCallerOwnWorker(name)
+  ) {
     return {
       ok: false,
       text: "",

@@ -160,6 +160,21 @@ const getEnv = () => {
     IS_PRODUCTION: parseBoolean(getConfigValue("PRODUCTION", "false"), false),
     COOKIE_SECRET: getConfigValue("COOKIE_SECRET"),
     CSRF_COOKIE_SECRET: getConfigValue("CSRF_COOKIE_SECRET"),
+    // The key every vault payload is encrypted under, so a saved cookie jar sits
+    // in the bucket as ciphertext rather than as a replayable live session.
+    //
+    // ONE platform key, and each account's key is DERIVED from it
+    // (`domain/vault-payload.domain.ts`). A per-uid secret would be one Secret
+    // Manager secret per account, and `getSecretFromManager` reads
+    // `/versions/latest` -- so rotating one would make every blob written under
+    // the previous version undecryptable, which is not what "rotate" should
+    // mean for a key that must stay stable for the life of the account's data.
+    //
+    // NO default and no development fallback: an unset value makes the vault
+    // route refuse, because a fallback key is how a deployment ends up
+    // encrypting customer credentials with a value that is in the repo. Base64,
+    // 32 bytes decoded.
+    VAULT_DATA_KEY: getConfigValue("VAULT_DATA_KEY", ""),
     DB_NAME: getConfigValue("DB_NAME", "easyscrape"),
     // Cloud Storage bucket for the artifact cache (`/api/storage/*`). Empty
     // means "let the Admin SDK choose", which resolves to

@@ -94,6 +94,17 @@ export const vaultEntryId = (service: string, profile: string): string =>
   `${service}:${profile}`
 
 /**
+ * How many entries one account may hold.
+ *
+ * A cap rather than a tier gate, for the reason `MONITOR_MAX_PER_USER` is one: a
+ * vault entry costs a few KB of object storage and one index document, so what
+ * needs bounding is the abuse case (one account filling a bucket), not the
+ * customer. It is also what makes the route safe to expose on ANY tier, which is
+ * what the published claim about profiles implies.
+ */
+export const VAULT_MAX_ENTRIES = 20
+
+/**
  * The object-key prefix every entry of one caller lives under.
  *
  * Exists so ERASURE can sweep by prefix. `purgeAccountBlobs` walks the artifact

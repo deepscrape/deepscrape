@@ -33,6 +33,7 @@ import {
   webrainScrape,
   webrainSearch,
   webrainVault,
+  webrainVision,
 } from '../functions/src/handlers/webrain-tools'
 import { schemaCompiler } from '../functions/src/handlers/schema-compiler'
 import {
@@ -244,6 +245,22 @@ api.post(
   h(guard([access, perm('crawl', 'execute'), webrainPdf])),
 )
 
+// `POST /api/vision` was never registered, while the tools panel and
+// `webrainTools.vision()` have called it since they landed -- so the Vision tab
+// answered 404 for every caller, paid ones included. `bff/api.spec.ts` had it in
+// its route table and was red on this one line, which is the only reason it is
+// visible at all.
+//
+// `paid`, unlike the five above it, and the client already says so: the tools
+// panel keys its upgrade prompt off this route's 402. `webrain_vision` is in
+// `PAID_ONLY_TOOLS` as well, so the allowlist refuses a free caller a second
+// time if this guard is ever loosened -- the answer that matters is the 402,
+// because the remedy for a free caller here is an upgrade, not a retry.
+api.post(
+  '/api/vision',
+  h(guard([paid, perm('crawl', 'execute'), webrainVision])),
+)
+
 // The schema compiler: turn a sentence into a schema a caller can reuse.
 //
 // Free-resolving like the five above -- `access`, not `paid` -- deliberately:
@@ -319,20 +336,22 @@ api.post(
   h(guard([access, perm('crawl', 'execute'), browserSessionClose])),
 )
 
-// The credential vault: the one `paid` route in the browser-session family.
+// The credential vault: `access`, like its four neighbours, and the tier
+// boundary lives in the handler instead of in this guard.
 //
-// `paid`, where its four neighbours carry `access`, and the difference is the
-// point rather than an inconsistency. Those four are not a confidentiality
-// problem -- a free caller's session caps are simply zero -- so a 402 in front
-// of them would refuse a caller who is entitled to ask. The vault is different
-// twice over: `VAULT_TOOLS` in `webrain-tools.domain.ts` puts these ops behind a
-// paid tier, and the vault is PROCESS-GLOBAL on the worker, so a free caller
-// would be listing and replaying credentials it does not own. 402 is the honest
-// answer, and it is what the UI keys its upgrade prompt off rather than
-// guessing at the caller's plan client-side.
+// It used to carry `paid`, which made the whole route a 402 for a free caller.
+// That is the wrong place for the decision once the ops differ from each other:
+// only the handler knows the `op` and whether the caller named a browser of
+// their own, and the cookie pair is safe for any tier when they did -- the jar
+// travels in the request and the browser is theirs, so no platform worker keeps
+// anything (`isEndpointCookieCall`). Every other op on this route still refuses
+// a non-admin, for the reason `VAULT_TOOLS` gives: the worker's vault is
+// process-global, so a stored profile outlives the lease that wrote it. 402 is
+// still the answer a caller sees when a route is genuinely paid; this one now
+// answers 403 with the specific reason.
 api.post(
   '/api/browser/session/vault',
-  h(guard([paid, perm('crawl', 'execute'), webrainVault])),
+  h(guard([access, perm('crawl', 'execute'), webrainVault])),
 )
 
 // ── pricing ──────────────────────────────────────────────────────────────────

@@ -192,7 +192,7 @@ unauthenticated ops HTML page) and `waitforstate` (already bridged, §2.2). Dele
 | 3 | webrain has no progress channel (§3) | **webrain** | medium — MCP `notifications/progress` |
 | 4 | Two Firestore collection-group indexes declared, undeployed (§10.D #7) | deploy | trivial, production-visible |
 | 5 | arachnefly dev default `localhost:8080` collides with the BFF (§10.D #8) | arachnefly config | trivial |
-| 6 | `GET /api/pricing/estimate` absent (`12-production-harmony.md` §4.4) | BFF | small — needs a contract first |
+| 6 | ~~`GET /api/pricing/estimate` absent (`12-production-harmony.md` §4.4)~~ built 2026-10-11; the contract was already written in `domain/billing-pricing.domain.ts` | BFF | done |
 | 7 | crawlagent streaming-download capability not ported (§2.3) | BFF | small |
 
 **`GET /machine/proxy/:id` is deliberately not on this list.** It is the one genuinely unbridged

@@ -83,7 +83,7 @@ import {
   billingPolicyGet,
   billingPolicySet,
 } from '../functions/src/handlers/billing-policy'
-import { pricingRates } from '../functions/src/handlers/pricing'
+import { pricingEstimate, pricingRates } from '../functions/src/handlers/pricing'
 import { requirePermission } from '../functions/src/infrastructure/authz.middleware'
 import { ReverseAPIProxy } from '../functions/src/infrastructure/syncaiapi'
 import { type BridgeContext, type ExpressMiddleware, runChain } from './bridge'
@@ -381,6 +381,22 @@ api.post(
 // exposes is our PUBLIC price list, projected from the same table the charging
 // path uses, so the page cannot advertise a number the code does not honour.
 api.get('/api/pricing/rates', h(guard([access, pricingRates])))
+
+// What the NEXT call costs THIS caller, and the reason `access` is not optional
+// here: the handler reads `req.accessMode`, which only `resolveAccess` sets. Drop
+// it and every caller is priced as `free`, so a paid account would be told its
+// next call costs nothing -- the estimate would agree with a charge it does not
+// predict, which is worse than refusing to answer.
+//
+// Still no `perm(...)`, and `access` rather than `paid`, for the same reason as
+// the rate list above: this quotes a price to someone deciding whether to buy.
+// The question is about THEIR next call, so unlike `rates` the answer is not the
+// same for everyone -- `credits` is the table's and `effectiveCredits` is theirs.
+//
+// `method` and `path` are query params naming the call being priced. No `count`:
+// the charge is flat per request, so a multiplier would quote a number the
+// platform never takes.
+api.get('/api/pricing/estimate', h(guard([access, pricingEstimate])))
 
 // ── the customer's spend cap ─────────────────────────────────────────────────
 // `access` and not `paid`: a free-tier customer is exactly the one most likely

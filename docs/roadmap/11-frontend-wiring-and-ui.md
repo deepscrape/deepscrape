@@ -127,7 +127,7 @@ engine.
 | Phase 2 — live view | **closed end to end 2026-10-10** — arachnefly `POST /machine/mcp/:id`, `observeMachineFrame`, `browserSessionFrame`, `GET /api/browser/session/:id/frame`, fps from `SESSION_CAPS` |
 | Phase 3 — production readiness | `08`; frames done, owner decisions and the profiles claim open |
 | Phase 4 — organizations / BYO compute | not started |
-| Phase 5 — pricing & budgets | spend cap complete end to end; `GET /api/pricing/estimate` still absent |
+| Phase 5 — pricing & budgets | spend cap and `GET /api/pricing/estimate` complete end to end (2026-10-11) |
 | Phase 6 — this file | the two wiring gaps closed |
 
 ## What is genuinely left, in priority order
@@ -154,7 +154,7 @@ asked rather than taken): the fleet's lifecycle actions, and one-click reclaim.
 **Then, the remaining surfaces**
 
 5. Two collection-group indexes are declared but undeployed; the first live sweep is the real test.
-6. `GET /api/pricing/estimate` (`07` Part F) does not exist.
+6. ~~`GET /api/pricing/estimate` (`07` Part F) does not exist.~~ Built 2026-10-11; the handler and the client had both shipped, and only the route was missing.
 7. A user-facing **proxy** surface. The pool is platform-admin only today
    (`/admin/webrain` + `webrain-config.service.ts`). Whether a tenant may bring their own proxy is
    a product decision, not a missing wire — and per `06`, the default must not be

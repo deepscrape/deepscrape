@@ -462,8 +462,19 @@ published set equals the charged set field by field, that nothing serialises a `
 fallback IS the resolver's answer for an unlisted route. Written against invariants rather than literal
 numbers, so it holds when `BILLING_PRICING_RULES_JSON` re-prices the platform.
 
-**Still not built from Part F:** `GET /api/pricing/estimate` (the "this run will cost N" line above Submit)
-and `GET /api/billing/policy`. Neither exists.
+**Both halves of Part F are BUILT (2026-10-11), and the way the first one was found is the lesson.**
+
+`GET /api/pricing/estimate` had a handler, a domain function (`estimateBillingCost`) and a client
+method (`PricingRatesService.estimate`) for a while, and **no route**. So every caller got a 404, and
+the crawl panel hides that failure on purpose — the "this run will cost N" line simply never appeared
+instead of reporting anything wrong. Registered now as `guard([access, pricingEstimate])`.
+
+`access` is required rather than stylistic: the handler reads `req.accessMode`, which only
+`resolveAccess` sets. Without it every caller is priced as `free`, so a paid account would be told its
+next call costs nothing — the estimate would agree with a charge it does not predict.
+
+Same species as `/api/vision`. A client method is not evidence of a route, and the base-level check in
+`scripts/route-parity.ts` could not tell them apart; the method-path list it now prints can.
 
 ---
 

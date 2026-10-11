@@ -41,7 +41,7 @@ making a failure impossible rather than handling it. Anything not verified in so
 
 ## Tier 4 — feature gaps (not compression; listed so they are not mistaken for waste)
 
-- `GET /api/pricing/estimate` (roadmap `07` Part F) still does not exist.
+- ~~`GET /api/pricing/estimate` (roadmap `07` Part F)~~ **built 2026-10-11** — it was the route that was missing, not the code. See `08-production-readiness.md` §3.2.
 - Vault durability → routes → UI (Phase 4 §4.1), in that order. Blocked on a **volume**, not on will.
 - Frames: the transport is now built; what is left is the BFF route and the fps number.
 

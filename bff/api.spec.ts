@@ -61,6 +61,8 @@ const ROUTES: Array<[string, string]> = [
   ['POST', '/api/webrain/config/token'],
   ['POST', '/api/webrain/config/proxies'],
   ['POST', '/api/vision'],
+  ['GET', '/api/pricing/rates'],
+  ['GET', '/api/pricing/estimate'],
 ]
 
 describe('/api routes', () => {

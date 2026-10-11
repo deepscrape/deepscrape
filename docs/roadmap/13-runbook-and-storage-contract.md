@@ -192,7 +192,7 @@ Unchanged from `12-production-harmony.md` §6, with Phase 4 now the only feature
 | 2 | Deploy the two collection-group indexes | deployment |
 | 3 | Correct the ADR evidence (`ADR-2026-10-BROWSER-SESSIONS.md:64`) | doc |
 | 4 | Owner sign-off: fleet lifecycle actions, session reclaim | decision |
-| 5 | `GET /api/pricing/estimate` | feature, small |
+| 5 | ~~`GET /api/pricing/estimate`~~ built 2026-10-11 | done |
 | 6 | `TransactionsComponent` — wire or delete | product decision |
 | 7 | **Phase 4 — BYO Fly org + `computeSource`** | **feature** |
 

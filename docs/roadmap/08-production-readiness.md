@@ -83,11 +83,25 @@ constant appears exactly once in the tree — an **unused import** in `deploymen
 And no BFF route or Hosting rewrite matches `/upload/machines`, so it is not merely unused, it
 is unreachable. Delete the constant and the import. Five minutes, zero risk.
 
-## 3.2 `GET /api/pricing/estimate` still does not exist
+## 3.2 `GET /api/pricing/estimate` — CLOSED 2026-10-11
 
-Roadmap `07` Part F. Confirmed by the route inventory: it is not among the 56. The pricing
-page is the rate *table* (`/api/pricing/rates`), so a customer can see rates but not price a
-pack before buying it. This is the last gap in the purchase path.
+Roadmap `07` Part F. The handler (`handlers/pricing.ts`), the domain function
+(`estimateBillingCost`) and the client method (`PricingRatesService.estimate`) all already
+existed, and the route was never registered — so `app-crawl`'s price line got a 404 on every
+load and hid it, because that subscription fails silently by design. Registered now as
+`guard([access, pricingEstimate])`; same shape as `/api/vision`.
+
+Two things to carry forward:
+
+- **`access` is required, not stylistic.** The handler reads `req.accessMode`, which only
+  `resolveAccess` sets. Drop it and every caller is priced as `free`, so a paid account is
+  told its next call costs nothing.
+- **The route inventory in `bff/api.spec.ts` had no pricing route at all.** Both are in it
+  now. A route absent from that list is a route nothing checks is registered.
+
+The general failure — a client method whose route was never registered — is what the third
+list in `scripts/route-parity.ts` now enumerates, with a printed denominator so a detector
+that enumerates nothing cannot pass for a clean tree.
 
 ## 3.3 Profiles durability is a correctness bug, not a feature
 

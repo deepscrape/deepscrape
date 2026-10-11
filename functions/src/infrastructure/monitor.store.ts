@@ -42,10 +42,30 @@ import {
   type MonitorRecord,
 } from "../domain/monitors.domain"
 
-/** The top-level collection, per the design: `monitors/{id}`. */
+/**
+ * The top-level collection: `monitors/{id}`.
+ *
+ * The ONE store here not keyed by uid, deliberately.
+ * Every other collection hangs
+ * off `users/{uid}` so the PATH carries the tenant and the rules enforce it
+ * structurally; a monitor keeps its owner in a `uid`
+ * field instead, so ownership
+ * is a check every reader must remember. Ceiling: a forgotten filter is a
+ * cross-tenant read where a path would have made it impossible.
+ *
+ * Two things hold it: `readMonitor` answers undefined
+ * for missing AND not-yours,
+ * so the check cannot be probed away; and the history below is reachable only
+ * through an already-checked monitor id -- there is no `collectionGroup` over
+ * `checks` anywhere. Do not copy this shape; path-scope a new collection.
+ */
 export const MONITOR_COLLECTION = "monitors"
 
-/** The per-monitor history: `monitors/{id}/checks/{checkId}`. */
+/**
+ * The per-monitor history: `monitors/{id}/checks/{checkId}`.
+ *
+ * Never `collectionGroup` it -- see above.
+ */
 export const MONITOR_CHECKS_COLLECTION = "checks"
 
 /** One monitor by id, with no ownership check attached.

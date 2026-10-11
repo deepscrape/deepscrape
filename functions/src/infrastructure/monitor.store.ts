@@ -45,16 +45,19 @@ import {
 /**
  * The top-level collection: `monitors/{id}`.
  *
- * The ONE store here not keyed by uid, deliberately.
- * Every other collection hangs
- * off `users/{uid}` so the PATH carries the tenant and the rules enforce it
- * structurally; a monitor keeps its owner in a `uid`
- * field instead, so ownership
- * is a check every reader must remember. Ceiling: a forgotten filter is a
- * cross-tenant read where a path would have made it impossible.
+ * The ONE store here not keyed by uid, deliberately. Every other collection in
+ * this layer hangs off `users/{uid}`, so the path carries the tenant. But
+ * `firestore.rules` names none of them: `vaultEntries`, `browserSessions`,
+ * `machines`, `storage` and this collection all fall to the top-level
+ * default-deny (`match /{document=**}`: admin read, no client write). The
+ * client therefore reaches neither shape, and the tenancy guarantee is the
+ * STORE's, not a rule's. Loosening that default opens every unlisted collection
+ * at once.
  *
- * Two things hold it: `readMonitor` answers undefined
- * for missing AND not-yours,
+ * A monitor additionally keeps its owner in a `uid` FIELD rather than in the
+ * path, so ownership is a check every reader must remember, and a forgotten
+ * filter is a cross-tenant read where a path would have made it impossible. Two
+ * things hold that: `readMonitor` answers undefined for missing AND not-yours,
  * so the check cannot be probed away; and the history below is reachable only
  * through an already-checked monitor id -- there is no `collectionGroup` over
  * `checks` anywhere. Do not copy this shape; path-scope a new collection.

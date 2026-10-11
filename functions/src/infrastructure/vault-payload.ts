@@ -53,27 +53,16 @@ const keyFor = (uid: string): Buffer => {
 }
 
 /**
- * The platform store, or a throw when none is configured.
- * @param {BlobStore | null} store The resolved store.
- * @return {BlobStore} The store.
- */
-const storeOrThrow = (store: BlobStore | null): BlobStore => {
-  if (!store) {
-    throw new Error("no platform blob store is configured for the vault")
-  }
-  return store
-}
-
-/**
- * Whether this deployment can store a payload at all.
+ * Whether this deployment can seal and store a payload.
  *
- * Asked by the route BEFORE it does any work, so an unconfigured deployment
- * answers 503 instead of 404. The two are not the same message to a caller:
- * "no such entry" says their saved profile is gone, and it is not.
- * @return {boolean} True when a key and a bucket are both present.
+ * Only the KEY can be checked here, and that is not a shortcut: a bucket cannot
+ * be probed without making a request, and `getPlatformBlobStore()` always answers
+ * something -- it falls back to GCS rather than returning null -- so a check that
+ * asked whether a store exists would be a condition that is true by
+ * construction, which reads as a guard and guards nothing.
+ * @return {boolean} True when the sealing key is configured.
  */
-export const vaultStorageAvailable = (): boolean =>
-  Boolean(env.VAULT_DATA_KEY) && getPlatformBlobStore() !== null
+export const vaultStorageAvailable = (): boolean => Boolean(env.VAULT_DATA_KEY)
 
 /**
  * Seal one payload and write it.
@@ -93,11 +82,11 @@ export const putVaultPayload = async (
   service: string,
   profile: string,
   payload: unknown,
-  store: BlobStore | null = getPlatformBlobStore(),
+  store: BlobStore = getPlatformBlobStore(),
 ): Promise<number> => {
   const body = sealVaultPayload(keyFor(uid), JSON.stringify(payload))
 
-  await storeOrThrow(store).put(vaultBlobKey(uid, service, profile), body, {
+  await store.put(vaultBlobKey(uid, service, profile), body, {
     contentType: "application/json",
     // Private, and deliberately not cached: this is a credential, and a copy in
     // a shared or intermediary cache is a copy nobody can revoke.
@@ -123,10 +112,9 @@ export const getVaultPayload = async (
   uid: string,
   service: string,
   profile: string,
-  store: BlobStore | null = getPlatformBlobStore(),
+  store: BlobStore = getPlatformBlobStore(),
 ): Promise<unknown | undefined> => {
-  const sealed = await storeOrThrow(store)
-    .get(vaultBlobKey(uid, service, profile))
+  const sealed = await store.get(vaultBlobKey(uid, service, profile))
 
   if (!sealed) {
     return undefined
@@ -147,7 +135,7 @@ export const dropVaultPayload = async (
   uid: string,
   service: string,
   profile: string,
-  store: BlobStore | null = getPlatformBlobStore(),
+  store: BlobStore = getPlatformBlobStore(),
 ): Promise<void> => {
-  await storeOrThrow(store).delete(vaultBlobKey(uid, service, profile))
+  await store.delete(vaultBlobKey(uid, service, profile))
 }

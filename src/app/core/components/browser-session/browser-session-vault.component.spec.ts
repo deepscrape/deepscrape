@@ -195,15 +195,23 @@ describe('BrowserSessionVaultComponent', () => {
     expect(state().durable()).toEqual([]);
   });
 
-  it('keeps the worker jar under the account, jar first', () => {
-    const jar = { cookies: [{ name: 'sid', value: 'v' }] };
+  it('keeps the worker jar under the account, as the array setcookies needs', () => {
+    // The REAL reply shape, which is the point of this test. `webrain_cookies`
+    // answers `{status, count, cookies: [...]}` while `webrain_setcookies` calls
+    // `as_array()` on `cookies` and refuses anything else -- so a component that
+    // forwarded the reply verbatim would store a jar it could never restore, and
+    // every symptom would appear on the RESTORE path.
+    const jar = [{ name: 'sid', value: 'v' }];
     fill({ service: 'github', profile: 'work' });
 
     state().keep();
     // Reading the browser and writing the account are one flow, and the write
     // cannot happen before the read has an answer.
     expect(durableBodies.length).toBe(1); // only the constructor's `list`
-    worker['cookies'].next({ data: jar });
+    worker['cookies'].next({
+      status: 'ok',
+      data: { status: 'ok', count: 1, cookies: jar },
+    });
 
     expect(bodyFor(durableBodies, 'store')).toEqual({
       op: 'store',
@@ -216,7 +224,10 @@ describe('BrowserSessionVaultComponent', () => {
   it('refuses to keep an empty jar instead of sending one', () => {
     fill({ service: 'github', profile: 'work' });
     state().keep();
-    worker['cookies'].next({ data: undefined });
+    worker['cookies'].next({
+      status: 'ok',
+      data: { status: 'ok', count: 0, cookies: [] },
+    });
 
     expect(state().failure()).toBe('VAULT.NOTHING_TO_KEEP');
     // The route would have answered 400, which reads as "malformed request".
@@ -243,8 +254,8 @@ describe('BrowserSessionVaultComponent', () => {
     expect(bodyFor(workerBodies, 'close_launch')['cdp_url']).toBeUndefined();
   });
 
-  it('puts a kept jar back, account first', () => {
-    const jar = { cookies: [{ name: 'sid', value: 'v' }] };
+  it('puts a kept jar back as a bare array, account first', () => {
+    const jar = [{ name: 'sid', value: 'v' }];
     fill({
       service: 'github',
       profile: 'work',
@@ -258,16 +269,47 @@ describe('BrowserSessionVaultComponent', () => {
     expect(bodyFor(workerBodies, 'setcookies')['cookies']).toBe(jar);
   });
 
+  it('unwraps a jar the platform stored before it was flattened', () => {
+    // A wrapper is what `cookies` hands out, and a jar stored by an earlier build
+    // that did not unwrap is still a jar. Restoring one must not 400.
+    const jar = [{ name: 'sid', value: 'v' }];
+    fill({
+      service: 'github',
+      profile: 'work',
+      url: 'https://github.com/login',
+    });
+
+    state().restore();
+    durable['load'].next({ payload: { count: 1, cookies: jar } });
+
+    expect(bodyFor(workerBodies, 'setcookies')['cookies']).toBe(jar);
+  });
+
+  it('refuses to push back an entry that holds no cookies', () => {
+    fill({
+      service: 'github',
+      profile: 'work',
+      url: 'https://github.com/login',
+    });
+
+    state().restore();
+    durable['load'].next({ payload: { status: 'ok', count: 0, cookies: [] } });
+
+    // `setcookies` would have said "cookies array required", which describes our
+    // request rather than the state of the entry.
+    expect(state().failure()).toBe('VAULT.EMPTY_ENTRY');
+    expect(workerBodies.some((body) => body['op'] === 'setcookies')).toBeFalse();
+  });
+
   it('needs the login page before it can put a jar back', () => {
-    const jar = { cookies: [{ name: 'sid', value: 'v' }] };
     fill({ service: 'github', profile: 'work', url: '' });
 
     state().restore();
 
-    // Cookies belong to an origin, so the browser has to be on the site first.
+    // Cookies belong to an origin, so the browser has to be on the site first --
+    // and the check happens before the read, so nothing is even fetched.
     expect(state().failure()).toBe('VAULT.NEEDS_URL');
     expect(durableBodies.some((body) => body['op'] === 'load')).toBeFalse();
-    expect(jar.cookies.length).toBe(1);
   });
 
   it('forgets the entry it was given, by name', () => {
@@ -303,7 +345,14 @@ describe('BrowserSessionVaultComponent', () => {
 
     fill({ service: 'github', profile: 'work' });
     state().keep();
-    worker['cookies'].next({ data: { cookies: [] } });
+    worker['cookies'].next({
+      status: 'ok',
+      data: {
+        status: 'ok',
+        count: 1,
+        cookies: [{ name: 'sid', value: 'v' }],
+      },
+    });
     durable['store'].error(new HttpErrorResponse({ status: 409 }));
     expect(state().failure()).toBe('VAULT.CAP');
 

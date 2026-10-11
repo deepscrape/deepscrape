@@ -1585,6 +1585,7 @@
     "NEEDS_OWN_BROWSER": "Saisissez ci-dessus l'adresse de votre propre navigateur : copier des cookies exige un navigateur qui vous soit propre.",
     "NOTHING_TO_KEEP": "Ce navigateur n'a pas encore de cookies pour ce site. Connectez-vous d'abord, puis conservez-le.",
     "GONE": "Cette entrée conservée n'existe plus. Elle a peut-être été oubliée.",
+    "EMPTY_ENTRY": "Cette entrée conservée ne contient aucun cookie. Conservez à nouveau la connexion.",
     "CAP": "Votre compte a atteint sa limite d'entrées conservées. Oubliez-en une avant d'en conserver une autre.",
     "UNAVAILABLE": "Ce déploiement n'a aucun stockage de coffre configuré : rien ne peut être conservé.",
     "NO_PRIVATE_WORKER": "Cela exige un worker de navigateur qui vous soit propre ; il n'est pas encore disponible. Une mise à niveau n'y changera rien.",

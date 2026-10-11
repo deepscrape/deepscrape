@@ -63,6 +63,42 @@ const durableEntriesFrom = (reply: VaultDurableReply): VaultDurableEntry[] => {
 };
 
 /**
+ * The cookie ARRAY out of whatever a worker answered.
+ *
+ * The two cookie ops disagree about their own shape: `webrain_cookies` answers
+ * `{status, count, cookies: [...]}` (`webrain-mcp/src/tools.rs`, the
+ * `webrain_cookies` arm) while `webrain_setcookies` calls `as_array()` on the same
+ * field and errors with "cookies array required" for anything else. So a round
+ * trip HAS to unwrap in between, and this is the only layer that can: the platform
+ * stores the jar opaquely by design, so teaching it this shape would put a worker
+ * reply this repo cannot verify into the route that exists not to depend on one.
+ *
+ * A bare array is accepted too, because both shapes are real: webrain's own CLI was
+ * changed to take either (its CHANGELOG: "accepts both the bare cookie array and
+ * the wrapped `{"count": N, "cookies": [...]}` shape"), and a jar stored by an
+ * earlier build is still a jar.
+ *
+ * An empty jar is `undefined`, not `[]`: `setcookies` refuses an empty array
+ * rather than forwarding it, because a `setcookies` that sets nothing looks
+ * accepted. Returning the empty array here would turn a refusal into a silent
+ * no-op at the one place that can still say so.
+ * @param {unknown} payload What the worker answered, or what the platform kept.
+ * @return {unknown[] | undefined} The jar, or undefined when there is none.
+ */
+const cookieJarOf = (payload: unknown): unknown[] | undefined => {
+  if (Array.isArray(payload)) {
+    return payload.length > 0 ? payload : undefined;
+  }
+  if (payload && typeof payload === 'object') {
+    const wrapped = (payload as { cookies?: unknown }).cookies;
+    if (Array.isArray(wrapped) && wrapped.length > 0) {
+      return wrapped;
+    }
+  }
+  return undefined;
+};
+
+/**
  * The credential vault: build it, keep it, and log in from it.
  *
  * A section rather than a page, and it composes under the session panel because
@@ -259,17 +295,20 @@ export class BrowserSessionVaultComponent {
 
     this.sessions.vault(this.cookieBody('cookies')).subscribe({
       next: (reply) => {
-        const payload = reply?.data;
+        const jar = cookieJarOf(reply?.data);
         // A browser that never logged in has nothing to keep. Refused here
         // rather than sent, because the route would answer 400 and "the request
         // was malformed" is not what happened.
-        if (payload === undefined || payload === null) {
+        if (!jar) {
           this.busy.set(null);
           this.failure.set('VAULT.NOTHING_TO_KEEP');
           return;
         }
+        // The ARRAY is stored, not the reply it came in: the platform's copy is
+        // what `setcookies` will be handed, so unwrapping here means the round
+        // trip has one shape rather than two.
         this.sessions
-          .durableVault({ op: 'store', service, profile, payload })
+          .durableVault({ op: 'store', service, profile, payload: jar })
           .subscribe({
             next: () => {
               this.busy.set(null);
@@ -312,8 +351,17 @@ export class BrowserSessionVaultComponent {
 
     this.sessions.durableVault({ op: 'load', service, profile }).subscribe({
       next: (reply) => {
+        const jar = cookieJarOf(reply?.payload);
+        // An entry that holds no usable jar is refused rather than sent on.
+        // `setcookies` would answer "cookies array required", and that message
+        // describes our request rather than the state of the entry.
+        if (!jar) {
+          this.busy.set(null);
+          this.failure.set('VAULT.EMPTY_ENTRY');
+          return;
+        }
         this.sessions
-          .vault(this.cookieBody('setcookies', { cookies: reply?.payload }))
+          .vault(this.cookieBody('setcookies', { cookies: jar }))
           .subscribe({
             next: () => {
               this.busy.set(null);

@@ -1585,6 +1585,7 @@
     "NEEDS_OWN_BROWSER": "Geben Sie oben die Adresse Ihres eigenen Browsers ein: zum Kopieren von Cookies braucht es einen Browser von Ihnen.",
     "NOTHING_TO_KEEP": "Dieser Browser hat noch keine Cookies für diese Website. Melden Sie sich zuerst an und bewahren Sie es dann auf.",
     "GONE": "Dieser gespeicherte Eintrag ist nicht mehr da. Vielleicht wurde er verworfen.",
+    "EMPTY_ENTRY": "Dieser gespeicherte Eintrag enthält keine Cookies. Bewahren Sie die Anmeldung erneut auf.",
     "CAP": "Ihr Konto hat sein Limit gespeicherter Einträge erreicht. Verwerfen Sie einen, bevor Sie einen weiteren aufbewahren.",
     "UNAVAILABLE": "Diese Installation hat keinen Tresorspeicher konfiguriert, es kann also nichts aufbewahrt werden.",
     "NO_PRIVATE_WORKER": "Dafür ist ein eigener Browser-Worker nötig, der noch nicht verfügbar ist. Ein Upgrade ändert daran nichts.",

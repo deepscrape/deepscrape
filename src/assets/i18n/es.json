@@ -1585,6 +1585,7 @@
     "NEEDS_OWN_BROWSER": "Introduce arriba la dirección de tu propio navegador: copiar cookies necesita un navegador tuyo.",
     "NOTHING_TO_KEEP": "Ese navegador aún no tiene cookies para este sitio. Inicia sesión primero y luego guárdalo.",
     "GONE": "Esa entrada guardada ya no está. Puede que se haya olvidado.",
+    "EMPTY_ENTRY": "Esa entrada guardada no contiene cookies. Vuelve a guardar el inicio de sesión.",
     "CAP": "Tu cuenta ha alcanzado el límite de entradas guardadas. Olvida una antes de guardar otra.",
     "UNAVAILABLE": "Esta implementación no tiene almacenamiento de caja fuerte configurado, así que no se puede guardar nada.",
     "NO_PRIVATE_WORKER": "Esto necesita un worker de navegador propio, que aún no está disponible. Cambiar de plan no lo solucionará.",

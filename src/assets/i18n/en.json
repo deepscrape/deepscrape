@@ -1585,6 +1585,7 @@
     "NEEDS_OWN_BROWSER": "Enter your own browser's address above: copying cookies needs a browser of yours.",
     "NOTHING_TO_KEEP": "That browser has no cookies for this site yet. Log in first, then keep it.",
     "GONE": "That saved entry is gone. It may have been forgotten.",
+    "EMPTY_ENTRY": "That saved entry holds no cookies. Keep the login again.",
     "CAP": "Your account is at its saved-entry limit. Forget one before keeping another.",
     "UNAVAILABLE": "This deployment has no vault storage configured, so nothing can be kept.",
     "NO_PRIVATE_WORKER": "This needs a browser worker of your own, which is not available yet. Upgrading will not change this.",

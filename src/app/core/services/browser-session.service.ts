@@ -6,8 +6,7 @@ import { AuthService } from './auth.service'
 import {
   BrowserSessionCreateRequest,
   BrowserSessionListResponse,
-  BrowserSessionResponse,
-} from '../types/browser-session.interface'
+  BrowserSessionResponse,  VaultDurableReply,} from '../types/browser-session.interface'
 import { ToolEnvelope } from '../types'
 
 /**
@@ -155,6 +154,36 @@ export class BrowserSessionService {
     return this.http.post<ToolEnvelope>(this.base + '/vault', body, {
       headers: this.headers(),
     })
+  }
+
+  /**
+   * The DURABLE vault: `POST /api/browser/vault`, a different route with a
+   * different owner.
+   *
+   * `vault()` above drives ops a WORKER runs against its own disk. This one is
+   * the platform holding an opaque blob for the caller, and that is what makes a
+   * saved login outlive the browser: a session machine has no volume and Fly
+   * resets a stopped machine's root filesystem, so a jar that only ever lived in
+   * the browser is gone at the first idle reap.
+   *
+   * The two are deliberately NOT merged behind one method. They answer to
+   * different tiers (`access` here, `paid` there), different failures, and
+   * different owners -- and the caller composes them, because the platform must
+   * not depend on a worker reply shape this repo cannot verify.
+   *
+   * The four ops are `store`, `load`, `list` and `forget`. Their refusals read
+   * differently and this does not flatten them: 402 is a plan boundary, 403 is
+   * the permission boundary, 404 is "no such entry", 409 is the account's entry
+   * cap, and 503 means this deployment has no vault key at all.
+   * @param {Record<string, unknown>} body `op` plus the fields that op needs.
+   * @return {Observable<VaultDurableReply>} The route's reply.
+   */
+  durableVault(body: Record<string, unknown>): Observable<VaultDurableReply> {
+    return this.http.post<VaultDurableReply>(
+      API_BASE_URL + '/browser/vault',
+      body,
+      { headers: this.headers() }
+    )
   }
 
   /**

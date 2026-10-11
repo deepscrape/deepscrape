@@ -88,3 +88,34 @@ export interface BrowserSessionError {
   error: string
   code: string
 }
+
+/**
+ * One entry in the DURABLE vault, as `op=list` reports it.
+ *
+ * Names and a timestamp only: the index row holds no credential, and the sealed
+ * payload sits in an object the list never names.
+ */
+export interface VaultDurableEntry {
+  service: string
+  profile: string
+  updatedAtMs?: number
+}
+
+/**
+ * The reply to `POST /api/browser/vault`.
+ *
+ * Every field is optional because the four ops answer differently: `list` sends
+ * `entries`, `load` sends `entry` and `payload`, and `store` and `forget` send
+ * nothing at all. One shape with optionals rather than a union, because the
+ * caller already knows which op it asked for.
+ *
+ * `payload` is `unknown` on purpose. It is the caller's cookie jar travelling
+ * through the platform, not a platform model -- the route seals and returns it
+ * without ever reading it, so typing it here would invent a contract the
+ * platform does not have and cannot verify.
+ */
+export interface VaultDurableReply {
+  entries?: VaultDurableEntry[]
+  entry?: { service: string; profile: string }
+  payload?: unknown
+}

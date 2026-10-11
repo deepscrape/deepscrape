@@ -10,10 +10,51 @@
     </p>
   </header>
 
-  <!-- Upgrade state. Shown ONLY after the route answered 402: the route owns the
-       entitlement decision, so this is never inferred from a plan client-side. -->
+  <form [formGroup]="form" (ngSubmit)="save()" class="grid gap-4 sm:grid-cols-3">
+    <label class="block">
+      <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.SERVICE' | translate }}</span>
+      <input formControlName="service" type="text" autocomplete="off"
+             [placeholder]="'VAULT.SERVICE_HINT' | translate"
+             class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+    </label>
+    <label class="block">
+      <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.PROFILE' | translate }}</span>
+      <input formControlName="profile" type="text" autocomplete="off"
+             [placeholder]="'VAULT.PROFILE_HINT' | translate"
+             class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+    </label>
+    <label class="block">
+      <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.LOGIN_URL' | translate }}</span>
+      <input formControlName="url" type="url" autocomplete="off"
+             placeholder="https://"
+             class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+    </label>
+    <!-- The caller's OWN browser, for the two cookie ops. Optional, because an
+         admin runs those against the platform's browser, and everyone else needs
+         it or the route answers 403. -->
+    <label class="block sm:col-span-3">
+      <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.OWN_BROWSER' | translate }}</span>
+      <input formControlName="cdp_url" type="text" autocomplete="off" spellcheck="false"
+             [placeholder]="'VAULT.OWN_BROWSER_HINT' | translate"
+             class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
+      <span class="mt-1 block text-xs text-gray4">{{ 'VAULT.OWN_BROWSER_HELP' | translate }}</span>
+    </label>
+  </form>
+
+  @if (failure()) {
+    <p class="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-600 dark:text-rose-300"
+       role="alert">
+      {{ failure() | translate }}
+    </p>
+  }
+
+  <!-- Upgrade state, scoped to the WORKER's half because that is the half a plan
+       can refuse: the account vault below is not behind a plan, so a 402 from
+       `/api/browser/session/vault` says nothing about it. Shown only after the
+       route answered 402 -- the route owns the entitlement decision, so this is
+       never inferred from a plan client-side. -->
   @if (upgradeRequired()) {
-    <div class="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4" role="status">
+    <div class="mt-4 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4" role="status">
       <p class="text-sm font-medium text-rose-600 dark:text-rose-300">
         {{ 'VAULT.UPGRADE_TITLE' | translate }}
       </p>
@@ -30,28 +71,6 @@
       </a>
     </div>
   } @else {
-
-    <form [formGroup]="form" (ngSubmit)="save()" class="grid gap-4 sm:grid-cols-3">
-      <label class="block">
-        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.SERVICE' | translate }}</span>
-        <input formControlName="service" type="text" autocomplete="off"
-               [placeholder]="'VAULT.SERVICE_HINT' | translate"
-               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
-      </label>
-      <label class="block">
-        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.PROFILE' | translate }}</span>
-        <input formControlName="profile" type="text" autocomplete="off"
-               [placeholder]="'VAULT.PROFILE_HINT' | translate"
-               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
-      </label>
-      <label class="block">
-        <span class="mb-1 block text-sm text-gray5 dark:text-gray2">{{ 'VAULT.LOGIN_URL' | translate }}</span>
-        <input formControlName="url" type="url" autocomplete="off"
-               placeholder="https://"
-               class="w-full rounded-lg border border-gray2 bg-white px-3 py-2 text-sm text-gray6 outline-none focus:border-cyan-500 dark:border-gray5 dark:bg-gray6 dark:text-white" />
-      </label>
-    </form>
-
     <div class="mt-4 flex flex-wrap items-center gap-3">
       <button type="button" (click)="save()"
               [disabled]="busy() !== null || form.invalid"
@@ -72,14 +91,10 @@
       </button>
     </div>
 
-    @if (failure()) {
-      <p class="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-600 dark:text-rose-300"
-         role="alert">
-        {{ failure() | translate }}
-      </p>
-    }
-
     <div class="mt-6">
+      <h3 class="mb-2 text-sm font-medium text-gray5 dark:text-gray2">
+        {{ 'VAULT.WORKER_STORE' | translate }}
+      </h3>
       @if (loading()) {
         <p class="text-sm text-gray4">{{ 'VAULT.LOADING' | translate }}</p>
       } @else if (!hasEntries()) {
@@ -110,10 +125,69 @@
             }
           </tbody>
         </table>
-        <!-- Names only. `op=profiles` never returns a secret, and the platform never
-             asks for one: the vault decrypts in-process on the worker. -->
+        <!-- Names only. `op=profiles` never returns a secret, and the platform
+             never asks for one: the worker's vault decrypts in-process. -->
         <p class="mt-3 text-xs text-gray4">{{ 'VAULT.NAMES_ONLY' | translate }}</p>
       }
     </div>
   }
+
+  <!-- The ACCOUNT's half: the only part that outlives the machine. Outside the
+       upgrade gate, because these two ops compose the worker with the platform
+       rather than driving the worker alone, and the platform route is not paid. -->
+  <div class="mt-4 flex flex-wrap items-center gap-3">
+    <button type="button" (click)="keep()"
+            [disabled]="busy() !== null || form.invalid"
+            class="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
+      <mat-icon class="!h-4 !w-4 !text-base">{{ busy() === 'keep' ? 'hourglass_top' : 'cloud_upload' }}</mat-icon>
+      {{ 'VAULT.KEEP' | translate }}
+    </button>
+    <button type="button" (click)="restore()"
+            [disabled]="busy() !== null || form.invalid"
+            class="inline-flex items-center gap-2 rounded-lg border border-cyan-600 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-600/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-cyan-300">
+      <mat-icon class="!h-4 !w-4 !text-base">{{ busy() === 'restore' ? 'hourglass_top' : 'cloud_download' }}</mat-icon>
+      {{ 'VAULT.RESTORE' | translate }}
+    </button>
+  </div>
+
+  <div class="mt-6">
+    <h3 class="mb-2 text-sm font-medium text-gray5 dark:text-gray2">
+      {{ 'VAULT.DURABLE_STORE' | translate }}
+    </h3>
+    @if (!hasDurable()) {
+      <p class="text-sm text-gray4">{{ 'VAULT.DURABLE_EMPTY' | translate }}</p>
+    } @else {
+      <table class="w-full text-left text-sm">
+        <thead>
+          <tr class="border-b border-gray2/60 dark:border-gray5/40">
+            <th class="px-2 py-1.5 font-medium text-gray5 dark:text-gray2">{{ 'VAULT.SERVICE' | translate }}</th>
+            <th class="px-2 py-1.5 font-medium text-gray5 dark:text-gray2">{{ 'VAULT.PROFILE' | translate }}</th>
+            <th class="px-2 py-1.5"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (entry of durable(); track entry.service + ':' + entry.profile) {
+            <tr class="border-b border-gray2/30 dark:border-gray5/20">
+              <td class="px-2 py-1.5 text-gray6 dark:text-gray3">{{ entry.service }}</td>
+              <td class="px-2 py-1.5 text-gray6 dark:text-gray3">{{ entry.profile }}</td>
+              <td class="px-2 py-1.5 text-right">
+                <button type="button" (click)="use(entry)"
+                        class="rounded-lg px-2 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-600/10 dark:text-cyan-300">
+                  {{ 'VAULT.USE' | translate }}
+                </button>
+                <button type="button" (click)="forget(entry)"
+                        [disabled]="busy() !== null"
+                        class="ml-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 dark:text-rose-300">
+                  {{ busy() === keyOf(entry) ? ('VAULT.FORGETTING' | translate) : ('VAULT.FORGET' | translate) }}
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      <!-- The platform holds the jar sealed, and the list is names only: the
+           sealed bytes live in an object the list never names. -->
+      <p class="mt-3 text-xs text-gray4">{{ 'VAULT.DURABLE_NAMES_ONLY' | translate }}</p>
+    }
+  </div>
 </section>

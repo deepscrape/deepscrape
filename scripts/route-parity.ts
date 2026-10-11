@@ -13,13 +13,25 @@
  *  - A client service holds one root as `API_BASE_URL + '<segment>'`, where
  *    `API_BASE_URL` already ends in `/api`.
  *
+ * THREE lists, and the third is the one that finds live defects
+ * ------------------------------------------------------------
+ * The first two compare BASES, and a base counts as served when any route extends
+ * it -- so `/api/pricing` passes on `/api/pricing/rates` alone. Two methods
+ * (`/api/vision`, `/api/pricing/estimate`) shipped as 404s under a base that was
+ * perfectly served, and neither showed up here, because a base-level comparison
+ * cannot see the difference. The third list enumerates the method paths the client
+ * actually builds and is what caught them.
+ *
  * INFORMATIONAL, NOT A GATE. Computed paths defeat a string comparison:
  * `crawlapi.service.ts` derives `/job/stream/:id` and `/job/.../cancel` by
- * `replace()`-ing its own base, so those never appear here and their absence is
- * expected rather than a finding. Read this as "these two lists disagree in ways
- * worth a human glance", never as a pass.
+ * `replace()`-ing its own base, and `browser-session.service.ts` appends
+ * `/close` to a helper that already carries an id, so those never appear here and
+ * their absence is expected rather than a finding. Read this as "these lists
+ * disagree in ways worth a human glance", never as a pass -- and note the printed
+ * denominator, because a detector that enumerates nothing also reports zero.
  *
  * Usage: `bunx tsx scripts/route-parity.ts`
+ *        `PARITY_LIST=1 bunx tsx scripts/route-parity.ts`  (dump every path checked)
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -104,6 +116,110 @@ function clientRoots(): Map<string, string[]> {
   return bases;
 }
 
+/**
+ * Every STATIC method path a service builds.
+ *
+ * Why this exists on top of the base check
+ * ----------------------------------------
+ * A base is "served" if ANY route extends it, so `/api/pricing` passes on the
+ * strength of `/api/pricing/rates` while `/api/pricing/estimate` has no route at
+ * all. That is not hypothetical: `/api/vision` and `/api/pricing/estimate` both
+ * shipped as methods that 404, and each stayed invisible because its consumer
+ * swallows the failure (the vision tab looked empty; the crawl price line simply
+ * never appeared). A base-level comparison structurally cannot see either one.
+ *
+ * Only the two spellings that concatenate onto the base FIELD are read -- the
+ * field is what carries the base, so joining to it is the one form where the
+ * result is knowable without running the code.
+ *
+ * What this still cannot see, stated so the next reader does not over-trust it: a
+ * path built from a helper that already carries an id (`sessionUrl(id) + '/close'`)
+ * has a result that depends on the id, and enumerating it would report routes that
+ * do not exist as missing. Dynamic tails are skipped, and that remains a blind
+ * spot.
+ * @return {Array<[string, string]>} `[path, declaringFile]`, sorted.
+ */
+function clientMethodPaths(): Array<[string, string]> {
+  const found = new Map<string, string>();
+
+  for (const file of serviceFiles(CLIENT_DIR)) {
+    // Collapsed so a call broken across lines reads as one string.
+    const source = readFileSync(file, 'utf8').replace(/\s+/g, ' ');
+    const where = file.replace(ROOT, '.').replace(/\\/g, '/');
+
+    // TWO declarations hold a base: a field with an annotation, and a plain
+    // assignment in a constructor. Reading only the first misses
+    // `crawlapi.service.ts` and `seeding.service.ts`, which is how a service ends
+    // up with no coverage while the harness reports nothing.
+    const declares = [
+      /(?:readonly|private|protected|public)\s+(\w+)\s*:\s*string\s*=\s*[^;]*?API_BASE_URL\s*\+\s*'([^']*)'/g,
+      /this\.(\w+)\s*=\s*[^;]*?API_BASE_URL\s*\+\s*'([^']*)'/g,
+    ];
+
+    for (const declaresForm of declares) {
+      for (const declare of source.matchAll(declaresForm)) {
+        const field = declare[1];
+        const segment = declare[2];
+        const base = segment === '' ? '/api' : `/api${segment}`;
+
+        const forms = [
+          new RegExp(`this\\.${field}\\s*\\+\\s*'([^']*)'`, 'g'),
+          new RegExp(`this\\.${field}\\}([^\`]*)`, 'g'),
+        ];
+
+        for (const form of forms) {
+          for (const join of source.matchAll(form)) {
+            const tail = join[1] ?? '';
+
+            // A dynamic tail (`/${id}`), a bare root, or no tail at all is not a
+            // path this can name.
+            if (!/^\/[A-Za-z0-9\-_/.%]+$/.test(tail) || tail === '/') {
+              continue;
+            }
+
+            const methodPath = base + tail;
+            if (!found.has(methodPath)) {
+              found.set(methodPath, where);
+            }
+          }
+        }
+      }
+    }
+
+    // The parameterised form, which no join-on-the-field rule can see:
+    // `webrain-tools.service.ts` builds every path as `API_BASE_URL + path` inside
+    // one private helper, so `/api/vision` was a literal in a CALL SITE rather
+    // than a concatenation. That is the exact instance this harness missed twice.
+    // Only files with such a helper are read this way, so a stray `.post('/x')`
+    // elsewhere cannot produce a hit.
+    const takesAPath = /API_BASE_URL\s*\+\s*(?!'|\`)(\w+)/.test(source);
+
+    if (takesAPath) {
+      const base = clientBaseFor(source);
+
+      for (const call of source.matchAll(
+        /\.(?:get|post|put|delete)\s*(?:<[^>]*>)?\s*\(\s*'(\/[^']*)'/g
+      )) {
+        const methodPath = base + call[1];
+        if (!found.has(methodPath)) {
+          found.set(methodPath, `${where} (path passed as an argument)`);
+        }
+      }
+    }
+  }
+
+  return [...found.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+/** The single client base a service declares, or `/api` when it declares none. */
+function clientBaseFor(source: string): string {
+  const match = source.match(
+    /(?:API_BASE_URL\s*\+\s*'([^']*)'|this\.\w+\s*=\s*[^;]*?API_BASE_URL\s*\+\s*'([^']*)')/
+  );
+  const segment = match?.[1] ?? match?.[2] ?? '';
+  return segment === '' ? '/api' : `/api${segment}`;
+}
+
 const routes = quotedRoutes(readFileSync(BFF_TABLE, 'utf8'));
 const clients = clientRoots();
 
@@ -134,9 +250,58 @@ for (const [base, files] of orphanClients) {
 }
 
 console.log('');
-const orphanRoutes = routes.filter(route => calledBy(route) === null);
+const methodPaths = clientMethodPaths();
+
+// Two sources, because one of them is blind to a whole service. `calledBy` reads
+// BASES, and a service that builds its paths as `API_BASE_URL + <parameter>`
+// declares none -- so `/api/vision`, `/api/search`, `/api/extract` and `/api/pdf`
+// were reported as client-less while the app called every one of them. The only
+// thing that makes that service visible is the method path, which is exact.
+//
+// Registering `/api` as a base instead would have been worse than the false alarm:
+// every `/api/*` route would then match it, and the list would report zero
+// forever. A silent empty list is the one failure this harness must not have.
+const orphanRoutes = routes.filter(
+  route =>
+    calledBy(route) === null &&
+    !methodPaths.some(
+      ([methodPath]) => route === methodPath || route.startsWith(`${methodPath}/`)
+    )
+);
 console.log(`ROUTES WITH NO CLIENT (${orphanRoutes.length})`);
 
 for (const route of orphanRoutes) {
   console.log(`  ${route}`);
+}
+
+// The check the base comparison cannot make. A method path the client builds is
+// served if a route IS it, or if a route lives under it (a dynamic last segment
+// the client spells out is a different shape, not a missing route).
+console.log('');
+const orphanMethods = methodPaths.filter(
+  ([methodPath]) =>
+    !routes.some(
+      route =>
+        route === methodPath || route.startsWith(`${methodPath}/`)
+    )
+);
+
+// The DENOMINATOR is printed on purpose. A detector that enumerates nothing
+// reports zero gaps and looks identical to a clean tree, so "0" alone is not
+// evidence of anything.
+console.log(
+  `CLIENT METHODS WITH NO ROUTE (${orphanMethods.length} of ${methodPaths.length} checked)`
+);
+
+for (const [methodPath, where] of orphanMethods) {
+  console.log(`  ${methodPath}  <- ${where}`);
+}
+
+if (process.env['PARITY_LIST']) {
+  console.log('');
+  console.log(`EVERY CLIENT METHOD PATH CHECKED (${methodPaths.length})`);
+
+  for (const [methodPath, where] of methodPaths) {
+    console.log(`  ${methodPath}  <- ${where}`);
+  }
 }

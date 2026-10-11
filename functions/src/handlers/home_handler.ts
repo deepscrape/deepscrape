@@ -108,16 +108,52 @@ const signalsOf = (value: unknown): string => (typeof value === "string" ? value
 // Heartbeat write throttle. The heartbeat used to read the user doc from Firestore
 // purely to decide whether to write `lastSeen`; deciding from process memory skips
 // that read (and usually the write) entirely.
+//
 // ponytail: per-instance memory, so N warm instances may each write once per window.
-// Ceiling: a strict global budget needs Redis — not worth a round-trip per heartbeat.
+// Ceiling: a strict global budget needs Redis -- not worth a round-trip per heartbeat.
 const LAST_SEEN_WRITE_INTERVAL_MS = 5 * 60 * 1000
 const SESSION_ACTIVITY_WRITE_INTERVAL_MS = 60 * 1000
 const THROTTLE_MAP_MAX_ENTRIES = 5000
 const lastSeenWriteMs = new Map<string, number>()
 const sessionActivityWriteMs = new Map<string, number>()
 
-const dueForWrite = (lastWriteMs: number | undefined, intervalMs: number, nowMs: number): boolean =>
-    !lastWriteMs || nowMs - lastWriteMs >= intervalMs
+/**
+ * Whether `key` may be written to Firestore again, recording the attempt.
+ *
+ * A full map evicts its OLDEST entry, one at a time. It used to `clear()`, which
+ * forgot every window at once -- so the guaranteed burst of writes landed exactly
+ * when the map was fullest, and every tracked key had to earn its window back.
+ * One eviction costs one extra write instead.
+ *
+ * @param {Map<string, number>} seen Last-write timestamps, insertion-ordered.
+ * @param {string} key The uid or login id being written.
+ * @param {number} intervalMs Minimum interval between writes of one key.
+ * @param {number} nowMs Current epoch ms.
+ * @param {number} maxEntries Ceiling on tracked keys.
+ * @return {boolean} True when the write is due, having recorded the attempt.
+ */
+export const throttleDueWrite = (
+    seen: Map<string, number>,
+    key: string,
+    intervalMs: number,
+    nowMs: number,
+    maxEntries: number = THROTTLE_MAP_MAX_ENTRIES,
+): boolean => {
+    const lastWriteMs = seen.get(key)
+    if (lastWriteMs !== undefined && nowMs - lastWriteMs < intervalMs) {
+        return false
+    }
+
+    if (seen.size >= maxEntries) {
+        const oldest = seen.keys().next().value
+        if (oldest !== undefined) {
+            seen.delete(oldest)
+        }
+    }
+
+    seen.set(key, nowMs)
+    return true
+}
 
 const logSuspiciousDeviceMismatch = async (params: {
     userId: string
@@ -283,11 +319,7 @@ export const heartbeat = async (req: Request, res: Response) => {
                             // an unthrottled Firestore write on every heartbeat. Redis is the
                             // liveness signal (its TTL is refreshed below); Firestore only needs
                             // minute-level activity for the sessions list.
-                            if (dueForWrite(sessionActivityWriteMs.get(loginId), SESSION_ACTIVITY_WRITE_INTERVAL_MS, nowMs)) {
-                                if (sessionActivityWriteMs.size >= THROTTLE_MAP_MAX_ENTRIES) {
-                                    sessionActivityWriteMs.clear()
-                                }
-                                sessionActivityWriteMs.set(loginId, nowMs)
+                            if (throttleDueWrite(sessionActivityWriteMs, loginId, SESSION_ACTIVITY_WRITE_INTERVAL_MS, nowMs)) {
                                 await db
                                     .collection("loginSessions")
                                     .doc(loginId)
@@ -477,11 +509,7 @@ export const heartbeat = async (req: Request, res: Response) => {
 
         // lastSeen is throttled to one write per window per instance. The Firestore
         // read that used to gate it is gone.
-        if (dueForWrite(lastSeenWriteMs.get(id), LAST_SEEN_WRITE_INTERVAL_MS, nowMs)) {
-            if (lastSeenWriteMs.size >= THROTTLE_MAP_MAX_ENTRIES) {
-                lastSeenWriteMs.clear()
-            }
-            lastSeenWriteMs.set(id, nowMs)
+        if (throttleDueWrite(lastSeenWriteMs, id, LAST_SEEN_WRITE_INTERVAL_MS, nowMs)) {
             // A heartbeat must never CREATE a document. For a guest it could: a `gid`
             // cookie whose guest doc was gone got `set(..., {merge: true})`, which mints
             // a stub holding nothing but `lastSeen` — no `ip`, no `createdAt`. Those

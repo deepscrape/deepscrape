@@ -3,6 +3,7 @@ import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {readFileSync} from "node:fs"
 import {join} from "node:path"
+import {throttleDueWrite} from "./home_handler"
 
 /**
  * Round-trip budget for the heartbeat path.
@@ -120,5 +121,32 @@ describe("redis round-trip budget", () => {
       !region.includes("metrics_summary"),
       "the heartbeat must not write metrics_summary/dashboard",
     )
+  })
+})
+
+describe("throttleDueWrite", () => {
+  it("drops one window when the map is full, not all of them", () => {
+    // The bug this pins: `clear()` forgot every window at once, so the write burst
+    // landed exactly when the map was fullest and the throttle briefly did nothing.
+    const seen = new Map<string, number>()
+    const max = 3
+    for (const key of ["a", "b", "c"]) {
+      assert.equal(throttleDueWrite(seen, key, 1000, 10_000, max), true)
+    }
+
+    assert.equal(throttleDueWrite(seen, "d", 1000, 10_000, max), true)
+    assert.deepEqual([...seen.keys()], ["b", "c", "d"], "only the oldest key is evicted")
+    assert.equal(seen.size, max, "the map stays at its ceiling")
+
+    // Under `clear()` these two would both be due again.
+    assert.equal(throttleDueWrite(seen, "b", 1000, 10_100, max), false)
+    assert.equal(throttleDueWrite(seen, "c", 1000, 10_100, max), false)
+  })
+
+  it("holds one key to one write per interval", () => {
+    const seen = new Map<string, number>()
+    assert.equal(throttleDueWrite(seen, "a", 1000, 0), true)
+    assert.equal(throttleDueWrite(seen, "a", 1000, 999), false)
+    assert.equal(throttleDueWrite(seen, "a", 1000, 1000), true)
   })
 })

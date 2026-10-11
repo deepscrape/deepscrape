@@ -120,13 +120,30 @@ Residual, stated so it is not mistaken for closed: the vault carries the **cooki
 whole profile. The `F2_D` claim holds because a login session *is* a cookie jar; it stops holding
 the moment the copy claims "everything about the browser".
 
-## 3.4 The two undeployed collection-group indexes
+## 3.4 The two collection-group indexes — DEPLOYED AND VERIFIED 2026-10-11
 
-The `state` index (meter sweep) and the `idleDeadline` index (reaper) are declared and
-**undeployed**. The emulator does not enforce indexes, so the runtime verification proves
-query *semantics*, not index presence, and production can still answer
-`FAILED_PRECONDITION`. The first live sweep is the real test. Deploy them before it runs
-against paying customers.
+The `state` index (meter sweep) and the `idleDeadline` index (reaper) are declared, and until
+2026-10-11 they were **undeployed**: the emulator does not enforce indexes, so the runtime
+verification proved query *semantics*, not index presence, and production could have answered
+`FAILED_PRECONDITION` on the first live sweep while the admin page rendered it as "no sessions".
+
+`npm run deploy:indexes` then reported "deployed indexes in firestore.indexes.json successfully
+for easyscrape database", and both field indexes now report `state: READY` with
+`queryScope: COLLECTION_GROUP` in that database:
+
+    gcloud firestore indexes fields describe state --collection-group=browserSessions \
+      --database=easyscrape --format="json(indexConfig)"
+
+Two things worth keeping, because neither is protected by a test:
+
+- The database is the NAMED one (`firestore.database: "easyscrape"`). The default database has
+  no composite indexes at all, so an index deploy that silently targets `(default)` would report
+  success and change nothing that matters. The CLI names the database in its success line; read
+  it rather than the exit code.
+- `functions/src/config/firestore-indexes.spec.ts` pins the DECLARATION (every
+  `collectionGroup(...).where(...)` field has a `COLLECTION_GROUP` fieldOverride) and cannot pin
+  the DEPLOYMENT. That is inherent: proving presence needs cloud credentials. Re-run the
+  `describe` above after any change to `fieldOverrides`.
 
 ## 3.5 Frontend surfaces still unbuilt
 
@@ -153,13 +170,11 @@ From the owner's list, the two remaining items:
 ## Order
 
 1. **3.0** — the two decisions (blocks a paying feature; only the owner can take them)
-2. **3.4** — the indexes, before the first live sweep. The only item left here that is
-   neither a decision nor a measurement.
-3. **3.5** — playgrounds, and the surfaces not yet enumerated. Its orphan half is done
+2. **3.5** — playgrounds, and the surfaces not yet enumerated. Its orphan half is done
    (128 components swept, 0 orphans, 2026-10-10); what remains is building.
 
 Closed since this list was written, so it is not re-derived: **3.1** (the dead constant),
-**3.3** (the storage landed — see above), **3.2** (`GET /api/pricing/estimate` was a route that
-was never registered, not a feature that was never built), and both `12` §3.4 items that were
-fixable without a deployment (the i18n gate now exists; `scripts/route-parity.ts` now compares
-method paths, not just bases).
+**3.4** (both indexes deployed and read back as READY), **3.3** (the storage landed — see above),
+**3.2** (`GET /api/pricing/estimate` was a route that was never registered, not a feature that was
+never built), and both `12` §3.4 items that were fixable without a deployment (the i18n gate now
+exists; `scripts/route-parity.ts` now compares method paths, not just bases).

@@ -1,26 +1,76 @@
-<div class="flex min-h-0 grow flex-col gap-4 p-4">
+<!-- chatai.component.html -->
+<!--
+  A chat transcript and a composer.
+
+  Four decisions worth keeping, because each replaces something that read as a
+  mistake rather than a style:
+
+  1. The model selector is a TOP BAR, not the row above the composer. It sat
+     between the transcript and the input, where it read as a field belonging to
+     the message being typed. It opens DOWNWARD now that it is at the top; the old
+     `position="top"` existed only because a menu at the bottom of the page clips.
+  2. User and assistant bubbles carry different corner radii (`rounded-br-md` /
+     `rounded-bl-md`), which is how both sides stay distinguishable without a name
+     label on every row.
+  3. `bg-cyan-700`, not `cyan-600`. White on cyan-600 is 3.77:1, under the 4.5:1
+     WCAG AA floor for body text; cyan-700 is 5.56:1 and passes. The send button
+     uses the same token so the two cannot drift apart.
+  4. The transcript is `role="log"` with `aria-live="polite"` and `aria-busy`
+     while streaming, so a reply is announced as it arrives rather than being
+     visible only to sighted users.
+
+  Every string is an EXISTING `CHAT.*` key. This is a restyle, and adding copy
+  would mean five locale files for a design change.
+-->
+<div class="flex min-h-0 grow flex-col p-3 sm:p-4">
+
+  <div class="mb-3 flex items-center justify-end">
+    <app-dropdown
+      [options]="model"
+      [control]="modelAI | formControl"
+      [padding]="'p-2'"
+      [position]="'bottom'"
+      dropDownName="CHAT.MODEL_LABEL"></app-dropdown>
+  </div>
+
   <div
     #scroller
-    class="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray2 bg-slate-50/30 p-4 dark:border-gray5 dark:bg-gray7/80">
+    class="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-gray2 bg-slate-50/30 p-3 sm:p-4 dark:border-gray5 dark:bg-gray7/80"
+    role="log"
+    aria-live="polite"
+    aria-relevant="additions text"
+    [attr.aria-busy]="streaming()">
 
     @if (messages().length === 0) {
-      <p class="text-sm text-gray6 dark:text-gray2">
-        {{ 'CHAT.EMPTY_STATE' | translate }}
-      </p>
+      <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <span
+          class="flex size-11 items-center justify-center rounded-2xl bg-cyan-700/10 text-sm font-semibold text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300"
+          aria-hidden="true">DS</span>
+        <p class="max-w-md text-sm text-gray5 dark:text-gray3">
+          {{ 'CHAT.EMPTY_STATE' | translate }}
+        </p>
+      </div>
     }
 
     <ul class="flex flex-col gap-4">
       @for (message of messages(); track $index) {
-        <li class="flex" [class.justify-end]="message.role === 'user'">
+        <li class="flex items-end gap-2" [class.flex-row-reverse]="message.role === 'user'">
           @if (message.role === 'user') {
-            <p class="max-w-[80%] whitespace-pre-wrap rounded-xl bg-cyan-600 px-4 py-2 text-white">
+            <p
+              class="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-cyan-700 px-4 py-2 text-white shadow-sm">
               {{ message.content }}
             </p>
           } @else {
-            <div class="max-w-[80%] rounded-xl border border-gray2 bg-white px-4 py-2 dark:border-gray5 dark:bg-gray6">
+            <!-- Decorative: the alignment already says which side this is, so the
+                 monogram is hidden from assistive tech rather than read aloud. -->
+            <span
+              class="flex size-7 shrink-0 items-center justify-center rounded-full bg-gray2 text-[10px] font-semibold text-gray5 dark:bg-gray5 dark:text-gray2"
+              aria-hidden="true">DS</span>
+            <div
+              class="max-w-[80%] rounded-2xl rounded-bl-md border border-gray2 bg-white px-4 py-2 shadow-sm dark:border-gray5 dark:bg-gray6">
               @if (message.content) {
                 <markdown
-                  class="text-base text-gray6 dark:text-gray2"
+                  class="block text-base text-gray6 dark:text-gray2"
                   clipboard
                   emoji
                   [clipboardButtonComponent]="clipboardButton"
@@ -35,37 +85,31 @@
     </ul>
 
     @if (failed()) {
-      <p class="mt-4 text-sm text-rose-600 dark:text-rose-300" role="alert">
+      <p
+        class="mt-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300"
+        role="alert">
         {{ 'CHAT.ERROR' | translate }}
       </p>
     }
   </div>
 
-  <div class="flex flex-col gap-2">
-    <!-- Opens upward: it sits at the bottom of the page, so a downward menu would clip. -->
-    <app-dropdown
-      [options]="model"
-      [control]="modelAI | formControl"
-      [padding]="'p-2'"
-      [position]="'top'"
-      dropDownName="CHAT.MODEL_LABEL"></app-dropdown>
-
-    <form class="flex items-end gap-2" (ngSubmit)="send()">
-      <textarea
-        name="draft"
-        rows="2"
-        [attr.aria-label]="'CHAT.PLACEHOLDER' | translate"
-        [placeholder]="'CHAT.PLACEHOLDER' | translate"
-        [ngModel]="draft()"
-        (ngModelChange)="draft.set($event)"
-        (keydown)="onKeydown($event)"
-        class="min-h-11 grow resize-none rounded-xl border border-gray2 bg-white px-3 py-2 text-gray6 outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 dark:border-gray5 dark:bg-gray6 dark:text-white"></textarea>
-      <button
-        type="submit"
-        [disabled]="streaming() || !draft().trim()"
-        class="rounded-xl bg-cyan-600 px-4 py-2 font-medium text-white transition hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
-        {{ (streaming() ? 'CHAT.SENDING' : 'CHAT.SEND') | translate }}
-      </button>
-    </form>
-  </div>
+  <form
+    class="mt-3 flex items-end gap-2 rounded-2xl border border-gray2 bg-white p-2 transition focus-within:border-cyan-600 focus-within:ring-2 focus-within:ring-cyan-300/60 dark:border-gray5 dark:bg-gray6"
+    (ngSubmit)="send()">
+    <textarea
+      name="draft"
+      rows="2"
+      [attr.aria-label]="'CHAT.PLACEHOLDER' | translate"
+      [placeholder]="'CHAT.PLACEHOLDER' | translate"
+      [ngModel]="draft()"
+      (ngModelChange)="draft.set($event)"
+      (keydown)="onKeydown($event)"
+      class="min-h-11 grow resize-none border-0 bg-transparent px-2 py-2 text-gray6 outline-none placeholder:text-gray5 dark:text-white dark:placeholder:text-gray3"></textarea>
+    <button
+      type="submit"
+      [disabled]="streaming() || !draft().trim()"
+      class="shrink-0 rounded-xl bg-cyan-700 px-4 py-2 font-medium text-white transition hover:bg-cyan-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+      {{ (streaming() ? 'CHAT.SENDING' : 'CHAT.SEND') | translate }}
+    </button>
+  </form>
 </div>

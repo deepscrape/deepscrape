@@ -159,6 +159,11 @@ if (upstashRestEnabled) {
  * Verified against a live instance: `get()` -> typeof "object", and
  * `pipeline().exec()` -> [object, object, ...] in command order.
  * Normalizing here means callers never have to care which shape they got.
+ *
+ * Deliberately unversioned: a cache entry is either usable or it is a miss, and
+ * both paths already refetch from the source of truth, so a version field would
+ * only add a second way to be wrong. See
+ * docs/ADR-2026-10-DURABLE-SHAPE-DISCIPLINE.md.
  * @param {*} value
  * @return {*}
  */

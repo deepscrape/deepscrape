@@ -109,11 +109,17 @@ const isBrowserKind = (value: unknown): value is BrowserKind =>
  *
  * Firestore is a store, not a validator: a hand-edited or legacy document must
  * not become a session state, so every field is checked rather than cast.
+ *
+ * Unknown fields are ignored ON PURPOSE -- a newer build writes one mid-deploy
+ * and this build still reads the session -- while an unknown `state`/`tier`/
+ * `kind`/`mode` fails closed. That pair is why nothing here is versioned: a `v`
+ * field could only tell those two cases apart in order to do exactly this. See
+ * docs/ADR-2026-10-DURABLE-SHAPE-DISCIPLINE.md.
  * @param {string} id The document id.
  * @param {Record<string, unknown>} data The raw document.
  * @return {BrowserSessionRecord | undefined} The record, or undefined.
  */
-const parseSession = (
+export const parseSession = (
   id: string,
   data: Record<string, unknown>,
 ): BrowserSessionRecord | undefined => {

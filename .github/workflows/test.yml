@@ -51,6 +51,13 @@ jobs:
       - name: Check OnPush safety
         run: bun scripts/check-onpush.mjs
 
+      # No gate validates the i18n catalogues, and nothing else can: tsc does not read
+      # templates, Karma compiles only what a spec imports, and the build bundles the
+      # JSON without checking that a referenced key is in it. So a missing key ships
+      # and the user reads the key itself instead of a sentence.
+      - name: Check i18n keys
+        run: bun scripts/i18n-keys.ts
+
       # Install Chromium for ChromeHeadless testing
       - name: Install Chromium
         run: |

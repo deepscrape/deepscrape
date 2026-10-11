@@ -490,5 +490,6 @@ websocket only for rows that carry one.
    server-side scheduler and a BFF route, neither of which exists.
 
 **Note:** this is the alternate job-creation surface. `B.1`'s frame work is untouched by it, and
-A.3's fps cap and the required arachnefly `POST /machine/mcp/:id` remain open.
+A.3's fps cap and the required arachnefly `POST /machine/mcp/:id` are both **DONE** (the cap comes from
+`SESSION_CAPS` via `frameIntervalMs`; the route exists).
 

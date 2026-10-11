@@ -66,6 +66,7 @@ import { arachnefly } from '../functions/src/handlers/machines'
 import {
   browserSessionClose,
   browserSessionCreate,
+  browserSessionFrame,
   browserSessionKeepalive,
   browserSessionList,
 } from '../functions/src/handlers/browser-sessions'
@@ -335,6 +336,22 @@ api.post(
 api.post(
   '/api/browser/session/:id/close',
   h(guard([access, perm('crawl', 'execute'), browserSessionClose])),
+)
+
+// The live view. The ONLY route on this surface that answers something other
+// than JSON -- a PNG -- so the content type is set by the handler rather than by
+// the envelope, and a client reads it as an image and not as data.
+//
+// `access` plus the crawl permission, matching its four neighbours: a free caller
+// has no session to view (`SESSION_CAPS.free.dedicated` is 0), so a plan refusal
+// here would answer 402 about a machine that was never leased. The tier still
+// matters and is read by the handler for the fps cap.
+//
+// Owner scope is the handler's, and it is the first thing it does: a foreign
+// session id is a 404 before any machine is asked for a screenshot.
+api.get(
+  '/api/browser/session/:id/frame',
+  h(guard([access, perm('crawl', 'execute'), browserSessionFrame])),
 )
 
 // The credential vault: `access`, like its four neighbours, and the tier

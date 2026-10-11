@@ -57,10 +57,12 @@ import { env } from "../config"
 import { arachneflyBaseUrl } from "../config/upstreams"
 import {
   decideLease,
+  frameTooSoon,
   machineChargeFor,
   parseCreateRequest,
   refusalFor,
   type BrowserRefusal,
+  type BrowserTier,
 } from "../domain/browser-session.domain"
 import { resolveBillingPricingPolicy } from "../domain/billing-pricing.domain"
 import { webrainTierFor } from "../domain/webrain-tools.domain"
@@ -69,7 +71,7 @@ import {
   chargeSessionMeter,
   meterWalletFor,
 } from "../infrastructure/browser-meter-charge"
-import { deployBrowserMachine, suspendBrowserMachine } from "../infrastructure/browser-session.provisioner"
+import { deployBrowserMachine, observeMachineFrame, suspendBrowserMachine } from "../infrastructure/browser-session.provisioner"
 import {
   attachMachine,
   closeBrowserSession,
@@ -644,5 +646,157 @@ export const browserSessionClose = async (
     res.status(200).json({status: "ok", session: session})
   } catch (error) {
     internal(res, "close", error)
+  }
+}
+
+/**
+ * When each session last served a frame, so the tier's pace can be enforced.
+ *
+ * ponytail: per-INSTANCE and in memory, so N warm instances permit up to N times
+ * the tier's fps. That is a real ceiling on a billing control -- `SESSION_CAPS.fps`
+ * exists to bound how many screenshots one session costs -- and it is accepted
+ * because the alternatives are a Redis round trip or a Firestore write on every
+ * poll, against a route whose entire job is to serve an image cheaply. Move it to
+ * the credit lease if the cap must ever be exact.
+ *
+ * Bounded, because a Map keyed by session id is otherwise a leak, and the OLDEST
+ * entry is evicted rather than the map cleared: clearing forgets every pace at
+ * once, which is the bug the heartbeat throttle in `home_handler.ts` had.
+ */
+const lastFrameAtMs = new Map<string, number>()
+const LAST_FRAME_MAP_MAX_ENTRIES = 2000
+
+/**
+ * Whether this caller may have a frame now, recording it when they may.
+ *
+ * The DECISION is `frameTooSoon` in the domain, unmodified, so the fps table
+ * stays the single source of truth and the free tier's refusal of even a first
+ * frame is not restated here. This supplies only the one input that predicate
+ * cannot compute: how long it has been since the last frame this session served.
+ * @param {string} key The uid and session id, so two callers cannot share a pace.
+ * @param {BrowserTier} tier The caller's tier.
+ * @param {number} nowMs The current time.
+ * @return {boolean} True when the frame must be refused as too soon.
+ */
+const frameRefused = (
+  key: string,
+  tier: BrowserTier,
+  nowMs: number,
+): boolean => {
+  const last = lastFrameAtMs.get(key)
+  const sinceLast = last === undefined ? null : nowMs - last
+
+  if (frameTooSoon(tier, sinceLast)) {
+    return true
+  }
+
+  // Stamped only when a frame will actually be attempted. Stamping a refused
+  // request would push the next allowed frame further out and compound it.
+  if (lastFrameAtMs.size >= LAST_FRAME_MAP_MAX_ENTRIES) {
+    const oldest = lastFrameAtMs.keys().next().value
+    if (oldest !== undefined) {
+      lastFrameAtMs.delete(oldest)
+    }
+  }
+
+  lastFrameAtMs.set(key, nowMs)
+  return false
+}
+
+/**
+ * `GET /api/browser/session/:id/frame` -- one screenshot of a session's machine.
+ *
+ * The one route on this surface that does not answer JSON, and that is the point:
+ * `webrain_observe(what="screenshot")` returns a PNG, so wrapping it in the usual
+ * envelope would buy an image codec for a content-type.
+ *
+ * It never uses the webrain POOL. A pooled `webrain_observe` would photograph
+ * whatever page the previous tenant left on that worker -- a disclosure worse
+ * than the `extract`/`pdf` case because it is an image of someone else's screen.
+ * So this always asks the session's OWN machine, through arachnefly's
+ * `POST /api/machine/mcp/:id`, which carries the ownership check.
+ *
+ * The caller's own token is relayed, and that is safe rather than merely
+ * convenient: the middleware checks the machine id against the uid that token
+ * carries, so a machine id from another account is a 404 upstream. `machineId`
+ * therefore never leaves the server, which is why `BrowserSessionPublic` has no
+ * field for it.
+ * @param {Request} req The request.
+ * @param {Response} res The response.
+ */
+export const browserSessionFrame = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    unauthorized(res)
+    return
+  }
+
+  try {
+    const id = sessionIdOf(req)
+    if (!id) {
+      notFound(res)
+      return
+    }
+
+    // Owner-scoped, and BEFORE anything is captured: a session that is not this
+    // caller's answers 404 without a machine ever being asked for a screenshot.
+    const record = await readBrowserSessionRecord(uid, id)
+    if (!record) {
+      notFound(res)
+      return
+    }
+
+    if (!record.machineId) {
+      res.status(409).json({
+        error: "This session has no machine to observe",
+        code: "no_frame_source",
+      })
+      return
+    }
+
+    const token = req.authToken
+    if (!token) {
+      // Arachnefly authenticates the machine call with this token, so without it
+      // the request cannot be made at all. 401 rather than 500: it is the
+      // caller's credential that is missing, not ours.
+      unauthorized(res)
+      return
+    }
+
+    if (frameRefused(`${uid}:${id}`, webrainTierFor(req.accessMode), Date.now())) {
+      res.status(429).json({
+        error: "Frames are arriving faster than this plan allows",
+        code: "frame_too_soon",
+      })
+      return
+    }
+
+    const frame = await observeMachineFrame({
+      baseUrl: arachneflyBaseUrl(),
+      token: token,
+      machineId: record.machineId,
+    })
+
+    if (!frame.ok) {
+      // Status only. `observeMachineFrame` already refuses to relay the upstream
+      // body, because this is the path a caller reaches by guessing a machine id.
+      console.error(`browser-session: frame for ${id} failed: ${frame.error}`)
+      res.status(502).json({
+        error: "The machine did not return a frame",
+        code: "frame_failed",
+      })
+      return
+    }
+
+    // `no-store` because a cached frame is indistinguishable from a live one, and
+    // a live view frozen on a stale image is worse than one showing nothing. The
+    // client's per-poll nonce defends the same thing at the URL.
+    res.set("Cache-Control", "no-store")
+    res.status(200).type(frame.contentType).send(Buffer.from(frame.bytes))
+  } catch (error) {
+    internal(res, "frame", error)
   }
 }

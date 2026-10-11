@@ -51,6 +51,7 @@ const ROUTES: Array<[string, string]> = [
   ['POST', '/api/browser/vault'],
   ['POST', '/api/browser/session/session-1/keepalive'],
   ['POST', '/api/browser/session/session-1/close'],
+  ['GET', '/api/browser/session/session-1/frame'],
   ['PUT', '/api/orgs/org-1'],
   ['PUT', '/api/machines/machine/machine-1/start'],
   ['PUT', '/api/machines/machine/machine-1/suspend'],

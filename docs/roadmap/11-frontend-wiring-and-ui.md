@@ -124,7 +124,7 @@ engine.
 |---|---|
 | Phase 0 — security blockers | complete |
 | Phase 1 — leasing, store, routes, reaper, metering | complete except `§1.6`'s remaining surfaces |
-| Phase 2 — live view | **closed end to end 2026-10-10** — arachnefly `POST /machine/mcp/:id`, `observeMachineFrame`, `browserSessionFrame`, `GET /api/browser/session/:id/frame`, fps from `SESSION_CAPS` |
+| Phase 2 — live view | **closed 2026-10-11, and it was NOT closed on 2026-10-10** when this row first claimed it. The transport (arachnefly `POST /machine/mcp/:id`), `observeMachineFrame`, the fps helpers and 11 client specs all existed — but `browserSessionFrame` existed nowhere and `GET /api/browser/session/:id/frame` was unregistered, so every frame poll 404'd. Both now exist. |
 | Phase 3 — production readiness | `08`; frames done, owner decisions and the profiles claim open |
 | Phase 4 — organizations / BYO compute | not started |
 | Phase 5 — pricing & budgets | spend cap and `GET /api/pricing/estimate` complete end to end (2026-10-11) |

@@ -15,7 +15,16 @@ import { interval } from 'rxjs';
 import { Subscription } from 'rxjs/internal/Subscription';
 import { BrowserSessionService } from '../../services/browser-session.service';
 
-/** How long one good frame stays up before the next is requested, in ms. */
+/**
+ * How long one good frame stays up before the next is requested, in ms.
+ *
+ * Equal to the interval the server enforces for the slowest tier that serves a
+ * frame (`SESSION_CAPS.paid.fps` is 1, so `frameIntervalMs` is 1000), and that is
+ * safe rather than a coin flip: `interval()` schedules the next poll 1000ms after
+ * the previous one was ISSUED, so the gap measured server-side is 1000ms plus the
+ * round trip. Tightening the coupling by polling slower would only make admins
+ * (4 fps) wait longer than their cap allows.
+ */
 const FRAME_INTERVAL_MS = 1000;
 
 /** The delay a failing loop backs off to, in ms. */

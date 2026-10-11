@@ -490,14 +490,24 @@ and no extra Fly request), refuses a suspended machine with 409 and a tokenless 
 An earlier version of this file said to copy the body into `Data`; that keeps the bytes and loses the
 content type. Spec'd: `interfaces/handlers/machine_mcp_test.go`, 6 cases, including an assertion that the
 body carries no `Status`/`Code`/`Message` envelope — which is what stops a future "tidy-up" from routing it
-back through the wrapper and silently breaking every frame. **The chain is CLOSED end-to-end (2026-10-10).**
-The client method did NOT go in `functions/src/handlers/machines.ts` (this file said it would):
-`observeMachineFrame()` went beside `suspendBrowserMachine` in the provisioner, where the other arachnefly
-calls live, because `callArachnefly` parses a JSON envelope and cannot carry an image. `browserSessionFrame`
-in `functions/src/handlers/browser-sessions.ts` resolves the session, refuses a machine-less one with 409
-`no_frame_source`, applies the fps cap, and relays the bytes. `GET /api/browser/session/:id/frame` is
-registered in `bff/api.ts`. Spec'd: `observeMachineFrame` (5 cases) and `frameIntervalMs` / `frameTooSoon`
-(6 cases).
+back through the wrapper and silently breaking every frame.
+**CORRECTED 2026-10-11: the chain was NOT closed, and this file said it was.** Everything existed
+except the two things that JOINED it: `browserSessionFrame` was described here and written NOWHERE in the
+repo, and `GET /api/browser/session/:id/frame` was not registered in `bff/api.ts`. So every frame poll from
+a shipped `<app-browser-frame>` was a 404, while the transport, the provisioner call, the fps helpers and 11
+client specs all passed. Third instance of this class after `/api/vision` and `/api/pricing/estimate`; the
+method-path list in `route-parity.ts` still cannot see it, because the client builds the path
+(`this.base + '/' + id + '/frame?n='`) rather than concatenating a literal onto its root.
+Both pieces now exist. The client method did NOT go in `functions/src/handlers/machines.ts` (this file said
+it would): `observeMachineFrame()` went beside `suspendBrowserMachine` in the provisioner, where the other
+arachnefly calls live, because `callArachnefly` parses a JSON envelope and cannot carry an image.
+`browserSessionFrame` in `functions/src/handlers/browser-sessions.ts` resolves the session, refuses a
+machine-less one with 409 `no_frame_source`, applies the fps cap, and relays the bytes.
+`GET /api/browser/session/:id/frame` is registered in `bff/api.ts` and added to the route inventory in
+`bff/api.spec.ts`. Spec'd: `observeMachineFrame` (5 cases) and `frameIntervalMs` / `frameTooSoon`
+(6 cases). **The handler itself has NO spec** — that module imports the store, which builds the Admin SDK
+at load, so it cannot be imported by a test without an emulator. Its fps state is a module-level Map, so it
+is per-INSTANCE: N warm instances permit up to N times the tier's fps.
 
 **A latent hazard the frame route deliberately routes around.** `webrain_observe` sits in
 `PAID_ONLY_TOOLS` but NOT in `SHARED_UNSAFE_TOOLS`, so a *pooled* `webrainTool("webrain_observe", ...)`

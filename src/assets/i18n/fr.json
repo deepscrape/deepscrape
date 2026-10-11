@@ -734,7 +734,8 @@
     "COPY": "Copier",
     "LOADING": "Chargement...",
     "ERROR": "Erreur",
-    "RESET": "Réinitialiser"
+    "RESET": "Réinitialiser",
+    "CLEAR": "Effacer"
   },
   "PROMPT": {
     "PLACEHOLDER": "Saisissez votre invite ici...",
@@ -757,7 +758,8 @@
     "WAITING": "en attente des résultats...",
     "NO_RESULTS": "aucun résultat",
     "COST": "Coût",
-    "TOKENS": "Jetons/s"
+    "TOKENS": "Jetons/s",
+    "COOKIES_NOTE": "La page est lue côté serveur par le crawler, qui ne partage pas les cookies de votre navigateur. Une page derrière une connexion revient sous forme de mur de connexion."
   },
   "CHAT": {
     "EMPTY_STATE": "Posez vos questions sur les pages que vous avez explorées, le modèle répond en markdown.",
@@ -909,6 +911,27 @@
     "SOURCE_USER": "Votre propre clé API",
     "REFUSAL_PLAN": "Non inclus dans votre offre actuelle",
     "REFUSAL_BYOK": "Nécessite votre propre clé API"
+  },
+  "AI_KEYS": {
+    "TITLE": "Clés des fournisseurs d'IA",
+    "DESCRIPTION": "Apportez vos propres clés pour les fournisseurs d'IA que vous utilisez. Une clé enregistrée est utilisée côté serveur pour votre compte et n'est jamais renvoyée au navigateur.",
+    "PRIVACY": "Une clé enregistrée n'est jamais renvoyée à cette page. Le champ ci-dessous n'envoie qu'une nouvelle clé.",
+    "LOADING": "Lecture de vos clés…",
+    "LOAD_FAILED": "Vos clés n'ont pas pu être lues. Réessayez.",
+    "KEY_LABEL": "Clé API",
+    "KEY_HINT": "Collez la clé exactement telle que le fournisseur l'a émise.",
+    "SAVE": "Enregistrer la clé",
+    "SAVING": "Enregistrement…",
+    "REMOVE": "Supprimer la clé",
+    "REMOVING": "Suppression…",
+    "HAS_KEY": "Clé enregistrée",
+    "NO_KEY": "Aucune clé enregistrée",
+    "SOURCE_NONE": "Aucune clé disponible",
+    "REFUSAL_UNSUPPORTED": "Ce fournisseur n'accepte pas votre propre clé",
+    "BYOK_UNSUPPORTED": "Ce fournisseur ne peut pas être utilisé avec votre propre clé."
+  },
+  "AI_FETCH": {
+    "UNREACHABLE": "La page n'a pas pu être lue. Réessayez."
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Aperçu",
@@ -1542,7 +1565,7 @@
   },
   "CRAWL_PACK_EXTRACTION": {
     "TITLE": "Extraction strategies",
-    "SUBTITLE": "Describe what you want in a sentence — \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
+    "SUBTITLE": "Describe what you want in a sentence, \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
     "URL": "Page URL",
     "INTENT": "What to extract",
     "INTENT_PLACEHOLDER": "every product: name, price, link",
@@ -2802,7 +2825,7 @@
     "TAB_SEARCH": "Recherche",
     "TAB_EXTRACT": "Extraction",
     "TAB_PDF": "PDF",
-    "REQ_FREE": "Gratuit — pool partagé",
+    "REQ_FREE": "Gratuit, pool partagé",
     "REQ_LEASE": "Nécessite un worker privé",
     "COST_LABEL": "Crédits",
     "LEASE_COST": "Un worker privé coûte 5 crédits à déployer, 1 par démarrage/arrêt et 2 à détruire. Créez-en un dans Machines, puis relancez cet outil.",
@@ -2819,7 +2842,7 @@
     "FIELD_ADAPTIVE": "Adaptatif",
     "FIELD_OP": "Opération",
     "TAB_VISION": "Vision",
-    "NOTE_VISION": "La vision lit la page COURANTE : op=ask capture la fenêtre et interroge le modèle local, op=index intègre ses tuiles dans un index nommé. C'est un outil PAYANT et, sur le pool partagé, il répond 502 — Needs a private worker.",
+    "NOTE_VISION": "La vision lit la page COURANTE : op=ask capture la fenêtre et interroge le modèle local, op=index intègre ses tuiles dans un index nommé. C'est un outil PAYANT et, sur le pool partagé, il répond 502, Needs a private worker.",
     "FIELD_PROMPT": "Invite",
     "FIELD_TAG": "Étiquette d'index",
     "FIELD_SCALE": "Échelle de capture",

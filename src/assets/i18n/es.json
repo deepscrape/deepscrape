@@ -734,7 +734,8 @@
     "COPY": "Copiar",
     "LOADING": "Cargando...",
     "ERROR": "Error",
-    "RESET": "Restablecer"
+    "RESET": "Restablecer",
+    "CLEAR": "Limpiar"
   },
   "PROMPT": {
     "PLACEHOLDER": "Escribe aquí tu prompt...",
@@ -757,7 +758,8 @@
     "WAITING": "esperando resultados..",
     "NO_RESULTS": "sin resultados",
     "COST": "Coste",
-    "TOKENS": "Tokens/s"
+    "TOKENS": "Tokens/s",
+    "COOKIES_NOTE": "El rastreador lee la página en el servidor, y no comparte las cookies de tu navegador. Una página tras un inicio de sesión vuelve con su muro de acceso."
   },
   "CHAT": {
     "EMPTY_STATE": "Pregunta lo que quieras sobre las páginas que has rastreado, el modelo responde en markdown.",
@@ -909,6 +911,27 @@
     "SOURCE_USER": "Tu propia clave de API",
     "REFUSAL_PLAN": "No incluido en tu plan actual",
     "REFUSAL_BYOK": "Requiere tu propia clave de API"
+  },
+  "AI_KEYS": {
+    "TITLE": "Claves de proveedores de IA",
+    "DESCRIPTION": "Trae tus propias claves para los proveedores de IA que uses. Una clave guardada se usa en el servidor en tu nombre y nunca se devuelve al navegador.",
+    "PRIVACY": "Una clave guardada nunca se devuelve a esta página. El campo de abajo solo envía una nueva.",
+    "LOADING": "Leyendo tus claves…",
+    "LOAD_FAILED": "No se pudieron leer tus claves. Inténtalo de nuevo.",
+    "KEY_LABEL": "Clave de API",
+    "KEY_HINT": "Pega la clave exactamente como la emitió el proveedor.",
+    "SAVE": "Guardar clave",
+    "SAVING": "Guardando…",
+    "REMOVE": "Eliminar clave",
+    "REMOVING": "Eliminando…",
+    "HAS_KEY": "Clave guardada",
+    "NO_KEY": "Sin clave guardada",
+    "SOURCE_NONE": "No hay clave disponible",
+    "REFUSAL_UNSUPPORTED": "Este proveedor no admite una clave tuya",
+    "BYOK_UNSUPPORTED": "Este proveedor no puede usarse con tu propia clave."
+  },
+  "AI_FETCH": {
+    "UNREACHABLE": "No se pudo leer la página. Inténtalo de nuevo."
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Resumen",
@@ -1542,7 +1565,7 @@
   },
   "CRAWL_PACK_EXTRACTION": {
     "TITLE": "Extraction strategies",
-    "SUBTITLE": "Describe what you want in a sentence — \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
+    "SUBTITLE": "Describe what you want in a sentence, \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
     "URL": "Page URL",
     "INTENT": "What to extract",
     "INTENT_PLACEHOLDER": "every product: name, price, link",
@@ -2802,7 +2825,7 @@
     "TAB_SEARCH": "Búsqueda",
     "TAB_EXTRACT": "Extracción",
     "TAB_PDF": "PDF",
-    "REQ_FREE": "Gratis — pool compartido",
+    "REQ_FREE": "Gratis, pool compartido",
     "REQ_LEASE": "Requiere un worker privado",
     "COST_LABEL": "Créditos",
     "LEASE_COST": "Un worker privado cuesta 5 créditos al desplegar, 1 por inicio/parada y 2 al destruir. Crea uno en Máquinas y vuelve a ejecutar la herramienta.",
@@ -2819,7 +2842,7 @@
     "FIELD_ADAPTIVE": "Adaptativo",
     "FIELD_OP": "Operación",
     "TAB_VISION": "Visión",
-    "NOTE_VISION": "La visión lee la página ACTUAL: op=ask captura el viewport y pregunta al modelo local, op=index incrusta sus tiles en un índice con nombre. Es una herramienta de PAGO y en el grupo compartido responde 502 — Needs a private worker.",
+    "NOTE_VISION": "La visión lee la página ACTUAL: op=ask captura el viewport y pregunta al modelo local, op=index incrusta sus tiles en un índice con nombre. Es una herramienta de PAGO y en el grupo compartido responde 502, Needs a private worker.",
     "FIELD_PROMPT": "Prompt",
     "FIELD_TAG": "Etiqueta de índice",
     "FIELD_SCALE": "Escala de captura",

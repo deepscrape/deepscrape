@@ -734,7 +734,8 @@
     "COPY": "Kopieren",
     "LOADING": "Wird geladen...",
     "ERROR": "Fehler",
-    "RESET": "Zurücksetzen"
+    "RESET": "Zurücksetzen",
+    "CLEAR": "Leeren"
   },
   "PROMPT": {
     "PLACEHOLDER": "Geben Sie hier Ihren Prompt ein...",
@@ -757,7 +758,8 @@
     "WAITING": "Warten auf Ergebnisse...",
     "NO_RESULTS": "keine Ergebnisse",
     "COST": "Kosten",
-    "TOKENS": "Tokens/s"
+    "TOKENS": "Tokens/s",
+    "COOKIES_NOTE": "Die Seite wird serverseitig vom Crawler gelesen, der die Cookies Ihres Browsers nicht teilt. Eine Seite hinter einem Login kommt als Anmeldemaske zurück."
   },
   "CHAT": {
     "EMPTY_STATE": "Frag alles über die Seiten, die du gecrawlt hast, das Modell antwortet in Markdown.",
@@ -909,6 +911,27 @@
     "SOURCE_USER": "Eigener API-Schlüssel",
     "REFUSAL_PLAN": "Nicht in Ihrem aktuellen Tarif enthalten",
     "REFUSAL_BYOK": "Erfordert einen eigenen API-Schlüssel"
+  },
+  "AI_KEYS": {
+    "TITLE": "Schlüssel für KI-Anbieter",
+    "DESCRIPTION": "Bringen Sie eigene Schlüssel für die genutzten KI-Anbieter mit. Ein gespeicherter Schlüssel wird serverseitig für Sie verwendet und nie an den Browser zurückgesendet.",
+    "PRIVACY": "Ein gespeicherter Schlüssel wird nie an diese Seite zurückgegeben. Das Feld unten sendet ausschließlich einen neuen.",
+    "LOADING": "Ihre Schlüssel werden gelesen…",
+    "LOAD_FAILED": "Ihre Schlüssel konnten nicht gelesen werden. Bitte erneut versuchen.",
+    "KEY_LABEL": "API-Schlüssel",
+    "KEY_HINT": "Fügen Sie den Schlüssel genau so ein, wie der Anbieter ihn ausgegeben hat.",
+    "SAVE": "Schlüssel speichern",
+    "SAVING": "Wird gespeichert…",
+    "REMOVE": "Schlüssel entfernen",
+    "REMOVING": "Wird entfernt…",
+    "HAS_KEY": "Schlüssel gespeichert",
+    "NO_KEY": "Kein Schlüssel gespeichert",
+    "SOURCE_NONE": "Kein Schlüssel verfügbar",
+    "REFUSAL_UNSUPPORTED": "Dieser Anbieter akzeptiert keinen eigenen Schlüssel",
+    "BYOK_UNSUPPORTED": "Dieser Anbieter kann nicht mit Ihrem eigenen Schlüssel verwendet werden."
+  },
+  "AI_FETCH": {
+    "UNREACHABLE": "Die Seite konnte nicht gelesen werden. Bitte erneut versuchen."
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Übersicht",
@@ -1542,7 +1565,7 @@
   },
   "CRAWL_PACK_EXTRACTION": {
     "TITLE": "Extraction strategies",
-    "SUBTITLE": "Describe what you want in a sentence — \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
+    "SUBTITLE": "Describe what you want in a sentence, \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
     "URL": "Page URL",
     "INTENT": "What to extract",
     "INTENT_PLACEHOLDER": "every product: name, price, link",
@@ -1590,7 +1613,7 @@
     "UNAVAILABLE": "Diese Installation hat keinen Tresorspeicher konfiguriert, es kann also nichts aufbewahrt werden.",
     "NO_PRIVATE_WORKER": "Dafür ist ein eigener Browser-Worker nötig, der noch nicht verfügbar ist. Ein Upgrade ändert daran nichts.",
     "UPGRADE_TITLE": "Das Speichern im Worker des Browsers ist ein kostenpflichtiges Feature",
-    "UPGRADE_BODY": "Diese Liste liegt auf der Maschine, die Ihren Browser ausführt — deshalb gehört sie zu einem bezahlten Tarif. Der Kontotresor unten liegt hinter keinem Tarif und ist nicht betroffen.",
+    "UPGRADE_BODY": "Diese Liste liegt auf der Maschine, die Ihren Browser ausführt, deshalb gehört sie zu einem bezahlten Tarif. Der Kontotresor unten liegt hinter keinem Tarif und ist nicht betroffen.",
     "UPGRADE_ACTION": "Tarife ansehen"
   },
   "CRAWLER_PACK": {
@@ -2802,7 +2825,7 @@
     "TAB_SEARCH": "Suche",
     "TAB_EXTRACT": "Extraktion",
     "TAB_PDF": "PDF",
-    "REQ_FREE": "Kostenlos — geteilter Pool",
+    "REQ_FREE": "Kostenlos, geteilter Pool",
     "REQ_LEASE": "Benötigt einen privaten Worker",
     "COST_LABEL": "Credits",
     "LEASE_COST": "Ein privater Worker kostet 5 Credits zum Bereitstellen, 1 pro Start/Stopp und 2 zum Löschen. Erstelle einen unter Maschinen und führe das Tool erneut aus.",
@@ -2819,7 +2842,7 @@
     "FIELD_ADAPTIVE": "Adaptiv",
     "FIELD_OP": "Operation",
     "TAB_VISION": "Vision",
-    "NOTE_VISION": "Vision liest die AKTUELLE Seite: op=ask macht einen Screenshot des Viewports und fragt das lokale Modell, op=index bettet dessen Kacheln in einen benannten Index ein. Dies ist ein KOSTENPFLICHTIGES Tool und antwortet im geteilten Pool mit 502 — Needs a private worker.",
+    "NOTE_VISION": "Vision liest die AKTUELLE Seite: op=ask macht einen Screenshot des Viewports und fragt das lokale Modell, op=index bettet dessen Kacheln in einen benannten Index ein. Dies ist ein KOSTENPFLICHTIGES Tool und antwortet im geteilten Pool mit 502, Needs a private worker.",
     "FIELD_PROMPT": "Prompt",
     "FIELD_TAG": "Index-Tag",
     "FIELD_SCALE": "Aufnahmefaktor",

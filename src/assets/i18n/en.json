@@ -734,7 +734,8 @@
     "COPY": "Copy",
     "LOADING": "Loading...",
     "ERROR": "Error",
-    "RESET": "Reset"
+    "RESET": "Reset",
+    "CLEAR": "Clear"
   },
   "PROMPT": {
     "PLACEHOLDER": "Type your prompt here...",
@@ -757,7 +758,8 @@
     "WAITING": "waiting for results..",
     "NO_RESULTS": "no results",
     "COST": "Cost",
-    "TOKENS": "Tokens/s"
+    "TOKENS": "Tokens/s",
+    "COOKIES_NOTE": "The page is read server-side by the crawler, which does not share your browser's cookies. A page behind a login comes back as its sign-in wall."
   },
   "CHAT": {
     "EMPTY_STATE": "Ask anything about the pages you have crawled, the model replies in markdown.",
@@ -909,6 +911,27 @@
     "SOURCE_USER": "Your own API key",
     "REFUSAL_PLAN": "Not included in your current plan",
     "REFUSAL_BYOK": "Requires your own API key"
+  },
+  "AI_KEYS": {
+    "TITLE": "AI provider keys",
+    "DESCRIPTION": "Bring your own keys for the AI providers you use. A stored key is used server-side on your behalf and is never sent back to the browser.",
+    "PRIVACY": "A stored key is never returned to this page. The field below only ever sends a new one.",
+    "LOADING": "Reading your keys…",
+    "LOAD_FAILED": "Your keys could not be read. Try again.",
+    "KEY_LABEL": "API key",
+    "KEY_HINT": "Paste the key exactly as the provider issued it.",
+    "SAVE": "Save key",
+    "SAVING": "Saving…",
+    "REMOVE": "Remove key",
+    "REMOVING": "Removing…",
+    "HAS_KEY": "Key stored",
+    "NO_KEY": "No key stored",
+    "SOURCE_NONE": "No key available",
+    "REFUSAL_UNSUPPORTED": "This provider does not accept a key of your own",
+    "BYOK_UNSUPPORTED": "This provider cannot be used with your own key."
+  },
+  "AI_FETCH": {
+    "UNREACHABLE": "The page could not be read. Try again."
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Overview",
@@ -1542,7 +1565,7 @@
   },
   "CRAWL_PACK_EXTRACTION": {
     "TITLE": "Extraction strategies",
-    "SUBTITLE": "Describe what you want in a sentence — \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
+    "SUBTITLE": "Describe what you want in a sentence, \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
     "URL": "Page URL",
     "INTENT": "What to extract",
     "INTENT_PLACEHOLDER": "every product: name, price, link",
@@ -2802,7 +2825,7 @@
     "TAB_SEARCH": "Search",
     "TAB_EXTRACT": "Extract",
     "TAB_PDF": "PDF",
-    "REQ_FREE": "Free — shared pool",
+    "REQ_FREE": "Free, shared pool",
     "REQ_LEASE": "Needs a private worker",
     "COST_LABEL": "Credits",
     "LEASE_COST": "A private worker costs 5 credits to deploy, 1 per start/stop, and 2 to destroy. Create one under Machines, then run this tool again.",
@@ -2819,7 +2842,7 @@
     "FIELD_ADAPTIVE": "Adaptive",
     "FIELD_OP": "Operation",
     "TAB_VISION": "Vision",
-    "NOTE_VISION": "Vision reads the CURRENT page: op=ask screenshots the worker's viewport and asks the local model, op=index embeds its tiles into a named index. This is a PAID tool, and on the shared pool it answers 502 — Needs a private worker.",
+    "NOTE_VISION": "Vision reads the CURRENT page: op=ask screenshots the worker's viewport and asks the local model, op=index embeds its tiles into a named index. This is a PAID tool, and on the shared pool it answers 502, Needs a private worker.",
     "FIELD_PROMPT": "Prompt",
     "FIELD_TAG": "Index tag",
     "FIELD_SCALE": "Capture scale",

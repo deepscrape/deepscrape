@@ -734,7 +734,8 @@
     "COPY": "Αντιγραφή",
     "LOADING": "Φόρτωση...",
     "ERROR": "Σφάλμα",
-    "RESET": "Επαναφορά"
+    "RESET": "Επαναφορά",
+    "CLEAR": "Καθαρισμός"
   },
   "PROMPT": {
     "PLACEHOLDER": "Πληκτρολογήστε το prompt σας εδώ...",
@@ -757,7 +758,8 @@
     "WAITING": "αναμονή για αποτελέσματα..",
     "NO_RESULTS": "κανένα αποτέλεσμα",
     "COST": "Κόστος",
-    "TOKENS": "Tokens/s"
+    "TOKENS": "Tokens/s",
+    "COOKIES_NOTE": "Η σελίδα διαβάζεται από τον crawler στον διακομιστή, ο οποίος δεν μοιράζεται τα cookies του browser σας. Μια σελίδα πίσω από σύνδεση επιστρέφει το τείχος εισόδου της."
   },
   "CHAT": {
     "EMPTY_STATE": "Ρωτήστε ό,τι θέλετε για τις σελίδες που έχετε κάνει crawl, το μοντέλο απαντά σε markdown.",
@@ -909,6 +911,27 @@
     "SOURCE_USER": "Το δικό σας κλειδί API",
     "REFUSAL_PLAN": "Δεν περιλαμβάνεται στο τρέχον πλάνο σας",
     "REFUSAL_BYOK": "Απαιτείται δικό σας κλειδί API"
+  },
+  "AI_KEYS": {
+    "TITLE": "Κλειδιά παρόχων AI",
+    "DESCRIPTION": "Φέρτε τα δικά σας κλειδιά για τους παρόχους AI που χρησιμοποιείτε. Ένα αποθηκευμένο κλειδί χρησιμοποιείται από τον διακομιστή για λογαριασμό σας και δεν επιστρέφεται ποτέ στον browser.",
+    "PRIVACY": "Ένα αποθηκευμένο κλειδί δεν επιστρέφεται ποτέ σε αυτή τη σελίδα. Το πεδίο παρακάτω στέλνει μόνο ένα νέο.",
+    "LOADING": "Ανάγνωση των κλειδιών σας…",
+    "LOAD_FAILED": "Δεν ήταν δυνατή η ανάγνωση των κλειδιών σας. Δοκιμάστε ξανά.",
+    "KEY_LABEL": "Κλειδί API",
+    "KEY_HINT": "Επικολλήστε το κλειδί ακριβώς όπως το εξέδωσε ο πάροχος.",
+    "SAVE": "Αποθήκευση κλειδιού",
+    "SAVING": "Αποθήκευση…",
+    "REMOVE": "Διαγραφή κλειδιού",
+    "REMOVING": "Διαγραφή…",
+    "HAS_KEY": "Κλειδί αποθηκευμένο",
+    "NO_KEY": "Δεν υπάρχει αποθηκευμένο κλειδί",
+    "SOURCE_NONE": "Δεν υπάρχει διαθέσιμο κλειδί",
+    "REFUSAL_UNSUPPORTED": "Ο πάροχος δεν δέχεται δικό σας κλειδί",
+    "BYOK_UNSUPPORTED": "Ο πάροχος δεν μπορεί να χρησιμοποιηθεί με δικό σας κλειδί."
+  },
+  "AI_FETCH": {
+    "UNREACHABLE": "Δεν ήταν δυνατή η ανάγνωση της σελίδας. Δοκιμάστε ξανά."
   },
   "CR_RES": {
     "TAB_OVERVIEW": "Επισκόπηση",
@@ -1542,7 +1565,7 @@
   },
   "CRAWL_PACK_EXTRACTION": {
     "TITLE": "Extraction strategies",
-    "SUBTITLE": "Describe what you want in a sentence — \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
+    "SUBTITLE": "Describe what you want in a sentence, \"every product: name, price, link\". It is compiled into a CSS schema and tested against the page before you see it, so what you get back has already produced rows.",
     "URL": "Page URL",
     "INTENT": "What to extract",
     "INTENT_PLACEHOLDER": "every product: name, price, link",
@@ -2802,7 +2825,7 @@
     "TAB_SEARCH": "Αναζήτηση",
     "TAB_EXTRACT": "Εξαγωγή",
     "TAB_PDF": "PDF",
-    "REQ_FREE": "Δωρεάν — κοινόχρηστο pool",
+    "REQ_FREE": "Δωρεάν, κοινόχρηστο pool",
     "REQ_LEASE": "Απαιτεί ιδιωτικό worker",
     "COST_LABEL": "Μονάδες",
     "LEASE_COST": "Ένας ιδιωτικός worker κοστίζει 5 μονάδες για ανάπτυξη, 1 ανά εκκίνηση/διακοπή και 2 για διαγραφή. Δημιουργήστε έναν στις Μηχανές και εκτελέστε ξανά το εργαλείο.",
@@ -2819,7 +2842,7 @@
     "FIELD_ADAPTIVE": "Προσαρμοστικό",
     "FIELD_OP": "Λειτουργία",
     "TAB_VISION": "Όραση",
-    "NOTE_VISION": "Η όραση διαβάζει την ΤΡΕΧΟΥΣΑ σελίδα: το op=ask τραβά στιγμιότυπο του viewport και ρωτά το τοπικό μοντέλο, το op=index ενσωματώνει τα tiles του σε επώνυμο index. Είναι εργαλείο επί ΠΛΗΡΩΜΗ και στον κοινόχρηστο pool απαντά 502 — Needs a private worker.",
+    "NOTE_VISION": "Η όραση διαβάζει την ΤΡΕΧΟΥΣΑ σελίδα: το op=ask τραβά στιγμιότυπο του viewport και ρωτά το τοπικό μοντέλο, το op=index ενσωματώνει τα tiles του σε επώνυμο index. Είναι εργαλείο επί ΠΛΗΡΩΜΗ και στον κοινόχρηστο pool απαντά 502, Needs a private worker.",
     "FIELD_PROMPT": "Prompt",
     "FIELD_TAG": "Ετικέτα index",
     "FIELD_SCALE": "Κλίμακα λήψης",

@@ -69,47 +69,52 @@ export function calculateOpenAICost(usage: OpenAITokenDetails, model: string): n
 }
 
 
-export function switchModelApiEndpoint(modelName: string, apiEndpoints: string[], apiKey: string[]): string[] {
-    const model = modelName
-    const [openApi, groqApi] = apiEndpoints;
-    const [openApiKey, groqApiKey] = apiKey;
+/**
+ * The Groq model family, by name.
+ *
+ * This replaced a 40-line `switch` that returned a 4-element tuple assembled from
+ * two PARALLEL ARRAYS of endpoints and keys, with a `default` that sent any
+ * unrecognised model to OpenAI. That shape is why the mapping read as both
+ * unreachable and duplicated: `sendToClaudeAI` already fixes its provider, so the
+ * switch there only echoed its own argument back, and the one caller that needed a
+ * real decision -- `sendToOpenAI` -- re-derived from a model name what the model
+ * table already encodes as `code`.
+ *
+ * Membership is explicit rather than a prefix test on purpose. `llama`, `gemma` and
+ * `whisper` are Groq's today, but a prefix rule would silently misroute the day
+ * OpenAI ships a `llama`. Cost of being wrong here is a request to the wrong
+ * vendor on the caller's key.
+ */
+const GROQ_MODELS: ReadonlySet<string> = new Set([
+  'distil-whisper-large-v3-en',
+  'gemma2-9b-it',
+  'gemma-7b-it',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-70b-versatile',
+  'llama-3.1-8b-instant',
+  'llama-guard-3-8b',
+  'llama3-70b-8192',
+  'llama3-8b-8192',
+  'mixtral-8x7b-32768',
+  'whisper-large-v3',
+  'whisper-large-v3-turbo',
+])
 
-    switch (model) {
-
-        case 'gpt-4':
-        case 'gpt-4-turbo':
-        case 'gpt-4o-mini':
-        case 'gpt-3.5':
-        case 'gpt-3.5-turbo':
-            return [model, openApi, openApiKey, 'openai']
-        case 'distil-whisper-large-v3-en':
-        case 'gemma2-9b-it':
-        case 'gemma-7b-it':
-        case 'llama-3.3-70b-versatile':
-        case 'llama-3.1-70b-versatile':
-        case 'llama-3.1-8b-instant':
-        case 'llama-guard-3-8b':
-        case 'llama3-70b-8192':
-        case 'llama3-8b-8192':
-        case 'mixtral-8x7b-32768':
-        case 'whisper-large-v3':
-        case 'whisper-large-v3-turbo':
-            return [model, groqApi, groqApiKey, 'groqai']
-        case 'claude-3-opus-20240229':
-        case 'claude-3-sonnet-20240229':
-        case 'claude-3-5-sonnet-20241022':
-        case 'claude-3-5-sonnet-20240620':
-        case 'claude-3-haiku-20240307':
-        case 'claude-2.1':
-        case 'claude-2.0':
-        case 'claude-instant-1.2':
-            return [model, openApi, openApiKey, 'anthropic']
-
-        default:
-            return [model, openApi, openApiKey, 'openai']
-    }
-
-}
+/**
+ * Whether a model name is served by Groq rather than OpenAI.
+ *
+ * Both vendors speak the same wire protocol, so this is the ONLY difference
+ * between the two paths: which endpoint and which key the request carries. An
+ * unrecognised name answers OpenAI, which is what the old `default` did -- but
+ * stated once, here, instead of buried in the fourth position of a tuple.
+ *
+ * ponytail: unknown names still fall through to OpenAI, matching the previous
+ * behaviour exactly. Flip to a throw when a misroute is ever observed in the wild.
+ * @param {string} modelName The model id as the caller named it.
+ * @return {boolean} True when the name belongs to Groq's family.
+ */
+export const isGroqModel = (modelName: string): boolean =>
+  GROQ_MODELS.has(modelName)
 
 export function setAIModel(newModel: DropDownOption[]) {
     const model = [

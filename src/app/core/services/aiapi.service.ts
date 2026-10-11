@@ -6,7 +6,7 @@ import { catchError } from 'rxjs/internal/operators/catchError';
 import { map } from 'rxjs/internal/operators/map';
 import { tap } from 'rxjs/internal/operators/tap';
 import { environment } from 'src/environments/environment';
-import { arrayBufferToString, customUrlEncoder, sanitizeJSON, switchModelApiEndpoint } from '../functions';
+import { arrayBufferToString, customUrlEncoder, isGroqModel, sanitizeJSON } from '../functions';
 import { API_ANTHROPIC, API_GROQAI, API_JINAAI, API_OPENAI } from '../variables';
 import { scan } from 'rxjs/internal/operators/scan';
 import { claudeAiApiStreamData, CrawlPack, CrawlTask, JinaOptions } from '../types';
@@ -98,7 +98,12 @@ export class AiAPIService {
   }
 
   sendToClaudeAI(content: string | { role: string, content: string }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string): Observable<{ content: string, role: string, usage: any | null }> {
-    const [model, apiEndpoint, API_KEY, apiName] = switchModelApiEndpoint(modelName, [this.claudeAiEndpoint, ""], [this.CLAUDE_API_KEY, ""])
+    // The provider is not a decision on this path -- the method IS Claude. The old
+    // switch call returned these same two fields unchanged, and the fourth element
+    // of its tuple was never read here.
+    const model = modelName
+    const apiEndpoint = this.claudeAiEndpoint
+    const API_KEY = this.CLAUDE_API_KEY
     const headers = new HttpHeaders({
       'api-key': `Bearer ${this.authService.token}`, // Replace with your actual API key`,
       'x-api-key': API_KEY,
@@ -241,7 +246,13 @@ export class AiAPIService {
 
   sendToOpenAI(content: string | { role: string, content: string }[], modelName: string = 'gpt-4o-mini', sys?: string): Observable<{ content: string, usage: any | null, role: any | null }> {
 
-    const [model, apiEndpoint, API_KEY, apiName] = switchModelApiEndpoint(modelName, [this.openAiEndpoint, this.groqAiEndpoint], [this.OPENAI_API_KEY, this.GROQ_API_KEY])
+    // Groq and OpenAI speak the same wire protocol, so the model name is the whole
+    // decision: it picks the endpoint and the key, and nothing else.
+    const model = modelName
+    const isGroq = isGroqModel(modelName)
+    const apiEndpoint = isGroq ? this.groqAiEndpoint : this.openAiEndpoint
+    const API_KEY = isGroq ? this.GROQ_API_KEY : this.OPENAI_API_KEY
+    const apiName = isGroq ? 'groqai' : 'openai'
 
     const headers = new HttpHeaders({
       'api-key': `Bearer ${this.authService.token}`, // Replace with your actual API key`,

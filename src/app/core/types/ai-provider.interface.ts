@@ -264,11 +264,17 @@ export interface AiKeyMutationResponse {
  *
  * The dropdown speaks in its own vocabulary (`claude`) while the vendor
  * catalogue speaks in vendor ids (`anthropic`), and the two are not the same
- * word. `switchModelApiEndpoint` already keeps this mapping for the endpoint
- * choice; keeping it here as well is a duplicate, and the alternative is
- * reading a vendor id off the returned apiName, which is a fourth spelling
- * (`groqai`). When that function is next touched, this table should move beside
- * it.
+ * word. This maps the CODE; `isGroqModel` decides the ENDPOINT from a model NAME.
+ * Two axes rather than two copies of one: a code answers "whose key does this
+ * need" for the BYOK UI, a name answers "where does this request go" for the
+ * transport.
+ *
+ * The note that previously sat here said this table should move beside the old
+ * `switchModelApiEndpoint`. That function is gone -- `isGroqModel` replaced it --
+ * and no merge was done, because the two answer different questions. `apiName`
+ * (`groqai`/`openai`) stays a third spelling for the reason it always did: Groq
+ * nests `usage` differently, so the transport needs to know which vendor it
+ * asked.
  */
 export const AI_MODEL_VENDOR: Readonly<Record<string, AiVendorId>> = {
   claude: 'anthropic',

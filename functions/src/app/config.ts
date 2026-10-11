@@ -403,12 +403,29 @@ export async function upsertSecretValue(
     const secretPath = `projects/${env.GCP_PROJECT_ID}/secrets/${secretId}`
 
     try {
-        await secretManager.addSecretVersion({
+        const [version] = await secretManager.addSecretVersion({
             parent: secretPath,
             payload: {
                 data: Buffer.from(value, "utf8"),
             },
         })
+
+        // Rotation is only revocation if the value it replaced stops being readable.
+        // `addSecretVersion` leaves the previous version ENABLED, and reads resolve
+        // `/versions/latest`, so the new value wins here while the OLD one stays
+        // readable to anything holding `secretAccessor` -- which is not only this
+        // server: sibling services, CI and anyone with project IAM hold it too. A user
+        // who rotates a key because it leaked expects the old one to stop working.
+        //
+        // Done HERE rather than in each caller because every rotating writer routes
+        // through this function -- BYOK keys, the browser CDP secret, storage
+        // credentials and the webrain config token -- so all five stable secret ids
+        // are covered without touching any of them, including ones added later.
+        //
+        // Irreversible on purpose, matching `purgeSecretAndAllRevisions`: a superseded
+        // credential has no value to roll back to, only exposure to remove.
+        await retireSupersededVersions(secretPath, version.name)
+
         return secretPath
     } catch (error) {
         if ((error as { code?: number }).code !== SECRET_NOT_FOUND) {
@@ -434,6 +451,82 @@ export async function upsertSecretValue(
     })
 
     return secret.name ?? secretPath
+}
+
+/**
+ * Which versions a secret should lose after one is written.
+ *
+ * Pure, and separated from the destroy loop, because the skip conditions are the
+ * whole risk: miss "already destroyed" and the loop throws part-way through, leaving
+ * later versions behind; miss the version just written and the credential being
+ * stored is the one that gets deleted. Neither is visible without a real client, so
+ * the decision is pinned by a spec instead.
+ *
+ * Enumerated rather than derived: a secret can hold more than two versions -- the
+ * legacy BYOK migration plus two rotations is three -- so "destroy N-1" would leave
+ * the rest behind.
+ * @param {Array} versions The listed versions, in any order.
+ * @param {string} keepVersionName The version that must survive.
+ * @return {string[]} The version names to destroy.
+ */
+export function versionsToRetire(
+    versions: readonly { name?: string | null; state?: unknown }[],
+    keepVersionName: string | null | undefined
+): string[] {
+    const retire: string[] = []
+
+    for (const version of versions) {
+        const name = version.name
+
+        // A listing entry with no name is malformed rather than a version to act on.
+        if (typeof name !== "string" || name.length === 0) {
+            continue
+        }
+
+        // The one just written. Deleting THIS is the mistake that would destroy the
+        // credential being stored, so it is the first thing skipped.
+        if (name === keepVersionName) {
+            continue
+        }
+
+        // Destroying an already-destroyed version errors, and one error would abandon
+        // the loop and leave every LATER version enabled -- the exact outcome this
+        // function exists to prevent.
+        if (String(version.state) === "DESTROYED") {
+            continue
+        }
+
+        retire.push(name)
+    }
+
+    return retire
+}
+
+/**
+ * Destroy every version of a secret except the one just written.
+ *
+ * Best-effort by design: a failure must not fail a write that already succeeded, or a
+ * missing `destroy` permission would make every key save look broken. The new value is
+ * already live and is what reads resolve, so the worst case here is the previous
+ * behaviour rather than a lost secret.
+ * @param {string} secretPath The full secret path.
+ * @param {string} keepVersionName The version to keep.
+ */
+async function retireSupersededVersions(
+    secretPath: string,
+    keepVersionName: string | null | undefined
+): Promise<void> {
+    try {
+        const [versions] = await secretManager.listSecretVersions({
+            parent: secretPath,
+        })
+
+        for (const name of versionsToRetire(versions, keepVersionName)) {
+            await secretManager.destroySecretVersion({name})
+        }
+    } catch (error) {
+        console.error("Could not retire superseded secret versions:", error)
+    }
 }
 
 /**

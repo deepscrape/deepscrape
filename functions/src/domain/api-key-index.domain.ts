@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import {createHash} from "node:crypto"
 
 /**
  * How a presented platform API key finds its owner.
@@ -19,13 +19,14 @@ import { createHash } from "node:crypto"
  * a working set of keys, and the index exists precisely so the credential
  * itself never leaves Secret Manager.
  *
- * Whole-key rather than a prefix or a truncated digest, because either would let
- * `dpsp-key-abc` and `dpsp-key-abcd` collide on the part they share -- two distinct
- * credentials resolving to one owner, which is the worst possible failure here.
+ * Whole-key rather than a prefix or a truncated digest, because either would
+ * let `dpsp-key-abc` and `dpsp-key-abcd` collide on the part they share -- two
+ * distinct credentials resolving to one owner, which is the worst possible
+ * failure here.
  *
  * Pure and dependency-free so both the writer (`app/auth.ts`) and the reader
- * (`infrastructure/syncaiapi.ts`) share one definition. Two copies of a hash is how
- * a key gets written under one digest and looked up under another.
+ * (`infrastructure/syncaiapi.ts`) share one definition. Two copies of a hash
+ * is how a key gets written under one digest and looked up under another.
  */
 
 /** The collection a platform key's owner is indexed in. */
@@ -45,7 +46,7 @@ export const API_KEY_PREFIX = "dpsp-key-"
  * @return {string} A hex SHA-256 digest.
  */
 export const apiKeyIndexId = (key: string): string =>
-    createHash("sha256").update(key).digest("hex")
+  createHash("sha256").update(key).digest("hex")
 
 /**
  * Whether a bearer token is a platform key rather than a Firebase ID token.
@@ -58,4 +59,4 @@ export const apiKeyIndexId = (key: string): string =>
  * @return {boolean}
  */
 export const isPlatformApiKey = (token: unknown): token is string =>
-    typeof token === "string" && token.startsWith(API_KEY_PREFIX)
+  typeof token === "string" && token.startsWith(API_KEY_PREFIX)

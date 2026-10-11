@@ -100,6 +100,14 @@ describe("the S3 adapter against a real bucket", {skip: !LIVE}, () => {
       "list must see what put wrote",
     )
 
+    // `get` is the read the vault payload path depends on. It is the one method
+    // an S3 body shape can silently break: the SDK answers with a STREAM, and a
+    // `Buffer.from(stream)` that type-checks returns garbage rather than
+    // throwing -- so the round-trip is asserted byte for byte.
+    const read = await store.get(key)
+    assert.ok(read, "get must find what put wrote")
+    assert.deepEqual(read, body, "get must return the bytes put wrote")
+
     const url = await store.signedUrl(key, 60)
     // The URL is deliberately NOT interpolated into this message: a signed URL
     // is a bearer credential in a query string, and a failing assertion is the

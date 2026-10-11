@@ -69,6 +69,18 @@ export interface BlobStore {
   stat(key: string): Promise<StoredBlob | null>
 
   /**
+   * The object's bytes, or null when it does not exist.
+   *
+   * A READ rather than a presigned URL: a URL is a credential with a lifetime,
+   * and minting one for a server-side caller that already holds the store's own
+   * credentials would add a secret to the request path for nothing. Same
+   * absent-is-not-an-error rule as `stat`.
+   * @param {string} key The object key.
+   * @return {Promise<Buffer | null>} The bytes, or null.
+   */
+  get(key: string): Promise<Buffer | null>
+
+  /**
    * Up to `limit` objects under `prefix`.
    * @param {string} prefix The key prefix.
    * @param {number} limit The maximum number of objects to return.

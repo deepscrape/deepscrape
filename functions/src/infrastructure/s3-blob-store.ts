@@ -476,6 +476,37 @@ export const createS3BlobStore = (config: S3BucketConfig): BlobStore => {
       }
     },
 
+    get: async (key: string): Promise<Buffer | null> => {
+      const {mod} = await loadSdk()
+      const client = await clientFor(config)
+
+      try {
+        const object = await client.send(new mod.GetObjectCommand({
+          Bucket: config.bucket,
+          Key: key,
+        }))
+
+        const body = object.Body as AsyncIterable<Uint8Array> | undefined
+        if (!body) {
+          return Buffer.alloc(0)
+        }
+
+        // The SDK answers with a STREAM, not bytes. Collecting it here rather
+        // than calling the SDK's own `transformToByteArray` keeps this correct
+        // whichever mixin a given client version attaches to the body.
+        const chunks: Buffer[] = []
+        for await (const chunk of body) {
+          chunks.push(Buffer.from(chunk))
+        }
+        return Buffer.concat(chunks)
+      } catch (error) {
+        if (isNotFound(error)) {
+          return null
+        }
+        throw error
+      }
+    },
+
     list: async (prefix: string, limit: number): Promise<StoredBlob[]> => {
       const {mod} = await loadSdk()
       const client = await clientFor(config)

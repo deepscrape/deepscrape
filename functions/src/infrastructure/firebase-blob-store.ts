@@ -175,6 +175,18 @@ export const getGcsBlobStore = (): BlobStore => {
       }
     },
 
+    get: async (key: string): Promise<Buffer | null> => {
+      try {
+        const [contents] = await bucketRef.file(key).download()
+        return contents
+      } catch (error) {
+        if (isNotFound(error)) {
+          return null
+        }
+        throw error
+      }
+    },
+
     list: async (prefix: string, limit: number): Promise<StoredBlob[]> => {
       const [files] = await bucketRef.getFiles({
         prefix,

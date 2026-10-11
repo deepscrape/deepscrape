@@ -118,6 +118,15 @@ export const GEO_CACHE_FAILURE_TTL_SECONDS = 60 * 5
 // Client analytics ingress
 // ---------------------------------------------------------------------------
 
+/**
+ * Bounded, LOSSY ingress for client analytics events.
+ *
+ * The drain pops and only then commits, so a failed commit has already removed
+ * the events from Redis: a few hundred events can vanish with no record. Nothing
+ * may be priced from this list, or from the counters it feeds (`clientEvents.*`,
+ * `byPage.*`) -- billing reads the durable ledger in `billing-spend.store.ts`.
+ * The referrer allow-list that enforces this lives in `redis-hygiene.spec.ts`.
+ */
 export const ANALYTICS_EVENTS_KEY = 'analytics:events'
 
 /** Events popped per drain run (one drain runs from the scheduled function). */

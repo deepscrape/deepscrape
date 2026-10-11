@@ -7,6 +7,8 @@
  */
 import {describe, it} from "node:test"
 import assert from "node:assert/strict"
+import {readdirSync, readFileSync} from "node:fs"
+import {join} from "node:path"
 import {
   ANALYTICS_EVENTS_KEY,
   CLIENT_EVENT_LIST_MAX,
@@ -170,5 +172,54 @@ describe("redis hygiene audit", () => {
     assert.equal(report.unboundedKeys.length, 2)
     assert.ok(report.unboundedKeys.some((entry) => entry.startsWith("guestfp:*")))
     assert.ok(report.unboundedKeys.some((entry) => entry.startsWith("trusted:*")))
+  })
+})
+
+/**
+ * The analytics queue is lossy by construction: the drain pops, then commits, so a
+ * failed commit has already removed those events from Redis. Nothing may be priced
+ * from it, or from the counters it feeds -- money comes from the durable ledger.
+ *
+ * This is that rule, enforced: the queue's name may be reached from `handlers/`,
+ * `gfunctions/`, `domain/`, `infrastructure/` and `app/` only by the drain. A new
+ * reader therefore has to edit this test on purpose, instead of arriving as an
+ * import nobody reviewed.
+ */
+describe("the analytics queue is not a money source", () => {
+  const root = join(__dirname, "..")
+  // `recursive: true` yields paths relative to `root`. This spec is the ratchet
+  // itself, so it is excluded from the files being measured.
+  const sourceFiles = readdirSync(root, {recursive: true, encoding: "utf8"})
+    .map((entry) => entry.replace(/\\/g, "/"))
+    .filter((entry) => entry.endsWith(".ts") && entry !== "gfunctions/redis-hygiene.spec.ts")
+
+  /**
+   * is read by the drain and nothing else
+   */
+  it("is read by the drain and nothing else", () => {
+    const referrers = sourceFiles
+      .filter((file) => readFileSync(join(root, file), "utf8").includes("ANALYTICS_EVENTS_KEY"))
+      .sort()
+
+    assert.deepEqual(
+      referrers,
+      ["gfunctions/analytics.ts"],
+      "the analytics queue drops events when a drain commit fails, so a money path " +
+        "must not read it. Use the durable ledger; add a legitimate reader here deliberately.",
+    )
+  })
+
+  /**
+   * is never reached for by its literal key
+   */
+  it("is never reached for by its literal key", () => {
+    const hardcoded = sourceFiles
+      .filter((file) => readFileSync(join(root, file), "utf8").includes("analytics:events"))
+
+    assert.deepEqual(
+      hardcoded,
+      [],
+      "import ANALYTICS_EVENTS_KEY from src/config/redis-keys instead of spelling the key",
+    )
   })
 })

@@ -135,13 +135,14 @@ engine.
 **Correctness, cheapest first**
 
 1. The **profiles durability claim**. `src/assets/i18n/en.json:401` advertises persistent profiles
-   the platform cannot deliver (no volume, process-global vault, Fly resets a stopped machine's
-   root filesystem). Either the storage work lands or the copy changes; a published claim the
-   product cannot honour is a correctness item, not marketing.
+   the platform could not deliver (no volume, process-global vault, Fly resets a stopped machine's
+   root filesystem). **Addressed 2026-10-11**: the account vault carries the cookie jar across
+   machines and is wired into the panel. Residual is `state.json` only — see `08` §3.3.
 2. `ADR-2026-10-BROWSER-SESSIONS.md:64` still asserts a zero-result sweep for
-   `webrtc|rtc|neko|vnc|mjpeg|sse` and claims no WebSocket server exists. Both are false (a neko
-   WebRTC viewer is mounted on the dashboard, and the frontend holds a live WS to crawlagent).
-   The decision may still be right; the cited evidence is not.
+   `webrtc|rtc|neko|vnc|mjpeg|sse` and claims no WebSocket server exists. The ADR's cited evidence
+   is false. Note the SECOND half of this item was itself stale: the neko WebRTC viewer is **not**
+   mounted on the dashboard — it was unmounted 2026-10-10 (decision recorded in `12` §3), so the
+   live claim to re-check is the frontend's WS to crawlagent, not a viewer.
 3. `SCRAPE_PROVIDER` reads `getConfigValue("SCRAPE_PROVIDER", "webrain")` while the comment above
    it says `'crawl4ai' (the default)` and promises byte-for-byte behaviour. An unconfigured
    deployment now routes `/api/crawl` to webrain.

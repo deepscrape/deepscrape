@@ -103,14 +103,22 @@ The general failure — a client method whose route was never registered — is 
 list in `scripts/route-parity.ts` now enumerates, with a printed denominator so a detector
 that enumerates nothing cannot pass for a clean tree.
 
-## 3.3 Profiles durability is a correctness bug, not a feature
+## 3.3 Profiles durability — the storage landed 2026-10-11
 
-`src/assets/i18n/en.json:401` advertises persistent stealth profiles. Three facts compound
-against it: the vault is process-global; `BuildConfigMap` sets no `mounts`, so a session
-machine has **no volume**; and Fly resets a stopped machine's root filesystem while the reaper
-suspends idle machines on a 15-minute clock. So a profile cannot outlive one un-suspended
-machine — a **published claim the platform cannot honour**. Do not build a profiles UI before
-the vault can outlive a machine; that would only make the loss harder to see.
+`src/assets/i18n/en.json:401` advertises persistent stealth profiles, and the three facts this
+section named were real: the vault is process-global; `BuildConfigMap` sets no `mounts`, so a
+session machine has **no volume**; and Fly resets a stopped machine's root filesystem while the
+reaper suspends idle machines on a 15-minute clock.
+
+What changed is that the credential no longer has to live there. `POST /api/browser/vault` keeps
+a jar under the caller's account, sealed with a per-uid key derived from one platform key, in the
+platform's own bucket — and `keep` / `restore` in the vault panel now compose it with the worker's
+cookie ops, so a login crosses machines. That is the storage work this section was waiting on.
+
+Residual, stated so it is not mistaken for closed: the vault carries the **cookie jar only**.
+`state.json` (localStorage) is still file-only on the worker, so a restored profile is not the
+whole profile. The `F2_D` claim holds because a login session *is* a cookie jar; it stops holding
+the moment the copy claims "everything about the browser".
 
 ## 3.4 The two undeployed collection-group indexes
 
@@ -145,7 +153,13 @@ From the owner's list, the two remaining items:
 ## Order
 
 1. **3.0** — the two decisions (blocks a paying feature; only the owner can take them)
-2. **3.1** — the deletion (five minutes, zero risk)
-3. **3.3** — the correctness claim (we advertise what we cannot deliver)
-4. **3.4** — the indexes, before the first live sweep
-5. **3.2**, **3.5** — purchase-path and surface completeness
+2. **3.4** — the indexes, before the first live sweep. The only item left here that is
+   neither a decision nor a measurement.
+3. **3.5** — playgrounds, and the surfaces not yet enumerated. Its orphan half is done
+   (128 components swept, 0 orphans, 2026-10-10); what remains is building.
+
+Closed since this list was written, so it is not re-derived: **3.1** (the dead constant),
+**3.3** (the storage landed — see above), **3.2** (`GET /api/pricing/estimate` was a route that
+was never registered, not a feature that was never built), and both `12` §3.4 items that were
+fixable without a deployment (the i18n gate now exists; `scripts/route-parity.ts` now compares
+method paths, not just bases).

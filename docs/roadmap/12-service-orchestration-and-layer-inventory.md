@@ -108,8 +108,11 @@ respectively, which is correct (both are gated surfaces, not user-facing dashboa
 ### 3.4 Absent, and known to be absent
 
 - **No `/ws` on the BFF** (§3.1).
-- **No gate validates i18n JSON.** 5 locales (en, el, de, es, fr); a missing key fails at runtime, in
-  whichever language the user happens to be using.
+- **The i18n catalogues ARE now validated** — `scripts/i18n-keys.ts`, wired into
+  `.github/workflows/test.yml` beside the OnPush check (2026-10-11). Its first run found 19 keys
+  that rendered as raw text. What remains uncheckable is a key built at runtime
+  (`'PREFIX_' + value`): those are covered only by the prefix check, which proves the namespace
+  exists, not that the value does.
 - **No template coverage in the code graph** — 151 `parse_partial` ranges in `src`, all `.html`/`.scss`.
   This is why every template claim needs `bun run build`.
 - `docs/ADR-2026-10-BROWSER-SESSIONS.md:64` asserts a zero-result sweep for `webrtc|rtc|neko|vnc|mjpeg|sse`

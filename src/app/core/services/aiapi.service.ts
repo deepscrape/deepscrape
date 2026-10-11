@@ -176,7 +176,7 @@ export class AiAPIService {
     })
   }
 
-  sendToClaudeAI(content: string | { role: string, content: string }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string): Observable<{ content: string, role: string, usage: any | null }> {
+  sendToClaudeAI(content: string | { role: string, content: string }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
     // The provider is not a decision on this path -- the method IS Claude. The old
     // switch call returned these same two fields unchanged, and the fourth element
     // of its tuple was never read here.
@@ -284,6 +284,21 @@ export class AiAPIService {
     ).pipe(
       scan((acc: any, chunk: claudeAiApiStreamData) => {
 
+        // Tool traffic is passed through UNTOUCHED rather than interpreted: the
+        // accumulators in `ai-tools.fun.ts` own assembly, and a `partial_json`
+        // fragment is not something this layer can usefully read. Discarding these
+        // events is what made streaming and tools look incompatible. Read through a
+        // cast because the emitted union does not name the tool event types.
+        const eventType = (chunk as { type?: string })?.type
+        if (
+          eventType === 'content_block_start' ||
+          eventType === 'content_block_stop' ||
+          (eventType === 'content_block_delta' &&
+            !(chunk as { delta?: { text?: unknown } })?.delta?.text)
+        ) {
+          return { content: '', role: null, usage, event: chunk }
+        }
+
         if (chunk.type === 'content_block_delta' && chunk.delta && chunk.delta.text) {
           // console.log(`chunk type: `, chunk.type, ' role: ' + chunk?.message?.role, 'chunk text: ', chunk.delta?.text, 'chunk usage', chunk?.usage)
           // const newText = typeof acc?.content === 'string' ? acc?.content + chunk.delta?.text : chunk.delta?.text
@@ -323,7 +338,7 @@ export class AiAPIService {
     // return this.subjectClaudeAI.asObservable()
   }
 
-  sendToOpenAI(content: string | { role: string, content: string }[], modelName: string = 'gpt-4o-mini', sys?: string): Observable<{ content: string, usage: any | null, role: any | null }> {
+  sendToOpenAI(content: string | { role: string, content: string }[], modelName: string = 'gpt-4o-mini', sys?: string): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
 
     // Groq and OpenAI speak the same wire protocol, so the model name is the whole
     // decision: it picks the endpoint and the key, and nothing else.
@@ -420,17 +435,20 @@ export class AiAPIService {
         return newText
       }),
       map((line: string) => {
-        // console.log('line', line)
         const parsed = JSON.parse(line)
 
         const choices = parsed?.choices?.length || 0
         const content = choices ? parsed?.choices[0].delta?.content : undefined
 
-
         const chooseUsage = (apiName === 'openai' ? parsed?.usage : parsed?.x_groq?.usage)
         const usage = chooseUsage // !choices ? chooseUsage : null
 
-        return { content, usage, role: choices ? parsed?.choices[0].delta?.role : null }
+        // Surfaced, not consumed here. A streamed tool call arrives as these
+        // fragments and `finishToolCalls` assembles them; discarding the field is
+        // what made streaming and tools look incompatible.
+        const toolCalls = choices ? parsed?.choices[0].delta?.tool_calls : undefined
+
+        return { content, usage, role: choices ? parsed?.choices[0].delta?.role : null, toolCalls }
       }),
       // filter((text: any) => text?.role !== "assistant" ? text?.content?.trim() !== '' : true), // Filter out assistant responses
       catchError((error) => {

@@ -228,7 +228,92 @@ arachnefly route and it has no consumer — YAGNI until a proxy-assignment UI ex
 
 ---
 
-## 7. What this audit did NOT verify
+## 7. Chat tool-calling and the model catalogue (2026-10-11, in progress)
+
+Measured against source, not planned. Four findings, and one of them changes the order of work.
+
+### 7.1 Do NOT build a platform MCP for this
+
+The question was asked directly, so it is answered rather than assumed. The answer is no, and
+the reason is enforcement rather than effort. MCP exposes tools to a THIRD-PARTY client; our
+chat is our own client, already holding the caller's Firebase token and already able to reach
+every BFF route. An MCP server adds a hop, a second auth model and a second tool registry to
+reach routes the browser can call directly — and it would MOVE enforcement. Paywalls, metering
+and org scoping live in `bff/api.ts` guards and `decideWebrainTool`; a platform MCP would
+duplicate or bypass them on tools that SPEND MONEY (browser sessions, jobs, storage). Chat
+tools are therefore a curated list of routes the caller is ALREADY entitled to call, so every
+existing 402/403/cap applies unchanged. MCP stays a distribution play for third-party clients.
+
+### 7.2 The AI transport was a 401 for every call, and is fixed
+
+`CLAUDE_API_KEY`, `OPENAI_API_KEY` and `GROQ_API_KEY` were declared in `AiAPIService` and read
+in every request header but **assigned nowhere**, so the browser sent `x-api-key: undefined`
+and `Authorization: Bearer undefined`. `isJwtAuth` authenticates off the `authorization`
+header (`syncaiapi.ts:102`), while the client put the caller's token in `api-key`, which
+nothing reads. Claude sent no `Authorization` at all; OpenAI and Groq sent one containing the
+string "undefined". Fixed by deletion: the fields are gone and the caller's token moved to the
+header the server reads. A provider key must never come from the browser — `ai_handler.ts`
+resolves it with `keyFor(req, vendor, env.KEY)`.
+
+### 7.3 Every model id in the client list is a generation old
+
+`setAIModel` offers `claude-3-5-sonnet-20241022`, `gpt-4o-mini`, `gpt-3.5-turbo`,
+`llama-3.1-*`. The vendors' own documentation on 2026-10-11 lists `claude-fable-5-1`,
+`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` and `gpt-6-astra`, `gpt-6.1-sol`,
+`gpt-6-luna`. Claude 3.5 is absent from Anthropic's legacy list entirely, so **the chat's
+default `claude-3-5-haiku-20241022` is plausibly retired** — a second reason the surface failed
+beyond 8.2. Two consequences:
+
+- **`user-ai-settings.domain.ts` was right to refuse a model list in code, and this is the
+  proof.** Do not re-type the constant. Both vendors publish a **Models API** (Anthropic's
+  returns `max_input_tokens`, `max_tokens`, `capabilities`, and a `line` field it explicitly
+  documents for a model picker), so "fetch the models" is the intended fix rather than a
+  convenience.
+- **OpenAI's current models are served by the Responses API**, not `/chat/completions`, which
+  is the endpoint `AiAPIService` posts to. Unverified against a live key; if that is literal,
+  the OpenAI path cannot reach `gpt-6-astra` as written.
+
+Ordering that works, and step 3 is a DELETION:
+
+1. A vendor row in `AI_VENDORS` + a BFF route + a key. DeepSeek and Qwen are OpenAI-compatible
+   (`https://api.deepseek.com`, and DeepSeek also exposes an `/anthropic` base URL), so one
+   parameterised route covers them — no new transport.
+2. `GET /api/models/:vendor` — the server calls that vendor's Models API with the PLATFORM key
+   and caches in Redis. Never the browser; that is what 8.2 just cost.
+3. `setAIModel`'s constant is deleted and the dropdown renders the server's reply.
+
+Adding Qwen or DeepSeek to the CLIENT list first would ship broken dropdown items: the client
+routes by vendor (`isGroqModel`, else the OpenAI endpoint), so a `deepseek-chat` name would be
+posted to OpenAI and 400.
+
+### 7.4 Where chat tool-calling stands, and the exact blocker
+
+**Built and committed:** the tool specs with a JSON Schema per dialect; the gate on model output
+(`resolveToolCall`, refusing an unknown name, a real-but-unoffered tool, and unusable
+arguments); the streaming accumulators (`accumulateAnthropic` / `accumulateOpenAi` /
+`finishToolCalls`); `decodeArguments` as the single definition of "unreadable"; and both stream
+parsers now CARRY tool calls instead of discarding them. `ai-tools.fun.spec.ts` is 21 specs.
+
+**Not built, and the blocker is specific: `sendToClaudeAI` and `sendToOpenAI` do not accept a
+`tools` parameter.** The stream can carry a tool call, but the request cannot OFFER a tool, so
+the model will never call one. Those two signatures and their request bodies are the next edit;
+only then does the loop in `chatai` have anything to receive.
+
+**Scope rule for the dispatcher when it lands:** added ONE AT A TIME, each behind the guard its
+route already carries. `search` / `scrape` / `serp` are free. A browser session or a job is a
+money path, gets its own `available` flag, and gets reviewed on its own — never switched on in
+bulk.
+
+### 7.5 One consequence worth not rediscovering
+
+Both streaming methods must emit the SAME shape. `chatai` chooses between them with `? :`, and
+the moment Claude emitted `event` while OpenAI emitted `toolCalls`, the resulting union was
+**non-callable** and the typecheck failed at the `.subscribe`. Adding a field to one dialect
+only is a type error, not a silent no-op.
+
+---
+
+## 8. What this audit did NOT verify
 
 - No external repo was **built**. arachnefly, webrain and crawlagent were scanned, not compiled.
 - The arachnefly graph is **stale** (13 routes indexed vs 14 in source after `POST /machine/mcp/:id`).

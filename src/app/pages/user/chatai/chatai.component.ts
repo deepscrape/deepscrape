@@ -91,7 +91,10 @@ export class ChataiComponent {
     readonly model: AIModel[] = [];
 
     readonly modelAI = new FormControl<AIModel>(
-        { name: 'claude-3-5-haiku-20241022', code: 'claude' },
+        // Must be one of `setAIModel`'s entries, or the dropdown renders with nothing
+        // selected. Moved with the model migration: the previous default was a 3.x model
+        // that is no longer offered, and the 3.x generation is retired at the vendor.
+        { name: 'claude-haiku-5-5', code: 'claude' },
         { nonNullable: true, validators: [Validators.required] },
     );
 

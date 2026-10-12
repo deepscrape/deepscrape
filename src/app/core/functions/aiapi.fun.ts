@@ -35,7 +35,7 @@ export function calculateOpenAICost(usage: OpenAITokenDetails, model: string): n
         "gpt-4-turbo": { promptCost: 0.03, completionCost: 0.06 },
         "gpt-4": { promptCost: 0.06, completionCost: 0.12 },
         "gpt-3.5": { promptCost: 0.02, completionCost: 0.04 }, // Example rates for GPT-3.5
-        "gpt-4o-mini": { promptCost: 0.015, completionCost: 0.03 }, // Example rates for GPT-4 OpenAI mini
+        "gpt-4o-mini": { promptCost: 0.00015, completionCost: 0.0006 }, // Fixed: was 100x the real rate
         "gpt-3.5-turbo": { promptCost: 0.025, completionCost: 0.05 }, // Example rates for GPT-3.5 Turbo
         "llama-3.1-8b-instant": { promptCost: 0.05, completionCost: 0.08 },
         "llama-3.3-70b-versatile": { promptCost: 0.59, completionCost: 0.79 },
@@ -43,6 +43,23 @@ export function calculateOpenAICost(usage: OpenAITokenDetails, model: string): n
         "claude-3-5-sonnet-20241022": { promptCost: 0.003, completionCost: 0.015 },
         "claude-3-haiku-20240307": { promptCost: 0.00025, completionCost: 0.00125 },
         "claude-3-5-haiku-20241022": { promptCost: 0.001, completionCost: 0.005 },
+        // Current lineup, added 2026-10-12 from the vendors' own published prices.
+        // Rates are per 1K tokens because the arithmetic below divides by 1000, and
+        // they are the real prices rather than estimates -- several rows above are
+        // historical guesses (`gpt-3.5-turbo` lists $25/MTok against a real $0.50) and
+        // were left as they are so this change stays additive.
+        "gpt-6-astra": { promptCost: 0.01, completionCost: 0.05 },
+        "gpt-6.1-sol": { promptCost: 0.002, completionCost: 0.01 },
+        "gpt-6-luna": { promptCost: 0.0001, completionCost: 0.0005 },
+        "claude-fable-5-1": { promptCost: 0.01, completionCost: 0.05 },
+        "claude-opus-5-5": { promptCost: 0.004, completionCost: 0.02 },
+        "claude-sonnet-5-5": { promptCost: 0.002, completionCost: 0.01 },
+        "claude-haiku-5-5": { promptCost: 0.0001, completionCost: 0.0005 },
+        // The rows above are RETAINED on purpose even though the picker no longer
+        // offers those models. `calculateOpenAICost` THROWS on an unknown model, and
+        // `app-llm-scrape` and `operations` still default to `claude-3-5-haiku-20241022`
+        // -- so deleting a row here is a breaking change in two other components, not
+        // housekeeping. Retire those defaults first, then prune.
         // Add more models here if needed
     }
     // Retrieve cost rates for the model from the configuration object
@@ -118,17 +135,26 @@ export const isGroqModel = (modelName: string): boolean =>
 
 export function setAIModel(newModel: DropDownOption[]) {
     const model = [
-        { name: 'gpt-4-turbo', code: 'openai' },
-        { name: 'gpt-4', code: 'openai' },
-        { name: 'gpt-3.5', code: 'openai' },
+        // OpenAI. `gpt-4-turbo`, `gpt-4` and `gpt-3.5-turbo` were REMOVED, not merely
+        // refreshed: all three shut down on 2026-10-23 (announced 2026-04-22), so they
+        // would have begun failing days after this edit and the failure would have read
+        // as a new bug rather than a scheduled retirement. `gpt-4o-mini` stays because
+        // it is still served and is the cheapest working OpenAI option here.
+        { name: 'gpt-6-astra', code: 'openai' },
+        { name: 'gpt-6.1-sol', code: 'openai' },
+        { name: 'gpt-6-luna', code: 'openai' },
         { name: 'gpt-4o-mini', code: 'openai' },
-        { name: 'gpt-3.5-turbo', code: 'openai' },
+        // Groq: deliberately unchanged. Nothing in this pass verified Groq's current
+        // lineup, and guessing at model ids is how this list rots a second time.
         { name: 'llama-3.1-8b-instant', code: 'groq' },
         { name: 'llama-3.3-70b-versatile', code: 'groq' },
-        { name: 'claude-3-5-sonnet-20240620', code: 'claude' },
-        { name: 'claude-3-5-sonnet-20241022', code: 'claude' },
-        { name: 'claude-3-haiku-20240307', code: 'claude' },
-        { name: 'claude-3-5-haiku-20241022', code: 'claude' },
+        // Anthropic, in the order the model docs present them. The whole 3.x generation
+        // is gone; every model below takes tools and images, which the chat's tool loop
+        // depends on. Ids verified against the vendor docs on 2026-10-12.
+        { name: 'claude-opus-5-5', code: 'claude' },
+        { name: 'claude-sonnet-5-5', code: 'claude' },
+        { name: 'claude-haiku-5-5', code: 'claude' },
+        { name: 'claude-fable-5-1', code: 'claude' },
     ]
     newModel.push(...model)
 }

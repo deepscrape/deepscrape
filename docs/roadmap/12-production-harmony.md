@@ -144,7 +144,7 @@ Ordered, cheapest first. **Correctness before features**, and note how many are 
 | # | Gap | Kind | Evidence |
 |---|---|---|---|
 | 1 | ~~Profiles durability claim~~ — **CLOSED 2026-10-11, and the cite here was WRONG.** `en.json:401` is `F2_T`, and `F2_D` says only "Stealth browser profiles"; the word "Persistent" was not in the i18n at all. The claim was live on a PUBLIC prerendered route instead: `pages/marketing/mcp-web-scraping.component.html:238` — "**Persistent stealth profiles.** Real browser profiles that survive between runs" — undeliverable on the very path that page sells, because a session machine has **no volume** (`deploy/browser-session/Dockerfile:47`, `BuildConfigMap` sets no `mounts`) and Fly resets a stopped machine's root filesystem while the reaper suspends idle machines every minute. Rewritten to the true claim: a stable identity **for the life of a session**. **Now also closed:** `en.json`'s `UPC_DESC_2` ("keep cookies, sessions across runs") and `UDD_DESC` ("permanent sessions") promised persistence the platform does not guarantee, so both were rewritten to describe the mechanism (a profile directory) instead of the outcome. The outcome is genuinely not ours to promise either way: `deploy/webrain-engine/fly.toml` declares no `[mounts]`, so an engine machine has no volume, while the `machines` surface DOES support `mounts`/`Volume` — so a caller who brings a machine with a volume would get persistence and a blanket "this never persists" would be its own false claim. | correctness, **published claim** | `pages/marketing/mcp-web-scraping.component.html:238`; `deploy/browser-session/Dockerfile:47` |
-| 2 | **`ADR-2026-10-BROWSER-SESSIONS.md:64` cites false evidence** — a zero-result grep for `webrtc\|rtc\|neko\|vnc\|mjpeg\|sse` and "no WebSocket server exists". A neko viewer is in the tree (above) and the client holds a live WS. The *decision* may stand; the evidence does not. | doc correctness | this audit's neko sweep |
+| 2 | **`ADR-2026-10-BROWSER-SESSIONS.md:64` cites false evidence** — a zero-result grep for `webrtc\|rtc\|neko\|vnc\|mjpeg\|sse` and "no WebSocket server exists". A neko viewer is in the tree (above) and the client holds a live WS. The *decision* may stand; the evidence does not. **DONE 2026-10-11** — the ADR carries an amendment at that section: the decision stands, it is reached again from the neko cluster's *unreachability*, and the half that survives is kept (webrain has no server-side streaming transport). The lesson it records is the general one: a repo-scoped sweep was cited for a platform-scoped claim. | doc correctness, **amended** | `ADR-2026-10-BROWSER-SESSIONS.md`, section "no streaming transport exists" |
 | 3 | ~~**Two undeployed collection-group indexes** (`state` and `idleDeadline`, both on `browserSessions` — this row previously said `idleDeadline` was on `machines`, which was wrong).~~ **DONE 2026-10-11**: deployed to the `easyscrape` database, both `READY` with `COLLECTION_GROUP` scope. | done | `firestore.indexes.json`; §5 of the skill |
 | 4 | ~~**`GET /api/pricing/estimate`** (roadmap `07` Part F)~~ built 2026-10-11. It was never a missing feature: handler, domain function and client all existed, and the route was not registered. | done | `bff/api.ts` |
 | 5 | **Fleet lifecycle actions** (`/api/admin/machines`) and **admin session reclaim** need an owner sign-off: arachnefly's `MachineOwnershipMiddleware` has **no admin bypass**, and moving a session's idle deadline suspends a customer's live, still-billing machine. **Narrowed 2026-10-11:** the session READ now exists (`GET /api/admin/sessions`, bound in `bff/api.ts`), so the open gap is the ACTIONS only — reclaim still moves another tenant's deadline. | **decision** | `05` Part D; `admin-sessions.component.*`; `handlers/session-fleet.ts` |
@@ -186,7 +186,8 @@ Ordered. Steps 1–3 are correctness and cost nothing to decide.
 1. Settle the **profiles claim** (§4.1): land the storage work, or change the copy. A published
    claim the product cannot honour is a correctness item.
 2. **Deploy the two collection-group indexes** and let one real sweep run (§4.3).
-3. Correct the **ADR evidence** (§4.2). One paragraph.
+3. ~~Correct the **ADR evidence** (§4.2). One paragraph.~~ **Done 2026-10-11** — the amendment is
+   in the ADR.
 4. Owner sign-off on the **two admin action classes** (§4.5) — or accept read-only as the answer,
    which is what the code does today.
 5. ~~`GET /api/pricing/estimate` (§4.4) — the last absent pricing surface.~~ Built 2026-10-11.
@@ -196,8 +197,12 @@ Ordered. Steps 1–3 are correctness and cost nothing to decide.
 7. Phase 4 (`04-organizations-and-billing.md`) — BYO Fly org + `computeSource`. **Not started**,
    and it is the only remaining *feature* block.
 
-**Nothing in this list is a wiring gap.** The frontend is wired; what remains is a claim to
-honour, two indexes to publish, one small route, and three decisions.
+**Nothing in this list is a wiring gap.** The frontend is wired. Re-measured 2026-10-11: steps 1,
+2, 3, 5 and 6 are closed, so what remains is **two owner decisions** (§4.5 admin actions, §4.6 nav
+placement) and **Phase 4**, the only feature block. Four rows above were already fixed at the
+moment they were read, which is the cost this file exists to remove — a checklist row that outlives
+its fix makes the next reader re-derive the whole list, so strike a row in the commit that closes
+it.
 
 ---
 

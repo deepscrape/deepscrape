@@ -47,8 +47,13 @@ export function calculateOpenAICost(usage: OpenAITokenDetails, model: string, fa
         "gpt-3.5": { promptCost: 0.02, completionCost: 0.04 }, // Example rates for GPT-3.5
         "gpt-4o-mini": { promptCost: 0.00015, completionCost: 0.0006 }, // Fixed: was 100x the real rate
         "gpt-3.5-turbo": { promptCost: 0.025, completionCost: 0.05 }, // Example rates for GPT-3.5 Turbo
-        "llama-3.1-8b-instant": { promptCost: 0.05, completionCost: 0.08 },
-        "llama-3.3-70b-versatile": { promptCost: 0.59, completionCost: 0.79 },
+        // Both Groq rows were written as PER-MILLION values -- $0.05/M and $0.59/M are Groq's
+        // published prices -- while this table is per 1K and the arithmetic below divides by
+        // 1000. A Groq call therefore displayed 1000x its real cost. Same numbers, read in the
+        // unit they were written in; the registry cannot cover these, because LiteLLM no longer
+        // lists Groq's llama ids at all.
+        "llama-3.1-8b-instant": { promptCost: 0.00005, completionCost: 0.00008 },
+        "llama-3.3-70b-versatile": { promptCost: 0.00059, completionCost: 0.00079 },
         "claude-3-5-sonnet-20240620": { promptCost: 0.003, completionCost: 0.015 },
         "claude-3-5-sonnet-20241022": { promptCost: 0.003, completionCost: 0.015 },
         "claude-3-haiku-20240307": { promptCost: 0.00025, completionCost: 0.00125 },
@@ -203,8 +208,17 @@ export function setAIModel(newModel: DropDownOption[]) {
     newModel.push(...model)
 }
 
-/**
- * The models a picker may offer, and the vendors it could not offer any for.
+/** * Whether the registry says this model is already gone.
+ *
+ * A `YYYY-MM-DD` string compares lexicographically, so no date parsing is needed. Facts that are
+ * absent mean the registry has never heard of the model, which is NOT the same as retired.
+ * @param {ModelFacts | undefined} facts The facts for the model, when there are any.
+ * @return {boolean} True once the registry's date has passed.
+ */
+export const isRetired = (facts: ModelFacts | undefined): boolean =>
+    facts?.deprecatedOn !== undefined && facts.deprecatedOn <= new Date().toISOString().slice(0, 10);
+
+/** * The models a picker may offer, and the vendors it could not offer any for.
  *
  * Pure and exported so the spec can pin the rule, which is the interesting part:
  *
@@ -235,6 +249,7 @@ export function buildModelOptions(
     allowed: readonly AiVendorId[] | null,
     live: Readonly<Record<string, string[]>>,
     fallback: readonly AIModel[],
+    facts: Readonly<Record<string, ModelFacts>> = {},
 ): { options: AIModel[]; missing: AiVendorId[] } {
     const options: AIModel[] = [];
     const missing: AiVendorId[] = [];
@@ -243,9 +258,19 @@ export function buildModelOptions(
     for (const vendor of candidates) {
         const code = modelCodeForVendor(vendor);
         const fetched = live[vendor] ?? [];
-        const ids = fetched.length > 0
+        const fromLive = fetched.length > 0;
+        // The retirement filter applies to the FALLBACK only. A stale fallback is the one place a
+        // retired model can still reach the picker -- the vendor's live catalogue drops a model
+        // when it goes, while this list changes only when someone edits it, which is how three
+        // shut-down OpenAI models came to be listed here by hand. The live half is left alone
+        // because the VENDOR is the authority on what it serves today, and a third party's date
+        // must not overrule it.
+        const ids = fromLive
             ? fetched
-            : fallback.filter(model => model.code === code).map(model => model.name);
+            : fallback
+                .filter(model => model.code === code)
+                .map(model => model.name)
+                .filter(name => !isRetired(facts[name]));
 
         if (ids.length === 0) {
             missing.push(vendor);

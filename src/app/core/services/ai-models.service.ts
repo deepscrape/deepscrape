@@ -128,7 +128,7 @@ export class AiModelsService {
         }
 
         this.factsState.set(facts);
-        this.apply(fallback, live);
+        this.apply(fallback, live, facts);
       });
     });
   }
@@ -158,11 +158,12 @@ export class AiModelsService {
   private apply(
     fallback: readonly AIModel[],
     live: Readonly<Record<string, string[]>>,
+    facts: Readonly<Record<string, ModelFacts>> = {},
   ): void {
     // `null` until the server has answered: that is "unknown", which is not the same as "nothing
     // is usable", and the two must not collapse into an empty dropdown.
     const allowed = this.aiKeys.isLoaded() ? this.allowedVendors() : null;
-    const { options, missing } = buildModelOptions(allowed, live, fallback);
+    const { options, missing } = buildModelOptions(allowed, live, fallback, facts);
 
     this.modelsState.set(options);
     // Only meaningful once the server has said who is usable. Before that every BYOK-only vendor

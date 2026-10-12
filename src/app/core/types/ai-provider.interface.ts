@@ -99,6 +99,14 @@ export interface ModelFacts {
   /** USD per 1 million input tokens. */
   inputCostPerMTokens?: number;
   outputCostPerMTokens?: number;
+  /**
+   * `YYYY-MM-DD` on which the registry says this model retires.
+   *
+   * Present only when the registry's own key for the model is canonical: a cloud deployment's
+   * retirement date is not a fact about the model this platform offers, so it is dropped rather
+   * than passed on. Absent therefore means "no reliable retirement date", not "retires never".
+   */
+  deprecatedOn?: string;
 }
 
 /**

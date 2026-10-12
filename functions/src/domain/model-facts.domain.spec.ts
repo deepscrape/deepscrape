@@ -120,6 +120,31 @@ describe("indexModelFacts", () => {
     assert.equal(factsFor(index, "gpt-4o")?.inputCostPerMTokens, 2.5)
   })
 
+  it("keeps a retirement date that sits on a canonical key", () => {
+    // `babbage-002` retires 2026-09-28 upstream. A bare, unprefixed key is a first-party
+    // retirement, which is the only kind this platform will act on.
+    const index = indexModelFacts({"babbage-002": {mode: "chat", deprecation_date: "2026-09-28"}})
+
+    assert.equal(factsFor(index, "babbage-002")?.deprecatedOn, "2026-09-28")
+  })
+
+  it("DROPS a retirement date that belongs to a cloud deployment", () => {
+    // The measured shape of the registry: of 536 dated chat models only 41 carry a canonical key.
+    // The rest look like these two, and their dates describe an Azure or Bedrock DEPLOYMENT going
+    // away rather than the first-party model this platform offers. Passing one on would retire a
+    // model that still works, which is the failure the strict matcher exists to avoid.
+    const index = indexModelFacts({
+      "azure/global-standard/gpt-4o-mini": {mode: "chat", input_cost_per_token: 0.0000025, deprecation_date: "2027-04-14"},
+      "us.anthropic.claude-sonnet-4-20250514-v1:0": {mode: "chat", input_cost_per_token: 0.000003, deprecation_date: "2026-10-14"},
+    })
+
+    // The prefixed key IS still indexed, under the bare id normalization produces...
+    assert.ok(factsFor(index, "gpt-4o-mini"))
+    // ...and the deployment's date is not attached to it, nor to the dotted id either.
+    assert.equal(factsFor(index, "gpt-4o-mini")?.deprecatedOn, undefined)
+    assert.equal(factsFor(index, "us.anthropic.claude-sonnet-4-20250514-v1:0")?.deprecatedOn, undefined)
+  })
+
   it("returns an empty index for a document it does not understand", () => {
     assert.equal(indexModelFacts(null).size, 0)
     assert.equal(indexModelFacts("nope").size, 0)

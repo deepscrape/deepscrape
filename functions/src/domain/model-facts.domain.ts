@@ -53,12 +53,27 @@ export interface ModelFacts {
   /** USD per 1 MILLION input tokens. The unit is in the name on purpose -- see `rateFor`. */
   inputCostPerMTokens?: number
   outputCostPerMTokens?: number
+  /**
+   * `YYYY-MM-DD` on which the registry says this model retires, from a CANONICAL key only.
+   *
+   * See `indexModelFacts` for why a provider-prefixed key's date is ignored, and why the rule
+   * can only miss a retirement rather than invent one.
+   */
+  deprecatedOn?: string
 }
 
 /** Facts keyed by NORMALIZED model id, so a lookup is one map hit. */
 export type ModelFactsIndex = ReadonlyMap<string, ModelFacts>
 
-/** The registry. Public, unauthenticated, regenerated upstream. */
+/**
+ * The registry. Public, unauthenticated, regenerated upstream.
+ *
+ * Measured against the live document on 2026-10-13: HTTP 200, 4061 keys, **1688 of which
+ * index**. That number is the diagnostic, because this path is FAIL-SOFT -- an upstream schema
+ * change presents as "no facts" with nothing in the logs after the first line, and a collapse
+ * to a handful of entries is what it looks like. Re-read the document by hand if a vendor's
+ * facts go missing.
+ */
 export const MODEL_FACTS_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
@@ -76,6 +91,7 @@ const EMPTY_FACTS: ModelFactsIndex = new Map()
 
 interface RawEntry {
   mode?: unknown
+  deprecation_date?: unknown
   max_input_tokens?: unknown
   max_output_tokens?: unknown
   input_cost_per_token?: unknown
@@ -129,6 +145,19 @@ const asPositive = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
 
 /**
+ * The row's `YYYY-MM-DD` retirement date, or `undefined` when it carries none.
+ *
+ * Whether the date may be TRUSTED is the caller's question, not this one -- see the canonical
+ * rule in `indexModelFacts`.
+ * @param {unknown} entry The registry row.
+ * @return {string | undefined} The date, or undefined.
+ */
+const deprecationOf = (entry: unknown): string | undefined => {
+  const date = (entry as RawEntry).deprecation_date
+  return typeof date === "string" && date.length > 0 ? date : undefined
+}
+
+/**
  * Per-token USD (the registry's unit) to per-million USD (this platform's unit).
  *
  * Rounded at 1e-6 because the raw product carries float noise (`2.4999999999999996`),
@@ -141,9 +170,10 @@ const toPerMillion = (perToken: number): number => Math.round(perToken * 1e12) /
 /**
  * One registry entry as facts, or `undefined` when it is not a chat model at all.
  * @param {RawEntry} entry The registry's row.
+ * @param {string} deprecatedOn A TRUSTED retirement date, when the caller found one.
  * @return {ModelFacts | undefined} The facts, or undefined for a row no picker offers.
  */
-const entryToFacts = (entry: RawEntry): ModelFacts | undefined => {
+const entryToFacts = (entry: RawEntry, deprecatedOn?: string): ModelFacts | undefined => {
   // Embeddings, rerankers, image generators and audio models are listed here too, and their
   // "cost per token" is a different unit entirely -- a picker never offers one, and pricing a
   // chat reply from it would be a fabricated number.
@@ -186,9 +216,14 @@ const entryToFacts = (entry: RawEntry): ModelFacts | undefined => {
   if (entry.supports_pdf_input === true) {
     facts.pdf = true
   }
+  if (deprecatedOn !== undefined) {
+    facts.deprecatedOn = deprecatedOn
+  }
 
   // A row with nothing usable is dropped rather than stored as an empty object, so
-  // `factsFor` returning something always means "there is a fact here".
+  // `factsFor` returning something always means "there is a fact here". A retirement date COUNTS
+  // as usable: a model whose pricing the registry has already pulled is exactly the one whose
+  // retirement the picker most needs to know about.
   return Object.keys(facts).length > 0 ? facts : undefined
 }
 
@@ -212,16 +247,38 @@ export const indexModelFacts = (registry: unknown): ModelFactsIndex => {
       continue
     }
 
-    const facts = entryToFacts(value as RawEntry)
+    const id = normalizeModelId(key)
+    if (id.length === 0) {
+      continue
+    }
+
+    // The retirement date comes only from a CANONICAL key: one normalization leaves untouched
+    // and that carries no dotted provider prefix or Bedrock-style `-v1:0` suffix.
+    //
+    // Measured 2026-10-13: 536 chat models carry a date, but only 41 are canonical. The rest
+    // are cloud-DEPLOYMENT artifacts (`azure/global-standard/gpt-4o-mini`,
+    // `us.anthropic.claude-sonnet-4-20250514-v1:0`), and a deployment's retirement date is not a
+    // fact about the first-party model this platform offers.
+    //
+    // The rule can only MISS a retirement -- a self-namespaced id such as `gpt-4.1` is skipped --
+    // and never invents one. That direction is the deliberate one: a missed date degrades to
+    // the behaviour before this existed, while a wrong date takes a model that still works out
+    // of the picker.
+    const canonical = id === key && !key.includes(".") && !key.includes(":")
+    const date = canonical ? deprecationOf(value) : undefined
+
+    // The date is passed IN rather than merged on afterwards, so that a row carrying nothing else
+    // still becomes a fact. A retired model is often exactly the one whose pricing the registry
+    // has already pulled, and `entryToFacts` drops a row with no facts at all.
+    const facts = entryToFacts(value as RawEntry, date)
     if (!facts) {
       continue
     }
 
-    const id = normalizeModelId(key)
     // FIRST WINS. The registry lists one model under several providers (`openai/gpt-4o`,
     // `azure/gpt-4o`, `openrouter/openai/gpt-4o`); they agree on everything a picker shows, and
     // overwriting would make the answer depend on which duplicate happens to carry the field.
-    if (id.length > 0 && !index.has(id)) {
+    if (!index.has(id)) {
       index.set(id, facts)
     }
   }

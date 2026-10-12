@@ -329,9 +329,20 @@ const getEnv = () => {
     // In production it must be present in the FUNCTIONS_ENV_JSON secret.
     CRAWL4AI_API_KEY: getConfigValue("CRAWL4AI_API_KEY"),
     ANTHROPIC_API_KEY: getConfigValue("ANTHROPIC_API_KEY"),
-    OPENAI_API_URL: getConfigValue("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions"),
     OPENAI_API_KEY: getConfigValue("OPENAI_API_KEY"),
     GROQ_API_KEY: getConfigValue("GROQ_API_KEY"),
+    // The five OpenAI-compatible vendors are BYOK-ONLY today: `AI_VENDORS` declares
+    // `internalKey: false` for each, and `resolveAiKeySource` refuses the platform
+    // route before this value is ever reached. They are declared so the deployment
+    // CAN hold a key and so the wire table in `ai_handler.ts` has a name to read;
+    // making the platform pay for one means flipping `internalKey` too, not just
+    // setting this.
+    DEEPSEEK_API_KEY: getConfigValue("DEEPSEEK_API_KEY"),
+    FIREWORKS_API_KEY: getConfigValue("FIREWORKS_API_KEY"),
+    QWEN_API_KEY: getConfigValue("QWEN_API_KEY"),
+    KIMI_API_KEY: getConfigValue("KIMI_API_KEY"),
+    OPENROUTER_API_KEY: getConfigValue("OPENROUTER_API_KEY"),
+    GEMINI_API_KEY: getConfigValue("GEMINI_API_KEY"),
     RESEND_API_KEY: getConfigValue("RESEND_API_KEY"),
     RESEND_FROM_EMAIL: getConfigValue("RESEND_FROM_EMAIL"),
     // Origin of the AUTHENTICATED app — settings, login, billing. An email link must be

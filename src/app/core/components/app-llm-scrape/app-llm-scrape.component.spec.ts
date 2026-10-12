@@ -46,6 +46,11 @@ describe('AppLLMScrapeComponent', () => {
     resolve: jasmine.createSpy('resolve').and.returnValue({ vendor: null, source: 'platform', allowed: true } as AiKeyResolution),
     stateFor: jasmine.createSpy('stateFor').and.returnValue(null),
     catalogue: AI_VENDORS,
+    // `AiModelsService` -- which the component now uses to fill its picker -- reads these two
+    // through the signal they are, so a stub without them crashes at construction. `false`/`[]`
+    // is the honest answer for a spec that stubs the loader: nobody has a key here.
+    isLoaded: () => false,
+    vendors: () => [],
   } as unknown as AiKeysService;
 
   const snackbarServiceStub = {
@@ -85,7 +90,7 @@ describe('AppLLMScrapeComponent', () => {
     expect(component.url.value).toBe('');
     expect(component.userprompt.value).toBe('');
     expect(component.submitButton.value).toBeFalse();
-    expect(component.modelAI.value).toEqual({ name: 'claude-3-5-haiku-20241022', code: 'claude' });
+    expect(component.modelAI.value).toEqual({ name: 'claude-haiku-5-5', code: 'claude' });
     expect(component.options.get('forwardCookies')?.value).toBeTrue();
   });
 
@@ -213,7 +218,7 @@ describe('AppLLMScrapeComponent', () => {
   it('should surface the key source the server resolved for the active vendor', () => {
     (aiKeysStub.resolve as jasmine.Spy).and.returnValue({ vendor: null, source: 'user', allowed: true } as AiKeyResolution);
 
-    component.modelAI.setValue({ name: 'claude-3-5-haiku-20241022', code: 'claude' });
+    component.modelAI.setValue({ name: 'claude-haiku-5-5', code: 'claude' });
     (component as unknown as { activeVendor: { set(value: string): void } }).activeVendor.set('anthropic');
 
     expect(component.activeKeySource()).toBe('user');

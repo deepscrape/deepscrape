@@ -76,7 +76,6 @@ const getEnv = () => {
     GOOGLE_API_KEY: process.env['GOOGLE_API_KEY'] || '',
     JINAAI_API_KEY: process.env['JINAAI_API_KEY'] || '',
     ANTHROPIC_API_KEY: process.env['ANTHROPIC_API_KEY'] || '',
-    OPENAI_API_URL: process.env['OPENAI_API_URL'] || 'https://api.openai.com/v1/chat/completions',
     OPENAI_API_KEY: process.env['OPENAI_API_KEY'] || '',
     GROQ_API_KEY: process.env['GROQ_API_KEY'] || '',
 

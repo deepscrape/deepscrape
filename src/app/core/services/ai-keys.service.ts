@@ -9,6 +9,8 @@ import {
   AiVendorState,
   ClearMyAiKeyRequest,
   MyAiSettings,
+  ProviderKeyId,
+  ReaderKeyState,
   ScrapeProviderMutationResponse,
   ScrapeProviderState,
   SetMyAiKeyRequest,
@@ -71,6 +73,7 @@ export class AiKeysService {
   private readonly accessModeState = signal<string | undefined>(undefined);
   private readonly vendorsState = signal<AiVendorState[]>([]);
   private readonly enginesState = signal<ScrapeProviderState[]>([]);
+  private readonly readerKeysState = signal<ReaderKeyState[]>([]);
   private readonly storedEngineState = signal<string | null>(null);
   private readonly loadingState = signal(false);
   private readonly loadedState = signal(false);
@@ -89,6 +92,13 @@ export class AiKeysService {
    * been refused under. One consumer, one callable.
    */
   readonly engines = this.enginesState.asReadonly();
+  /**
+   * Readers a caller may bring a key for, and whether one is stored.
+   *
+   * Separate from `vendors` because a reader is not a chat vendor: the server reports these in
+   * the `scrape` half of the reply, and the panel renders them on the scraping surface.
+   */
+  readonly readerKeys = this.readerKeysState.asReadonly();
   /**
    * The engine the server has stored, or null when the platform default governs.
    *
@@ -206,6 +216,9 @@ export class AiKeysService {
       this.enginesState.set(
         Array.isArray(settings?.scrape?.selectable) ? settings.scrape.selectable : []
       );
+      this.readerKeysState.set(
+        Array.isArray(settings?.scrape?.keys) ? settings.scrape.keys : []
+      );
       this.storedEngineState.set(
         typeof settings?.scrape?.stored === 'string' ? settings.scrape.stored : null
       );
@@ -263,18 +276,25 @@ export class AiKeysService {
    *
    * The key is a parameter and nothing else: it is not assigned to a field, not
    * logged, and not echoed. See this class's NEVER RENDER KEY MATERIAL note.
+   *
+   * `endpoint` is the `custom` vendor's own address. Unlike the key it is NOT a
+   * credential -- it is a URL the user chose -- so it may be held, displayed and echoed.
+   * It rides in the same request because the server stores both in one entry, and two
+   * round trips would let a key land without an address (or the reverse) for the one
+   * vendor that needs both.
    * @param {AiVendorId} vendor The vendor the key belongs to.
    * @param {string} key The key. Write-only, by construction.
+   * @param {string} endpoint The custom endpoint, when the vendor is `custom`.
    * @return {Promise<boolean>} Whether the vendor now has a key.
    */
-  async storeKey(vendor: AiVendorId, key: string): Promise<boolean> {
+  async storeKey(vendor: ProviderKeyId, key: string, endpoint?: string): Promise<boolean> {
     if (!isPlatformBrowser(this.platformId)) {
       return false;
     }
 
     this.errorState.set('');
     try {
-      const request: SetMyAiKeyRequest = { vendor, key };
+      const request: SetMyAiKeyRequest = { vendor, key, ...(endpoint ? { endpoint } : {}) };
       const reply = await this.firestore.callFunction<SetMyAiKeyRequest, AiKeyMutationResponse>(
         CALLABLE.setMyAiKey,
         request
@@ -298,7 +318,7 @@ export class AiKeysService {
    * @param {AiVendorId} vendor The vendor whose key should go.
    * @return {Promise<boolean>} Whether the vendor still has a key.
    */
-  async clearKey(vendor: AiVendorId): Promise<boolean> {
+  async clearKey(vendor: ProviderKeyId): Promise<boolean> {
     if (!isPlatformBrowser(this.platformId)) {
       return false;
     }

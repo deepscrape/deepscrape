@@ -10,6 +10,7 @@
 import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {
+  aiEndpointFrom,
   cdpEndpointFrom,
   isBlockedHost,
   isSafeTargetUrl,
@@ -147,5 +148,61 @@ describe("cdpEndpointFrom", () => {
     // change the answer for every existing caller of it.
     assert.equal(isSafeTargetUrl(ws), false)
     assert.equal(cdpEndpointFrom(ws), ws)
+  })
+})
+
+describe("aiEndpointFrom", () => {
+  it("accepts an https base and trims a trailing slash", () => {
+    // The trailing slash matters: the stored base is concatenated with `/models` and
+    // `/chat/completions`, so a kept slash would produce a doubled separator in every
+    // request the BFF makes on the caller's behalf.
+    assert.equal(
+      aiEndpointFrom("https://api.example.com/v1/"),
+      "https://api.example.com/v1"
+    )
+    assert.equal(
+      aiEndpointFrom("  https://api.example.com/v1  "),
+      "https://api.example.com/v1"
+    )
+  })
+
+  it("refuses plain http, because a key travels on this request", () => {
+    // The one place this differs from its CDP sibling, and the reason is the PAYLOAD:
+    // this endpoint receives the caller's own API key in an Authorization header, and
+    // http would put that credential on the wire in clear text. A crawler target carries
+    // nothing of the sort, which is why `isSafeTargetUrl` accepts http and this does not.
+    assert.equal(aiEndpointFrom("http://api.example.com/v1"), undefined)
+    assert.equal(aiEndpointFrom("ws://api.example.com"), undefined)
+    assert.equal(aiEndpointFrom("ftp://api.example.com"), undefined)
+  })
+
+  it("refuses private space, so the BFF cannot be aimed at the metadata service", () => {
+    // The load-bearing half: this is an attacker-chosen address, and without the host
+    // policy a caller could proxy the cloud metadata service through a chat request.
+    for (const url of [
+      "https://169.254.169.254",
+      "https://127.0.0.1/v1",
+      "https://10.0.0.5/v1",
+      "https://192.168.1.1/v1",
+      "https://[::1]/v1",
+      "https://api.internal/v1",
+      "https://localhost/v1",
+    ]) {
+      assert.equal(aiEndpointFrom(url), undefined, url)
+    }
+  })
+
+  it("refuses credentials in the userinfo, and anything unparseable", () => {
+    // This value is echoed back to the caller and written into their settings document,
+    // so `user:pass@` would persist a credential in a field nothing treats as secret.
+    const long = `https://api.example.com/${"x".repeat(2100)}`
+    assert.equal(aiEndpointFrom("https://user:pass@api.example.com/v1"), undefined)
+    assert.equal(aiEndpointFrom("https://tok@api.example.com/v1"), undefined)
+    assert.equal(aiEndpointFrom("api.example.com"), undefined)
+    assert.equal(aiEndpointFrom(""), undefined)
+    assert.equal(aiEndpointFrom("   "), undefined)
+    assert.equal(aiEndpointFrom(long), undefined)
+    assert.equal(aiEndpointFrom(42), undefined)
+    assert.equal(aiEndpointFrom(null), undefined)
   })
 })

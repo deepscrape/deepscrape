@@ -34,9 +34,14 @@ declare namespace NodeJS {
     // AI API Keys
     JINAAI_API_KEY: string
     ANTHROPIC_API_KEY: string
-    OPENAI_API_URL: string
     OPENAI_API_KEY: string
     GROQ_API_KEY: string
+    DEEPSEEK_API_KEY: string
+    FIREWORKS_API_KEY: string
+    QWEN_API_KEY: string
+    KIMI_API_KEY: string
+    OPENROUTER_API_KEY: string
+    GEMINI_API_KEY: string
 
     // Google Cloud Platform & Stripe
     GCP_PROJECT_ID: string

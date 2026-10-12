@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, HostBinding, inject, signal, ViewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, HostBinding, effect, inject, signal, ViewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormControl, FormGroup, Validators } from '@angular/forms';
 import { Observable } from 'rxjs/internal/Observable';
@@ -11,11 +11,10 @@ import {
   arrayBufferToString, calculateOpenAICost, chatInBatchesAI, constructCookiesforJina,
   crawlOperationStatusColor,
   extractDomain, formatBytes, sanitizeJSON,
-  setAIModel
 } from 'src/app/core/functions';
 import { aichunk, AIModel, BrowserConfigurationImpl, CrawlConfig, CrawlerRunConfigImpl, CrawlOperation, CrawlPack, CrawlTask, OpenAITokenDetails, AiKeySource, AiVendorId, vendorForModelCode } from '../../types';
 import { GinputComponent } from '../ginput/ginput.component';
-import { AiAPIService, AiFetchService, AiKeysService, LocalStorage, SnackbarService } from '../../services';
+import { AiAPIService, AiFetchService, AiKeysService, AiModelsService, LocalStorage, SnackbarService } from '../../services';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { TranslateModule } from '@ngx-translate/core';
@@ -107,7 +106,16 @@ export class AppLLMScrapeComponent {
 
   private readonly destroyRef = inject(DestroyRef)
 
-  model: AIModel[] = []
+  private readonly aiModels = inject(AiModelsService)
+
+  /**
+   * The models the dropdown offers.
+   *
+   * Owned by `AiModelsService` because three pickers share this list and must agree on it:
+   * `DropdownComponent` renders whatever it is given, so a model the caller cannot actually
+   * call would be a 402 the moment it was picked.
+   */
+  readonly models = this.aiModels.models
 
   modelAI: FormControl<AIModel>
 
@@ -121,14 +129,23 @@ export class AppLLMScrapeComponent {
   private fb = inject(FormBuilder)
 
   constructor() {
-    setAIModel(this.model)
+    // Fills the model list AND reads the vendor catalogue the "which key served this" badge
+    // needs -- the service loads the keys itself, so the explicit `aiKeys.load()` that used to
+    // sit here would only buy a second round trip on the one page that shows both.
+    this.aiModels.load()
     this.localStorage = inject(LocalStorage)
 
-    // The vendor catalogue, so the "which key served this" line can name a
-    // source. Without it the badge would read `none` for a paid user whose call
-    // the platform actually pays for. Failure is non-fatal: the badge falls back
-    // to the local rules in `AiKeysService.resolve`.
-    void this.aiKeys.load()
+    // Repairs the selection whenever the list moves. Not cosmetic: the list arrives in two
+    // passes (static, then live), and a selection that is not among its options leaves the
+    // dropdown rendering with NOTHING selected. `modelAI` is built in a later lifecycle step, so
+    // the first pass of this effect can run before it exists.
+    effect(() => {
+      this.models()
+      if (!this.modelAI) {
+        return
+      }
+      this.modelAI.setValue(this.aiModels.selectionFor(this.modelAI.value), { emitEvent: false })
+    })
   }
 
   ngOnInit(): void {
@@ -162,7 +179,10 @@ export class AppLLMScrapeComponent {
       ]
     })
 
-    this.modelAI = new FormControl<{ name: string, code: string }>({ name: 'claude-3-5-haiku-20241022', code: "claude" }, {
+    // Must be a model the list actually offers, or the dropdown renders with NOTHING selected.
+    // This matched a model `setAIModel` had stopped shipping since the vendor expansion, so the
+    // picker opened blank; the selection effect in the constructor repairs it from then on.
+    this.modelAI = new FormControl<{ name: string, code: string }>({ name: 'claude-haiku-5-5', code: "claude" }, {
       // updateOn: 'blur', //default will be change
       nonNullable: true,
       validators: [
@@ -454,7 +474,17 @@ export class AppLLMScrapeComponent {
               // `calculateOpenAICost` predates `TokenUsage` and takes the older,
               // fully named `OpenAITokenDetails`, which the index-signature type
               // is not assignable to. Both describe the same payload.
-              total_cost = calculateOpenAICost(rawUsage as unknown as OpenAITokenDetails, this.modelAI.value.name)
+              //
+              // The live facts are passed in so the price comes from the vendors'
+              // own published rates rather than the table inside this function,
+              // whose own comment says several of its rows are guesses. Absent
+              // facts are normal -- the registry does not carry every vendor -- and
+              // the table is the fallback, not the answer.
+              total_cost = calculateOpenAICost(
+                rawUsage as unknown as OpenAITokenDetails,
+                this.modelAI.value.name,
+                this.aiModels.factsFor(this.modelAI.value.name),
+              )
 
               this.usage.set({ total_tokens, total_cost })
             }

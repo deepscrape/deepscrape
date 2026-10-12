@@ -49,6 +49,18 @@ export interface ScrapeProviderDescriptor {
   minAccess: "free" | "paid"
   jobModel: ScrapeJobModel
   /**
+   * Whether a caller may point this provider at their own quota with their own key.
+   *
+   * `true` for `jina` only. It is the one provider whose upstream accepts a per-caller
+   * credential -- `r.jina.ai` reads a public URL for free and raises the rate limit when a
+   * key is supplied, so a key is a choice rather than a requirement.
+   *
+   * `crawl4ai` and `webrain` are OUR deployments: the credential is a shared secret between
+   * this platform and a worker we run, and a user has nothing of their own to bring. Marking
+   * them BYOK would offer an input the route would never read.
+   */
+  byok: boolean
+  /**
    * What it can do, so the UI offers only what works.
    *
    * `stateful` means "can log in and keep a session" — the difference between
@@ -89,6 +101,7 @@ export const SCRAPE_PROVIDERS: readonly ScrapeProviderDescriptor[] = [
     routes: ["crawl"],
     minAccess: "free",
     jobModel: "job",
+    byok: false,
     capabilities: {
       batch: true,
       stateful: true,
@@ -107,6 +120,7 @@ export const SCRAPE_PROVIDERS: readonly ScrapeProviderDescriptor[] = [
     routes: ["jina"],
     minAccess: "free",
     jobModel: "sync",
+    byok: true,
     capabilities: {
       batch: false,
       stateful: false,
@@ -125,6 +139,7 @@ export const SCRAPE_PROVIDERS: readonly ScrapeProviderDescriptor[] = [
     // platform decision, not a user one.
     minAccess: "paid",
     jobModel: "mcp",
+    byok: false,
     capabilities: {
       batch: true,
       stateful: true,

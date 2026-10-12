@@ -26,10 +26,23 @@ describe("ai_handler key selection", () => {
     assert.equal(direct.length, 0, `${direct.length} handler(s) read a platform key directly`)
   })
 
-  it("still covers the four vendor call sites", () => {
-    // Without this the check above passes vacuously the moment the pattern is
-    // renamed — a stale assertion reports safety it is not testing.
-    const viaKeyFor = [...source.matchAll(/const apiKey = await keyFor\(/g)]
-    assert.equal(viaKeyFor.length, 4, "expected four vendors routed through keyFor")
+  it("still detects a direct platform-key read", () => {
+    // Without this the check above passes vacuously the moment the pattern is renamed -- a
+    // stale assertion reports safety it is not testing.
+    //
+    // This used to assert a COUNT of call sites, and that number rotted the moment the
+    // per-vendor cores were collapsed into one factory: eight vendors now share a single
+    // `keyFor` call, so a count of calls can no longer say anything about coverage. What the
+    // count was really guarding against is a vacuous regex, so that is what is tested -- the
+    // pattern must still FIRE on the shape it exists to catch.
+    const viaKeyFor = [...source.matchAll(/await keyFor\(/g)]
+    assert.ok(viaKeyFor.length > 0, "no keyFor call site found at all")
+
+    const offending = "const apiKey = env.OPENAI_API_KEY"
+    assert.equal(
+      [...offending.matchAll(/const apiKey = (?!await keyFor\()/g)].length,
+      1,
+      "the direct-read pattern no longer matches a direct read"
+    )
   })
 })

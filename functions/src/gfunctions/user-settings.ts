@@ -48,14 +48,16 @@ import {
   writeStoredProvider,
 } from "../infrastructure/scrape-provider.store"
 import {
+  SCRAPE_PROVIDERS,
   isScrapeProviderId,
   selectableProviders,
 } from "../domain/scrape-providers.domain"
+import { aiEndpointFrom } from "../domain/url-guard.domain"
 import {
-  type AiVendorId,
+  type ProviderKeyId,
   availableVendors,
-  isAiVendorId,
   isPlausibleApiKey,
+  isProviderKeyId,
 } from "../domain/user-ai-settings.domain"
 
 /** Shared options: every callable here is a small settings write. */
@@ -102,19 +104,23 @@ const aiKeysRef = (uid: string) =>
   db.collection("users").doc(uid).collection("private").doc("ai")
 
 /**
- * The vendor ids the caller has a key stored for.
+ * The provider ids the caller has a key stored for.
  *
- * Returns ids only. The document's field names are the vendor ids, so the
- * presence of a field is the whole answer and the values are never touched.
+ * Returns ids only. The document's field names are the provider ids, so the presence of a
+ * field is the whole answer and the values are never touched.
+ *
+ * The filter is `isProviderKeyId`, NOT `isAiVendorId`. The document holds a reader's key
+ * beside the chat vendors' keys, so filtering by the narrow union would hide a stored `jina`
+ * key from every caller that asks what exists.
  * @param {*} uid
  */
-const mappedVendorIds = async (uid: string): Promise<AiVendorId[]> => {
+const mappedVendorIds = async (uid: string): Promise<ProviderKeyId[]> => {
   const snapshot = await aiKeysRef(uid).get()
   if (!snapshot.exists) {
     return []
   }
   const data = snapshot.data() ?? {}
-  return Object.keys(data).filter(isAiVendorId)
+  return Object.keys(data).filter(isProviderKeyId)
 }
 
 /**
@@ -131,7 +137,7 @@ const mappedVendorIds = async (uid: string): Promise<AiVendorId[]> => {
  */
 export const readUserAiKey = async (
   uid: string,
-  vendor: AiVendorId
+  vendor: ProviderKeyId
 ): Promise<string | null> => {
   const snapshot = await aiKeysRef(uid).get()
   if (!snapshot.exists) {
@@ -160,6 +166,37 @@ export const readUserAiKey = async (
   return typeof value === "string" && value.length > 0 ? value : null
 }
 
+/** The one vendor whose endpoint the caller, not the platform, supplies. */
+const CUSTOM_VENDOR = "custom"
+
+/**
+ * The caller's stored custom endpoint, or null.
+ *
+ * Re-validated through the SAME guard the write used, on every read, rather than taken on
+ * trust from the document. This value is the address the BFF dials while attaching the
+ * caller's key, so a document edited by hand (or written before a guard tightened) must
+ * not become a request. Validating here means the worst case is "your endpoint is not
+ * usable", never "the platform called somewhere it should not".
+ *
+ * It sits beside `readUserAiKey` because it reads a different field of the SAME document
+ * entry: a second reader elsewhere is how the layout drifts.
+ * @param {*} uid
+ * @return {*} The endpoint, or null when none is stored or it is not one we may call.
+ */
+export const readUserAiEndpoint = async (
+  uid: string
+): Promise<string | null> => {
+  const snapshot = await aiKeysRef(uid).get()
+  if (!snapshot.exists) {
+    return null
+  }
+  const entry = (snapshot.data() ?? {})[CUSTOM_VENDOR]
+  if (!entry || typeof entry !== "object") {
+    return null
+  }
+  return aiEndpointFrom((entry as { endpoint?: unknown }).endpoint) ?? null
+}
+
 /**
  * The Secret Manager secret id for one user's key for one vendor.
  *
@@ -171,7 +208,7 @@ export const readUserAiKey = async (
  * @param {*} vendor
  * @return {*}
  */
-const aiKeySecretId = (uid: string, vendor: AiVendorId): string =>
+const aiKeySecretId = (uid: string, vendor: ProviderKeyId): string =>
   `ai-key-${uid}-${vendor}`
 
 /** The secret path recorded as metadata, or null for any other shape.
@@ -199,7 +236,7 @@ const secretPathOf = (entry: unknown): string | null => {
  */
 const migrateLegacyKey = async (
   uid: string,
-  vendor: AiVendorId,
+  vendor: ProviderKeyId,
   value: string
 ): Promise<void> => {
   try {
@@ -228,11 +265,28 @@ const migrateLegacyKey = async (
  */
 export const getMySettings = onCall(OPTIONS, async (request) => {
   const uid = requireUid(request)
-  const accessMode = await accessModeOf(uid)
 
-  const storedProvider = await readStoredProvider(uid)
+  // Four INDEPENDENT reads, so they go out together. This is the call the
+  // settings panel and the model picker both make on load: four sequential
+  // round trips is four times the latency for no ordering benefit.
+  //
+  // `selectableProviders` is not here because it is pure and needs
+  // `accessMode`, which is one of the four.
+  //
+  // ponytail: `mappedVendorIds` and `readUserAiEndpoint` read the SAME
+  // document, so this is two concurrent reads of it. Collapsing them needs the
+  // helpers to take a snapshot, and those helpers are also the request path's
+  // readers -- a second way to read the credentials doc is the bigger risk.
+  const [accessMode, storedProvider, keyed, customEndpoint] =
+    await Promise.all([
+      accessModeOf(uid),
+      readStoredProvider(uid),
+      mappedVendorIds(uid),
+      // Read once rather than inside the map below: only `custom` ever has one.
+      readUserAiEndpoint(uid),
+    ])
+
   const selectable = selectableProviders(accessMode, "crawl")
-  const keyed = await mappedVendorIds(uid)
 
   return {
     accessMode,
@@ -243,6 +297,19 @@ export const getMySettings = onCall(OPTIONS, async (request) => {
         labelKey: provider.labelKey,
         notes: provider.notes,
         capabilities: provider.capabilities,
+      })),
+      // Readers a caller may bring their own key for, reported HERE rather than in
+      // `ai.vendors` because a reader is not a chat vendor: `jina` is a scrape provider, and
+      // its key belongs on the surface that chooses a scrape engine.
+      //
+      // Driven by the catalogue's `byok` flag rather than by naming `jina`, so a second reader
+      // needs no edit here. The set is the whole catalogue and not `selectable`, deliberately:
+      // `jina` serves the `jina` route only, so it never appears in the crawl-route list the
+      // engines are chosen from.
+      keys: SCRAPE_PROVIDERS.filter((provider) => provider.byok).map((provider) => ({
+        id: provider.id,
+        labelKey: provider.labelKey,
+        hasKey: keyed.includes(provider.id),
       })),
     },
     ai: {
@@ -255,6 +322,11 @@ export const getMySettings = onCall(OPTIONS, async (request) => {
         hasKey: resolution.vendor ?
           keyed.includes(resolution.vendor.id) :
           false,
+        // The address the BFF would dial, for the one vendor whose address is the
+        // caller's. Not a credential, so it is reported; every other vendor gets null.
+        endpoint: resolution.vendor?.id === CUSTOM_VENDOR ?
+          customEndpoint :
+          null,
       })),
     },
   }
@@ -305,7 +377,9 @@ export const setMyScrapeProvider = onCall(OPTIONS, async (request) => {
  */
 export const setMyAiKey = onCall(OPTIONS, async (request) => {
   const uid = requireUid(request)
-  const data = request.data as { vendor?: unknown; key?: unknown } | undefined
+  const data = request.data as
+    | { vendor?: unknown; key?: unknown; endpoint?: unknown }
+    | undefined
   // Bound to locals because `isAiVendorId(data?.vendor)` narrows the property
   // expression, not `data` itself — so `data.vendor` after the guard still
   // reads
@@ -313,9 +387,13 @@ export const setMyAiKey = onCall(OPTIONS, async (request) => {
   // though the guard proved otherwise.
   const vendor = data?.vendor
   const key = data?.key
+  const endpoint = data?.endpoint
 
-  if (!isAiVendorId(vendor)) {
-    throw new HttpsError("invalid-argument", "Unknown AI vendor.")
+  // `isProviderKeyId`, NOT `isAiVendorId`: a caller may store a key for a reader exactly as
+  // they may for a chat vendor. The narrower guard is what forced `jina` into the AI vendor
+  // catalogue, so widening it here is the fix rather than a relaxation.
+  if (!isProviderKeyId(vendor)) {
+    throw new HttpsError("invalid-argument", "Unknown provider.")
   }
   if (!isPlausibleApiKey(key)) {
     // No value in the message, and none in any log line: it is a credential.
@@ -325,20 +403,55 @@ export const setMyAiKey = onCall(OPTIONS, async (request) => {
     )
   }
 
-  // The value goes to Secret Manager; Firestore keeps only WHERE it lives, so a
-  // document read can no longer yield a credential. `merge` preserves the other
-  // vendors' entries in the same document.
+  // The endpoint is required by `custom` and REFUSED by every other vendor.
+  //
+  // Required for `custom` because that vendor has no platform route to fall back to: a
+  // key with no address is not usable, and storing one would report success for a
+  // configuration that can never make a call.
+  //
+  // Refused, not ignored, on the fixed vendors: a silently dropped field is a user who
+  // believes they pointed Anthropic at their own proxy while every request kept going to
+  // `api.anthropic.com`. An error is the only honest answer to a field we do not honour.
+  const isCustom = vendor === CUSTOM_VENDOR
+  const storedEndpoint = isCustom ? aiEndpointFrom(endpoint) : undefined
+
+  if (isCustom && !storedEndpoint) {
+    throw new HttpsError(
+      "invalid-argument",
+      "A custom vendor needs an https endpoint that is not in private address space."
+    )
+  }
+  if (!isCustom && endpoint !== undefined) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Only a custom vendor may carry an endpoint."
+    )
+  }
+
+  // The value goes to Secret Manager; Firestore keeps only WHERE it lives and, for the
+  // custom vendor, WHICH address to call. Neither is a credential, so a document read
+  // still cannot yield one. `merge` preserves the other vendors' entries in the same
+  // document.
   const secretPath = await upsertSecretValue(
     aiKeySecretId(uid, vendor),
     key.trim()
   )
 
   await aiKeysRef(uid).set(
-    { [vendor]: { secretPath, updatedAt: Date.now() } },
+    {
+      [vendor]: {
+        secretPath,
+        updatedAt: Date.now(),
+        ...(storedEndpoint ? { endpoint: storedEndpoint } : {}),
+      },
+    },
     { merge: true }
   )
 
-  return { vendor, hasKey: true }
+  // The endpoint travels back so the panel can show which address is configured. It is
+  // the caller's own URL and not key material, so echoing it breaks nothing -- the key
+  // still has no read-back path.
+  return { vendor, hasKey: true, endpoint: storedEndpoint ?? null }
 })
 
 /**
@@ -352,8 +465,10 @@ export const clearMyAiKey = onCall(OPTIONS, async (request) => {
   const uid = requireUid(request)
   const vendor = (request.data as { vendor?: unknown } | undefined)?.vendor
 
-  if (!isAiVendorId(vendor)) {
-    throw new HttpsError("invalid-argument", "Unknown AI vendor.")
+  // The same guard as the write, and it has to be: `isAiVendorId` refuses `jina`, so a reader
+  // key could be stored and then never removed.
+  if (!isProviderKeyId(vendor)) {
+    throw new HttpsError("invalid-argument", "Unknown provider.")
   }
 
   const snapshot = await aiKeysRef(uid).get()

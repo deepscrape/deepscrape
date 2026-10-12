@@ -84,7 +84,11 @@ describe("resolveAiKeySource", () => {
 
   it("never reports a source other than the three known ones", () => {
     const plans = ["free", "plan", "credits", "grace", "admin", undefined, "", "nonsense"]
-    const vendors = ["anthropic", "openai", "groq", "jina", "unknown", null, 42, {}]
+    // `jina` sits with the REFUSED cases on purpose: it is a scrape provider, not a chat
+    // vendor, so this resolver answers `unknown-vendor` for it -- which is correct and is what
+    // the separation of the two catalogues means. It used to be in the accepted set only
+    // because the key store was keyed by this union.
+    const vendors = ["anthropic", "openai", "groq", "deepseek", "jina", "unknown", null, 42, {}]
     for (const plan of plans) {
       for (const vendor of vendors) {
         for (const hasKey of [true, false]) {
@@ -123,7 +127,24 @@ describe("availableVendors", () => {
   it("offers a paid user the platform-backed vendors with no keys at all", () => {
     const offered = availableVendors("plan", [])
     const platform = offered.filter((entry) => entry.source === "platform").map((entry) => entry.vendor?.id)
-    assert.deepEqual(platform, ["anthropic", "openai", "groq", "jina"])
+    // Three, not four: `jina` used to be in this list as a BYOK vendor, and it is not a chat
+    // vendor at all. Its credential is chosen by the SCRAPE catalogue's `byok` flag, so it is
+    // reported on the scrape half of the settings reply instead of here.
+    assert.deepEqual(platform, ["anthropic", "openai", "groq"])
+  })
+
+  it("ignores a stored reader key, because a reader is not a chat vendor", () => {
+    // `availableVendors` maps the AI catalogue, so a provider id from the other catalogue must
+    // pass through without inventing a row. The key store holds both, which is the whole reason
+    // the two are separate lists rather than one that has to accommodate a reader.
+    const offered = availableVendors("plan", ["jina"])
+    // Widened to `string` on purpose: `jina` is no longer in `AiVendorId`, so the direct
+    // comparison is a type error -- which is the point of the test and not a reason to delete
+    // it. Asserting on the widened value still fails the day `jina` is added back to
+    // `AI_VENDORS`, and that is the regression worth catching.
+    const ids: readonly (string | undefined)[] = offered.map((entry) => entry.vendor?.id)
+    assert.equal(ids.includes("jina"), false)
+    assert.equal(offered.length, AI_VENDORS.length)
   })
 })
 

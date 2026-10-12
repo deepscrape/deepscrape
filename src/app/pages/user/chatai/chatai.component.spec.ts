@@ -34,17 +34,35 @@ describe('buildRequest', () => {
     it('sends the messages untouched for Claude, which takes the system turn separately', () => {
         const messages = [{ role: 'user', content: 'hi' }];
 
-        expect(buildRequest('claude', messages, 'SYS')).toEqual({ provider: 'claude', messages });
+        expect(buildRequest('claude', messages, 'SYS'))
+            .toEqual({ provider: 'claude', vendor: 'anthropic', messages });
     });
 
     it('inlines the system turn for OpenAI/Groq, which ignore their sys argument otherwise', () => {
         expect(buildRequest('openai', [{ role: 'user', content: 'hi' }], 'SYS')).toEqual({
             provider: 'openai',
+            vendor: 'openai',
             messages: [
                 { role: 'system', content: 'SYS' },
                 { role: 'user', content: 'hi' },
             ],
         });
+    });
+
+    it('carries the vendor a vendor-specific code names, so the call reaches that vendor', () => {
+        // The protocol is shared and the COMPANY is not: without this the request would be
+        // posted to OpenAI with a DeepSeek model id on the caller's key.
+        const request = buildRequest('deepseek', [{ role: 'user', content: 'hi' }], 'SYS');
+
+        expect(request.provider).toBe('openai');
+        expect(request.vendor).toBe('deepseek');
+    });
+
+    it('carries the custom vendor, whose endpoint belongs to the caller', () => {
+        const request = buildRequest('custom', [{ role: 'user', content: 'hi' }], 'SYS');
+
+        expect(request.provider).toBe('openai');
+        expect(request.vendor).toBe('custom');
     });
 });
 

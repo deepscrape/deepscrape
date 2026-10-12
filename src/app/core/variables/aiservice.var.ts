@@ -1,6 +1,22 @@
 export const API_ANTHROPIC = '/api/anthropic'
 export const API_OPENAI = '/api/openai'
 export const API_GROQAI = '/api/groq'
+export const API_DEEPSEEK = '/api/deepseek'
+export const API_FIREWORKS = '/api/fireworks'
+export const API_QWEN = '/api/qwen'
+export const API_KIMI = '/api/kimi'
+export const API_OPENROUTER = '/api/openrouter'
+export const API_GEMINI = '/api/gemini'
+export const API_CUSTOM = '/api/custom'
+
+/**
+ * The model catalogue base. One dynamic segment per vendor is appended to it.
+ *
+ * A dynamic route rather than one registration per vendor: the BFF validates the segment
+ * against its own catalogue, so an unknown vendor is a 404 and the browser cannot cause a
+ * request to anything that is not ours.
+ */
+export const API_MODELS = '/api/models'
 
 export const API_JINAAI = '/api/jina'
 

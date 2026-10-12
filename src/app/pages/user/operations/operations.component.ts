@@ -1,5 +1,5 @@
 import { AsyncPipe, DatePipe, DecimalPipe, JsonPipe, NgClass } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostBinding, SimpleChanges, ViewChild, computed, inject } from '@angular/core'
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostBinding, SimpleChanges, ViewChild, computed, effect, inject } from '@angular/core'
 import { toSignal } from '@angular/core/rxjs-interop'
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms'
 import { FirestoreService } from 'src/app/core/services'
@@ -17,9 +17,9 @@ import {
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
 import { Outsideclick, RippleDirective } from 'src/app/core/directives'
 import { CrawlOperationStatus } from 'src/app/core/enum'
-import { crawlOperationStatusColor, isArray, setAIModel, setOperationStatusList } from 'src/app/core/functions'
+import { crawlOperationStatusColor, isArray, setOperationStatusList } from 'src/app/core/functions'
 import { FormControlPipe } from 'src/app/core/pipes'
-import { AuthService, AuthzService, BillingService, CacheService, CrawlAPIService, CrawlStoreService, ScrollService, SnackbarService, TaskStatus, WebSocketService } from 'src/app/core/services'
+import { AiModelsService, AuthService, AuthzService, BillingService, CacheService, CrawlAPIService, CrawlStoreService, ScrollService, SnackbarService, TaskStatus, WebSocketService } from 'src/app/core/services'
 import { AIModel, CrawlConfig, CrawlOperation, CrawlPack, CrawlTask, DropDownOption, Users } from 'src/app/core/types'
 import { MatInputModule } from '@angular/material/input'
 import { MatFormFieldModule } from '@angular/material/form-field'
@@ -79,7 +79,17 @@ export class OperationsComponent {
   url: FormControl<string>
   modelAI: FormControl<AIModel>
 
-  model: AIModel[] = []
+  private readonly aiModels = inject(AiModelsService)
+
+  /**
+   * The models this picker offers.
+   *
+   * Owned by `AiModelsService` because three pickers share this list and must agree on it: the
+   * value here decides whose model the batch is submitted to. It fills in two passes (the static
+   * list, then each vendor's live catalogue), so it is a signal -- a plain array mutated after the
+   * first render never reaches an OnPush template.
+   */
+  readonly models = this.aiModels.models
 
   crawlPack: FormControl<DropDownOption | null>
 
@@ -219,7 +229,7 @@ export class OperationsComponent {
       ]
     },)
 
-    this.modelAI = new FormControl<DropDownOption>({ name: 'claude-3-5-haiku-20241022', code: "claude" }, {
+    this.modelAI = new FormControl<DropDownOption>({ name: 'claude-haiku-5-5', code: "claude" }, {
       // updateOn: 'blur', //default will be change
       nonNullable: true,
       validators: [
@@ -228,7 +238,18 @@ export class OperationsComponent {
       ]
     })
 
-    setAIModel(this.model)
+    // Fills the list, then repairs the selection whenever the list moves. Both are needed: the
+    // list arrives in two passes, and a control whose value is not among its options renders with
+    // NOTHING selected. The control is built here rather than as a field initializer, so the first
+    // pass of this effect can run before it exists.
+    this.aiModels.load()
+    effect(() => {
+      this.models()
+      if (!this.modelAI) {
+        return
+      }
+      this.modelAI.setValue(this.aiModels.selectionFor(this.modelAI.value), { emitEvent: false })
+    })
 
     this.crawlPack = new FormControl<DropDownOption | null>(null, {
       // updateOn: 'blur', //default will be change

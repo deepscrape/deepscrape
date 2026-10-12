@@ -11,7 +11,7 @@
  * and JSON Schema, because its consumer is a language model. Same routes, two
  * different audiences -- one is UI copy, the other is API documentation -- so
  * this is a second axis rather than a second copy, the same distinction
- * `AI_MODEL_VENDOR` and `isGroqModel` make.
+ * `AI_MODEL_VENDOR` and `vendorForModel` make.
  *
  * Which tools are OFFERED, and why not all of them
  * ---------------------------------------------

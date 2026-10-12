@@ -5,7 +5,7 @@
 /* eslint-disable max-len */
 import { NextFunction, Request, Response, Router } from "express"
 import {
-    anthropicAICore, openaiAICore, groqAICore, jinaAICrawl,
+    anthropicAICore, chatCompletionsCore, jinaAICrawl,
     arachnefly, scrapeMiddleware, webrainJobs, webrainSerp,
     webrainScrape, webrainSearch, webrainExtract, webrainPdf,
     monitorCreate, monitorList, monitorUpdate, monitorDelete,
@@ -18,7 +18,8 @@ import { auth, db } from "../app/config"
 import { BillingSnapshot, getBillingAccessMode, isChargeableAccessMode, resolveBillingPricingPolicy } from "../domain"
 // Not in the domain barrel, so imported from the module itself -- the shape
 // `bff/api.ts` already uses for the same type.
-import { AiVendorId, resolveAiKeySource } from "../domain/user-ai-settings.domain"
+import { aiVendorDescriptor, resolveAiKeySource, type ProviderKeyId } from "../domain/user-ai-settings.domain"
+import { isScrapeProviderId } from "../domain/scrape-providers.domain"
 import { API_KEY_INDEX_COLLECTION, apiKeyIndexId, isPlatformApiKey } from "../domain/api-key-index.domain"
 import { consumeBillingCredits, releaseBillingCredits, reserveBillingCredits } from "../app/billing-credits"
 import { requirePermission } from "./authz.middleware"
@@ -439,7 +440,7 @@ class ReverseAPIProxy {
      * @param {*} vendor
      * @return {*}
      */
-    requirePaidOrByok(vendor: AiVendorId) {
+    requirePaidOrByok(vendor: ProviderKeyId) {
         return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
             const uid = req.user?.uid
             if (!uid) {
@@ -460,15 +461,59 @@ class ReverseAPIProxy {
                     now,
                 )
 
-                if (accessMode !== "free") {
+                // A READER is not a chat vendor, so it has no plan entitlement to resolve: the
+                // scrape catalogue's `byok` is the whole rule.
+                //
+                // This branch has to come FIRST, and that is not a style choice --
+                // `aiVendorDescriptor` THROWS for anything absent from `AI_VENDORS`. `jina`
+                // was in that catalogue for exactly this reason, which is the defect the
+                // branch closes: a reader was described as a chat vendor so that this call
+                // would not throw.
+                if (isScrapeProviderId(vendor)) {
+                    const keysSnap = await db.doc(`users/${uid}/private/ai`).get()
+                    const stored = (keysSnap.data() ?? {})[vendor]
+                    const hasKey =
+                        stored !== undefined && stored !== null && stored !== ""
+
+                    if (!hasKey) {
+                        // `jina` is BYOK because its upstream accepts a per-caller credential
+                        // rather than requiring one, so a caller without a key has nothing to
+                        // call it with. There is no platform route to fall back to.
+                        res.status(402).json({
+                            error: "payment_required",
+                            code: "payment_required",
+                            message: "Your own key is required for this provider",
+                        })
+                        return
+                    }
+
+                    req.accessMode = accessMode
+                    next()
+                    return
+                }
+
+                // Past this point `vendor` is an `AiVendorId`: the branch above returned for
+                // every scrape provider, and TypeScript narrows on the guard.
+                //
+                // A vendor the platform holds NO key for cannot be served by a plan, so a
+                // paid caller is checked for their own key exactly like a free one.
+                // Delegating that case to `requirePaidAccess` would admit them and then hand
+                // `keyFor` an empty platform key, which surfaces as the vendor's own 401: a
+                // plan upgrade buying a broken request, and precisely the confusion
+                // `resolveAiKeySource` exists to prevent.
+                const platformFunded = aiVendorDescriptor(vendor).internalKey
+
+                if (accessMode !== "free" && platformFunded) {
                     await this.requirePaidAccess(req, res, next)
                     return
                 }
 
-                // The free branch asks the DOMAIN rather than restating its rule. That
-                // is the whole point: the defect this fixes was the guard holding one
-                // opinion and `resolveAiKeySource` holding another, so the verdict comes
-                // from the resolver and the guard only enacts it.
+                // The branch below asks the DOMAIN rather than restating its rule. That is
+                // the whole point: the defect this fixes was the guard holding one opinion
+                // and `resolveAiKeySource` holding another, so the verdict comes from the
+                // resolver and the guard only enacts it. It now runs for a free caller AND
+                // for a paid caller on a BYOK-only vendor, which is why the plan is no
+                // longer what selects it.
                 //
                 // Presence only, and deliberately loose about the entry's SHAPE: the
                 // authoritative read is `readUserAiKey`, and re-deriving its legacy
@@ -490,7 +535,15 @@ class ReverseAPIProxy {
                     return
                 }
 
-                req.accessMode = "free"
+                // The caller's REAL mode, not the literal `"free"`. `keyFor` reads this to
+                // decide whether the platform may pay, and a paid caller now reaches here on
+                // a BYOK-only vendor -- labelling them free would be a lie told to the one
+                // function that acts on it.
+                //
+                // No credit is charged on this path, deliberately: the platform pays nothing
+                // for a call made with the caller's own key, so billing for it would be
+                // charging them for someone else's quota.
+                req.accessMode = accessMode
                 next()
             } catch (error) {
                 console.error("Paid-or-Byok gate check failed:", error)
@@ -799,8 +852,11 @@ class ReverseAPIProxy {
         }
 
         try {
-            const actorMembership = await getOrganizationMembership(actorUid, orgId)
-            const memberMembership = await getOrganizationMembership(memberUid, orgId)
+            // Neither lookup feeds the other, and the route needs both before it can decide.
+            const [actorMembership, memberMembership] = await Promise.all([
+                getOrganizationMembership(actorUid, orgId),
+                getOrganizationMembership(memberUid, orgId),
+            ])
 
             if (!actorMembership?.role || !memberMembership?.role) {
                 res.status(404).json({ error: "not_found", code: "not_found" })
@@ -1201,8 +1257,12 @@ class ReverseAPIProxy {
         this.router.post("/orgs/invitations/:invitationId/accept", requirePermission("organization", "read"), this.acceptInvitation)
 
         this.router.post("/anthropic/messages", this.requirePaidAccess, requirePermission("ai", "execute"), anthropicAICore) // Search for Markets
-        this.router.post("/openai/chat/completions", this.requirePaidAccess, requirePermission("ai", "execute"), openaiAICore)
-        this.router.post("/groq/chat/completions", this.requirePaidAccess, requirePermission("ai", "execute"), groqAICore)
+        // The two vendor cores became one factory. This table is the LEGACY registration
+        // set and is not mounted (the live one is `bff/api.ts`, which also carries the
+        // BYOK-only vendors and `requirePaidOrByok`); it is kept compiling rather than
+        // expanded, so there is one place that decides what the platform actually serves.
+        this.router.post("/openai/chat/completions", this.requirePaidAccess, requirePermission("ai", "execute"), chatCompletionsCore("openai"))
+        this.router.post("/groq/chat/completions", this.requirePaidAccess, requirePermission("ai", "execute"), chatCompletionsCore("groq"))
 
         /**
          * Crawler Management by crawlagent

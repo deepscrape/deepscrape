@@ -1,4 +1,4 @@
-import { OpenAITokenDetails, DropDownOption } from "../types";
+import { AI_VENDORS, AIModel, AiVendorId, DropDownOption, ModelFacts, OpenAiChatVendor, OpenAITokenDetails, modelCodeForVendor } from "../types";
 import { sanitizeJSON } from "./global.fun";
 
 /**
@@ -28,7 +28,17 @@ export function chatInBatchesAI(messages: { role: string, content: string }[], s
     messages.push({ role: 'user', content: 'ALL PARTS SENT' })
 }
 
-export function calculateOpenAICost(usage: OpenAITokenDetails, model: string): number {
+/**
+ * The cost of one completion, in USD.
+ *
+ * `facts` is optional and comes from the live model registry, which is the only source that
+ * knows about a model shipped after this file was written. Pass it whenever the caller has it.
+ * @param {OpenAITokenDetails} usage The token counts the vendor reported.
+ * @param {string} model The model id the call was made with.
+ * @param {ModelFacts} facts Facts for that model, when the caller has them.
+ * @return {number} The cost in USD, or 0 when the model cannot be priced.
+ */
+export function calculateOpenAICost(usage: OpenAITokenDetails, model: string, facts?: ModelFacts): number {
 
 
     const MODEL_COSTS: Record<string, { promptCost: number; completionCost: number }> = {
@@ -55,17 +65,48 @@ export function calculateOpenAICost(usage: OpenAITokenDetails, model: string): n
         "claude-opus-5-5": { promptCost: 0.004, completionCost: 0.02 },
         "claude-sonnet-5-5": { promptCost: 0.002, completionCost: 0.01 },
         "claude-haiku-5-5": { promptCost: 0.0001, completionCost: 0.0005 },
-        // The rows above are RETAINED on purpose even though the picker no longer
-        // offers those models. `calculateOpenAICost` THROWS on an unknown model, and
-        // `app-llm-scrape` and `operations` still default to `claude-3-5-haiku-20241022`
-        // -- so deleting a row here is a breaking change in two other components, not
-        // housekeeping. Retire those defaults first, then prune.
+        // The rows above are RETAINED on purpose, and they are now the only ones serving their
+        // models: the picker offers each vendor's LIVE catalogue, and a vendor can still return
+        // one of these older ids. An unknown model is priced at ZERO rather than fatal (see
+        // below), so a missing row is a silently wrong cost, not a visible failure. Deleting a
+        // row is therefore a pricing decision, never housekeeping.
         // Add more models here if needed
     }
-    // Retrieve cost rates for the model from the configuration object
-    const costRates = MODEL_COSTS[model];
+    // Retrieve cost rates for the model from the configuration object.
+    //
+    // A model with no rate row is priced at ZERO rather than fatal. That reverses what this
+    // did, and the reason is that the model list is no longer a constant in this file: the
+    // picker reads each vendor's LIVE catalogue, so the set of models a caller can
+    // legitimately pick is not knowable here. A throw would turn "the vendor shipped a
+    // model" into "chat is broken", which is the exact failure the live catalogue exists
+    // to avoid.
+    //
+    // The ceiling is real and worth naming: an unpriced model under-reports OUR cost, so
+    // the spend figure shown in `app-llm-scrape` reads zero for it. That is a DISPLAY gap,
+    // not a billing error -- credits are charged by the route guard from the pricing
+    // policy, not from this number.
+    //
+    // The live registry is consulted FIRST, which closes most of that gap. The table below is a
+    // fallback for the models it does not carry, and the table is the part that rots -- its own
+    // rows are admitted guesses and it cannot know a model shipped after it was written. Nothing
+    // belongs here that the registry already answers.
+    //
+    // Both rates are required before the registry counts as an answer: half a price (input
+    // known, output not) would under-report silently, so a partial pair falls through to the
+    // table instead.
+    const liveRates = facts?.inputCostPerMTokens !== undefined && facts.outputCostPerMTokens !== undefined
+        ? {
+            // per MILLION -> per 1K, the unit the arithmetic below uses. This is the only place
+            // the two units meet, and the wrong factor mis-states a price by 1000x, so the
+            // conversion sits next to the division that reads it.
+            promptCost: facts.inputCostPerMTokens / 1000,
+            completionCost: facts.outputCostPerMTokens / 1000,
+        }
+        : undefined;
+    const costRates = liveRates ?? MODEL_COSTS[model];
     if (!costRates) {
-        throw new Error("Unknown model specified");
+        console.warn(`No rate row for model "${model}"; reporting its cost as zero.`);
+        return 0;
     }
 
     // Extract token counts
@@ -118,20 +159,23 @@ const GROQ_MODELS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Whether a model name is served by Groq rather than OpenAI.
+ * Which vendor a model NAME belongs to, when the name alone can say so.
  *
- * Both vendors speak the same wire protocol, so this is the ONLY difference
- * between the two paths: which endpoint and which key the request carries. An
- * unrecognised name answers OpenAI, which is what the old `default` did -- but
- * stated once, here, instead of buried in the fourth position of a tuple.
+ * This answers the TRANSPORT question -- which endpoint and which key -- and it can only
+ * answer it for the two vendors that spoke the OpenAI wire protocol when it was written.
+ * Every vendor added since is reached by naming it EXPLICITLY at the call site, from the
+ * dropdown's `code`, because guessing a company from a model name is how a request ends up
+ * at the wrong one on the caller's key. `openai` for an unrecognised name preserves what
+ * the boolean this replaced did; the explicit path is what the app actually uses.
  *
- * ponytail: unknown names still fall through to OpenAI, matching the previous
- * behaviour exactly. Flip to a throw when a misroute is ever observed in the wild.
+ * ponytail: the unknown name still falls through to OpenAI. Make it a throw once every
+ * caller passes an explicit vendor -- the chat already does, and `app-llm-scrape`'s
+ * dropdown codes are the remaining one.
  * @param {string} modelName The model id as the caller named it.
- * @return {boolean} True when the name belongs to Groq's family.
+ * @return {OpenAiChatVendor} The vendor the name belongs to, or `openai` when the name is new.
  */
-export const isGroqModel = (modelName: string): boolean =>
-  GROQ_MODELS.has(modelName)
+export const vendorForModel = (modelName: string): OpenAiChatVendor =>
+  GROQ_MODELS.has(modelName) ? 'groq' : 'openai'
 
 export function setAIModel(newModel: DropDownOption[]) {
     const model = [
@@ -157,6 +201,61 @@ export function setAIModel(newModel: DropDownOption[]) {
         { name: 'claude-fable-5-1', code: 'claude' },
     ]
     newModel.push(...model)
+}
+
+/**
+ * The models a picker may offer, and the vendors it could not offer any for.
+ *
+ * Pure and exported so the spec can pin the rule, which is the interesting part:
+ *
+ *  - a vendor the server resolved as USABLE is offered with its LIVE catalogue;
+ *  - a vendor whose catalogue could not be read falls back to the static list rather than
+ *    disappearing, because a vendor being briefly unreachable must not empty the picker;
+ *  - a vendor with neither is reported in `missing` rather than guessed at. Inventing a model
+ *    id here is how a list rots, and offering none is the honest answer.
+ *
+ * A vendor the caller CANNOT use is omitted rather than shown greyed. The refusal is already
+ * stated in the settings panel, and `DropdownComponent` has no disabled state -- adding one
+ * would change a component every picker in the app shares, for this single case.
+ *
+ * `allowed: null` means the server has not said who is usable (the settings call failed, or has
+ * not returned). The static list is then offered unfiltered, which is exactly the behaviour
+ * from before this gating existed: an empty picker would be a NEW failure mode introduced by a
+ * feature meant to prevent one.
+ *
+ * It lives beside `setAIModel` rather than in a component because THREE pickers need the same
+ * rule -- chat, the LLM-scrape form and operations. Three copies of this is three answers to
+ * "which models may I choose" that drift the first time one of them is edited.
+ * @param {readonly AiVendorId[] | null} allowed The vendors the server resolved as usable.
+ * @param {Readonly<Record<string, string[]>>} live The fetched catalogue, per vendor.
+ * @param {readonly AIModel[]} fallback The static list, already built by `setAIModel`.
+ * @return {{ options: AIModel[]; missing: AiVendorId[] }} The options, and the gaps.
+ */
+export function buildModelOptions(
+    allowed: readonly AiVendorId[] | null,
+    live: Readonly<Record<string, string[]>>,
+    fallback: readonly AIModel[],
+): { options: AIModel[]; missing: AiVendorId[] } {
+    const options: AIModel[] = [];
+    const missing: AiVendorId[] = [];
+    const candidates = allowed ?? AI_VENDORS.map(vendor => vendor.id);
+
+    for (const vendor of candidates) {
+        const code = modelCodeForVendor(vendor);
+        const fetched = live[vendor] ?? [];
+        const ids = fetched.length > 0
+            ? fetched
+            : fallback.filter(model => model.code === code).map(model => model.name);
+
+        if (ids.length === 0) {
+            missing.push(vendor);
+            continue;
+        }
+
+        options.push(...ids.map(name => ({ name, code })));
+    }
+
+    return { options, missing };
 }
 
 export function constructCookiesforJina(cookies: { name: string, value: string, domain: string }[]): string {

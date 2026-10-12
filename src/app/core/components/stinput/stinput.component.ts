@@ -39,7 +39,7 @@ export class StinputComponent {
 
   // ponytail: passthroughs so numeric/date fields can reuse this control too.
   // Omitting `type` keeps the original label-based password heuristic.
-  @Input() type?: 'text' | 'password' | 'number' | 'email' | 'tel' | 'date'
+  @Input() type?: 'text' | 'password' | 'number' | 'email' | 'tel' | 'date' | 'url'
   @Input() min?: number | string
   @Input() max?: number | string
 

@@ -19,12 +19,13 @@ import type {
   AuthAction,
   AuthResource,
 } from '../functions/src/domain/authz.domain'
-import type { AiVendorId } from '../functions/src/domain/user-ai-settings.domain'
+import type { ProviderKeyId } from '../functions/src/domain/user-ai-settings.domain'
 import {
   anthropicAICore,
-  groqAICore,
+  chatCompletionsCore,
+  customChatCompletionsCore,
   jinaAICrawl,
-  openaiAICore,
+  modelsCore,
 } from '../functions/src/handlers/ai_handler'
 import { scrapeMiddleware } from '../functions/src/handlers/scrape'
 import { webrainSerp } from '../functions/src/handlers/serp'
@@ -108,16 +109,19 @@ const paid = bind(proxy.requirePaidAccess, proxy)
 const access = bind(proxy.resolveAccess, proxy)
 
 /**
- * Paid, OR free with the caller's own key for that vendor.
+ * Paid, OR free with the caller's own key for that provider.
  *
- * A factory rather than a flat middleware because the vendor is a property of the
- * ROUTE, and the guard has to know which field of the caller's key document to look
- * for. The paid path is delegated inside `requirePaidAccess`, so pricing and credit
- * reservation stay in one place instead of being restated per route.
+ * A factory rather than a flat middleware because the provider is a property of the ROUTE, and
+ * the guard has to know which field of the caller's key document to look for.
+ *
+ * Typed on `ProviderKeyId`, not `AiVendorId`: `/api/jina/:url` is one of its callers, and jina
+ * is a scrape provider. Keying this factory by the AI union is what once required a reader to be
+ * listed as a chat vendor. The paid path is delegated inside `requirePaidAccess`, so pricing and
+ * credit reservation stay in one place instead of being restated per route.
  * @param {*} vendor
  * @return {*}
  */
-const paidOrByok = (vendor: AiVendorId): ExpressMiddleware =>
+const paidOrByok = (vendor: ProviderKeyId): ExpressMiddleware =>
   proxy.requirePaidOrByok(vendor) as unknown as ExpressMiddleware
 
 /**
@@ -221,13 +225,60 @@ api.post(
   '/api/anthropic/messages',
   h(guard([paidOrByok('anthropic'), perm('ai', 'execute'), anthropicAICore])),
 )
+// One registration per vendor, spelled out rather than generated from the wire table: the
+// route-parity gate reads these literals, and a loop would hide seven routes from it.
+//
+// `paidOrByok` for all of them, including the BYOK-only five. For those the guard now
+// requires the caller's own key even on a paid plan, because there is no platform key for
+// it to spend -- so a plan upgrade cannot buy a request that would 401 at the vendor.
 api.post(
   '/api/openai/chat/completions',
-  h(guard([paidOrByok('openai'), perm('ai', 'execute'), openaiAICore])),
+  h(guard([paidOrByok('openai'), perm('ai', 'execute'), chatCompletionsCore('openai')])),
 )
 api.post(
   '/api/groq/chat/completions',
-  h(guard([paidOrByok('groq'), perm('ai', 'execute'), groqAICore])),
+  h(guard([paidOrByok('groq'), perm('ai', 'execute'), chatCompletionsCore('groq')])),
+)
+api.post(
+  '/api/deepseek/chat/completions',
+  h(guard([paidOrByok('deepseek'), perm('ai', 'execute'), chatCompletionsCore('deepseek')])),
+)
+api.post(
+  '/api/fireworks/chat/completions',
+  h(guard([paidOrByok('fireworks'), perm('ai', 'execute'), chatCompletionsCore('fireworks')])),
+)
+api.post(
+  '/api/qwen/chat/completions',
+  h(guard([paidOrByok('qwen'), perm('ai', 'execute'), chatCompletionsCore('qwen')])),
+)
+api.post(
+  '/api/kimi/chat/completions',
+  h(guard([paidOrByok('kimi'), perm('ai', 'execute'), chatCompletionsCore('kimi')])),
+)
+api.post(
+  '/api/openrouter/chat/completions',
+  h(guard([paidOrByok('openrouter'), perm('ai', 'execute'), chatCompletionsCore('openrouter')])),
+)
+api.post(
+  '/api/gemini/chat/completions',
+  h(guard([paidOrByok('gemini'), perm('ai', 'execute'), chatCompletionsCore('gemini')])),
+)
+// The caller's own endpoint and key. Nothing is platform-supplied for this vendor, so a
+// stored key is the only way in and `paidOrByok` admits a free caller who has one.
+api.post(
+  '/api/custom/chat/completions',
+  h(guard([paidOrByok('custom'), perm('ai', 'execute'), customChatCompletionsCore])),
+)
+// The model catalogue, one dynamic route for every vendor.
+//
+// Deliberately NOT behind `paidOrByok`: a caller who has not added a key yet still needs
+// to see what a vendor offers before deciding to bring one, and the handler answers an
+// empty list instead of spending anything when it has no usable key. The vendor is
+// validated in the handler, so a path that names a vendor we do not know is a 404 rather
+// than an outbound request.
+api.get(
+  '/api/models/:vendor',
+  h(guard([perm('ai', 'execute'), modelsCore])),
 )
 // `scrapeMiddleware` chooses the provider (SCRAPE_PROVIDER) rather than naming one
 // here, so both hosts reach the same implementation without a code change in each.
@@ -595,9 +646,14 @@ api.post('/api/jobs/crawl/failed', async ({ request, set }) => {
 })
 
 // `/jina/:url` keeps the URL as a single path segment, as Express did.
-// `paidOrByok('jina')` for the same reason as the three AI cores: jina is a BYOK
-// vendor too, and leaving one of the four on the old rule is how the guard and the
-// domain module drift apart again.
+//
+// `paidOrByok('jina')` because jina is a provider a caller can key themselves, NOT because it
+// is an AI vendor -- it is a reader, listed in `scrape-providers.domain.ts` beside `crawl4ai`
+// and `webrain`. The guard branches on that catalogue for it rather than on `AI_VENDORS`, which
+// is what stopped a reader having to masquerade as a chat vendor to be reached.
+//
+// `perm('ai', 'execute')` stays: it is the capability every BYOK caller already holds, and
+// swapping it for `crawl` would relabel the check without changing who passes it.
 api.get(
   '/api/jina/:url',
   h(guard([paidOrByok('jina'), perm('ai', 'execute'), jinaAICrawl])),

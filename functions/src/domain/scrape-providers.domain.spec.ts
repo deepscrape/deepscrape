@@ -47,6 +47,17 @@ describe("scrape provider catalogue", () => {
     assert.deepEqual(withChallenge.map((provider) => provider.id), ["webrain"])
   })
 
+  it("only a provider the caller brings a credential for is BYOK", () => {
+    // The invariant the provider-wide key store depends on, and the reason `jina` is described
+    // here rather than in the AI vendor catalogue: its credential is CHOSEN BY THIS CATALOGUE.
+    //
+    // `crawl4ai` and `webrain` are our own deployments -- their secret is platform-to-worker,
+    // and a caller has nothing to bring -- so marking one BYOK would offer a key input the route
+    // never reads. `jina`'s upstream is the one that accepts a per-caller credential.
+    const byok = SCRAPE_PROVIDERS.filter((provider) => provider.byok)
+    assert.deepEqual(byok.map((provider) => provider.id), ["jina"])
+  })
+
   it("the fallback provider is real and free-selectable", () => {
     assert.ok(isScrapeProviderId(FALLBACK_PROVIDER))
     assert.equal(providerDescriptor(FALLBACK_PROVIDER).minAccess, "free")

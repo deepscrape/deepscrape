@@ -11,12 +11,12 @@ import { catchError } from 'rxjs/internal/operators/catchError';
 import { map } from 'rxjs/internal/operators/map';
 import { ClipboardbuttonComponent } from 'src/app/core/components/clipboardbutton/clipboardbutton.component';
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component';
-import { AiToolCall, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, newToolCallAccumulator, openaiToolTurns, resolveToolCall, setAIModel } from 'src/app/core/functions';
+import { AiToolCall, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, newToolCallAccumulator, openaiToolTurns, resolveToolCall } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
-import { AiAPIService, AiFetchService, BucketStorageService, DeploymentService, SearchService, WebrainToolsService } from 'src/app/core/services';
+import { AiAPIService, AiFetchService, AiModelsService, BucketStorageService, DeploymentService, SearchService, WebrainToolsService } from 'src/app/core/services';
 // Not in the services barrel: every existing consumer imports it direct, so this follows them.
 import { BrowserSessionService } from 'src/app/core/services/browser-session.service';
-import { AIModel, SERP_DEFAULTS, SerpEngine } from 'src/app/core/types';
+import { AIModel, AiVendorId, SERP_DEFAULTS, SerpEngine, vendorForModelCode } from 'src/app/core/types';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -24,7 +24,20 @@ export interface ChatMessage {
 }
 
 export interface ChatRequest {
+    /**
+     * The transport dialect. `claude` is Anthropic's own protocol; `openai` is the shape
+     * every other vendor speaks, including the caller's own endpoint.
+     */
     provider: 'claude' | 'openai';
+    /**
+     * Which vendor, which is what decides the endpoint and the key.
+     *
+     * Separate from `provider` because `provider` is a PROTOCOL and this is a COMPANY:
+     * nine vendors share the `openai` shape, and the model list a model id was picked from
+     * is the only thing that says which one it belongs to. Anthropic is the one vendor where
+     * the two collapse, and it is spelled out here rather than inferred.
+     */
+    vendor: AiVendorId;
     messages: Array<{ role: string; content: string }>;
 }
 
@@ -62,11 +75,14 @@ export function buildRequest(
     system: string,
 ): ChatRequest {
     if (modelCode === 'claude') {
-        return { provider: 'claude', messages };
+        return { provider: 'claude', vendor: 'anthropic', messages };
     }
 
     return {
         provider: 'openai',
+        // The code names the vendor for every vendor except Anthropic, and a code the table
+        // does not know is one of OpenAI's own -- see `vendorForModelCode`.
+        vendor: vendorForModelCode(modelCode) ?? 'openai',
         messages: [{ role: 'system', content: system }, ...messages],
     };
 }
@@ -87,13 +103,22 @@ export class ChataiComponent {
     /** ngx-markdown's clipboard directive wants the component type, not an instance. */
     readonly clipboardButton = ClipboardbuttonComponent;
 
-    /** Filled by `setAIModel`; the dropdown renders this array directly. */
-    readonly model: AIModel[] = [];
+    private readonly aiModels = inject(AiModelsService);
+
+    /**
+     * The models this dropdown offers, and the vendors it has none for.
+     *
+     * Owned by `AiModelsService` because three pickers share this list and must agree on it -- it
+     * is the decision that sets whose model a request is posted to. The list arrives in two passes
+     * (the static fallback, then each vendor's live catalogue), which is why it is a signal at
+     * all: an array mutated after the first render never reaches an OnPush template.
+     */
+    readonly models = this.aiModels.models;
+    readonly unlistedVendors = this.aiModels.unlistedVendors;
 
     readonly modelAI = new FormControl<AIModel>(
-        // Must be one of `setAIModel`'s entries, or the dropdown renders with nothing
-        // selected. Moved with the model migration: the previous default was a 3.x model
-        // that is no longer offered, and the 3.x generation is retired at the vendor.
+        // An initial value only. It is repaired against the real list the moment the list moves,
+        // because a dropdown whose value is not among its options renders with NOTHING selected.
         { name: 'claude-haiku-5-5', code: 'claude' },
         { nonNullable: true, validators: [Validators.required] },
     );
@@ -126,7 +151,14 @@ export class ChataiComponent {
     private readonly system = "You are deepscrape's assistant. Reply in concise markdown.";
 
     constructor() {
-        setAIModel(this.model);
+        this.aiModels.load();
+
+        // Repairs the selection every time the list moves. Not cosmetic: the list is filled in two
+        // passes, and a selection that is not among its options leaves the dropdown blank.
+        effect(() => {
+            this.models();
+            this.modelAI.setValue(this.aiModels.selectionFor(this.modelAI.value), { emitEvent: false });
+        });
 
         // Keeps the newest token in view while a reply streams. `scroller()` is undefined
         // during SSR, so this stays browser-only without touching `document`.
@@ -192,9 +224,17 @@ export class ChataiComponent {
         const offered = offerTools ? availableTools() : undefined;
         const accumulator = newToolCallAccumulator();
 
+        // The vendor the model was picked from. The guard is for the TYPE rather than the
+        // runtime: on this branch it is never Anthropic (that is `claude`), so an undefined
+        // vendor here could only mean a code the table does not know -- and `sendToOpenAI`
+        // then resolves from the name, as it always did.
+        //
+        // `jina` needs no clause: it is a scrape provider and is not in `AiVendorId`.
+        const vendor = request.vendor === 'anthropic' ? undefined : request.vendor;
+
         const source = claude
             ? this.ai.sendToClaudeAI(messages, this.modelAI.value.name, this.system, offered)
-            : this.ai.sendToOpenAI(messages, this.modelAI.value.name, undefined, offered);
+            : this.ai.sendToOpenAI(messages, this.modelAI.value.name, undefined, offered, vendor);
 
         source
             .pipe(takeUntilDestroyed(this.destroyRef))

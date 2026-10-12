@@ -5,12 +5,12 @@ import { throwError } from 'rxjs/internal/observable/throwError';
 import { catchError } from 'rxjs/internal/operators/catchError';
 import { map } from 'rxjs/internal/operators/map';
 import { tap } from 'rxjs/internal/operators/tap';
-import { environment } from 'src/environments/environment';
-import { anthropicTools, arrayBufferToString, customUrlEncoder, isGroqModel, openaiTools, sanitizeJSON, type AiToolSpec } from '../functions';
-import { API_ANTHROPIC, API_GROQAI, API_JINAAI, API_OPENAI } from '../variables';
+import { anthropicTools, arrayBufferToString, customUrlEncoder, openaiTools, sanitizeJSON, vendorForModel, type AiToolSpec } from '../functions';
+import { API_ANTHROPIC, API_CUSTOM, API_DEEPSEEK, API_FIREWORKS, API_GEMINI, API_GROQAI, API_JINAAI, API_KIMI, API_MODELS, API_OPENAI, API_OPENROUTER, API_QWEN } from '../variables';
 import { scan } from 'rxjs/internal/operators/scan';
-import { claudeAiApiStreamData, CrawlPack, CrawlTask, JinaOptions } from '../types';
+import { ModelCatalogue, ModelFacts, OpenAiChatVendor, claudeAiApiStreamData, CrawlPack, CrawlTask, JinaOptions } from '../types';
 import { filter } from 'rxjs/internal/operators/filter';
+import { of } from 'rxjs/internal/observable/of';
 import { Subject } from 'rxjs/internal/Subject';
 import { from } from 'rxjs/internal/observable/from';
 import { mergeMap } from 'rxjs/internal/operators/mergeMap';
@@ -23,32 +23,116 @@ import { AuthService } from './auth.service';
 export class AiAPIService {
 
   private claudeAiEndpoint: string
-  private openAiEndpoint: string
-
-  private groqAiEndpoint: string
 
   private jinaAiEndpoint: string
 
+  /**
+   * Where each OpenAI-compatible vendor's chat completion goes.
+   *
+   * A table keyed by the vendor union rather than a chain of ternaries: a vendor added to
+   * the catalogue and forgotten here is a compile error, whereas a fallback chain would
+   * have quietly posted the caller's request to whichever vendor came first. `anthropic`
+   * is absent because it has its own method and its own path, and is not this protocol.
+   */
+  private readonly chatEndpoints: Readonly<Record<OpenAiChatVendor, string>> = {
+    openai: `${API_OPENAI}/chat/completions`,
+    groq: `${API_GROQAI}/chat/completions`,
+    deepseek: `${API_DEEPSEEK}/chat/completions`,
+    fireworks: `${API_FIREWORKS}/chat/completions`,
+    qwen: `${API_QWEN}/chat/completions`,
+    kimi: `${API_KIMI}/chat/completions`,
+    openrouter: `${API_OPENROUTER}/chat/completions`,
+    gemini: `${API_GEMINI}/chat/completions`,
+    // The caller's own endpoint: the same wire protocol, at a URL the platform never chose.
+    custom: `${API_CUSTOM}/chat/completions`,
+  }
 
   private subjectClaudeAI = new Subject<claudeAiApiStreamData>()
   private subjectOpenAI = new Subject<{ content: string, usage: any | null, role: any | null }>()
 
   constructor(private http: HttpClient, private authService: AuthService) {
 
-    // Replace with actual AI API endpoint each model
-    this.claudeAiEndpoint = API_ANTHROPIC + '/messages'  // Updated URL
-    this.openAiEndpoint = API_OPENAI + '/chat/completions' // Updated URL
-    this.groqAiEndpoint = API_GROQAI + '/chat/completions' // Updated URL
-    this.jinaAiEndpoint = API_JINAAI + '/'// Updated URL
+    this.claudeAiEndpoint = `${API_ANTHROPIC}/messages`
+    this.jinaAiEndpoint = `${API_JINAAI}/`
 
     // initialize auth state
     // this.authService.initAuth()
   }
 
+  /**
+   * The endpoint a model call goes to.
+   *
+   * The caller's vendor wins when supplied; otherwise the name is resolved, which can only
+   * work for the two vendors `vendorForModel` knows. Passing the vendor explicitly is what
+   * the chat does, because a picker that lists a vendor's live models is the only place
+   * that actually knows which vendor a model id came from.
+   * @param {string} modelName The model id, for the name-based fallback.
+   * @param {OpenAiChatVendor} vendor The vendor, when the caller knows it.
+   * @return {string} The path to post to.
+   */
+  private endpointFor(modelName: string, vendor?: OpenAiChatVendor): string {
+    return this.chatEndpoints[vendor ?? vendorForModel(modelName)]
+  }
+
+  /**
+   * A vendor's catalogue: the model ids it publishes, plus the facts the platform could
+   * attach to them.
+   *
+   * Never errors. A vendor that is down, unconfigured or not entitled answers an empty list,
+   * and the caller keeps its static fallback -- so the signature carries an empty catalogue
+   * rather than an error the picker would have to branch on for a case that has a perfectly
+   * good answer.
+   *
+   * The facts ride on the same reply rather than a request of their own: the picker already
+   * calls this once per vendor, so describing the models it just returned is free here. An
+   * empty `facts` is the ordinary outcome for a vendor the registry does not cover, which is
+   * why the caller treats it as "no better answer available" rather than as a failure.
+   * @param {OpenAiChatVendor | 'anthropic'} vendor The vendor whose catalogue to read.
+   * @return {Observable<ModelCatalogue>} The ids and facts, empty when unavailable.
+   */
+  fetchModels(vendor: OpenAiChatVendor | 'anthropic'): Observable<ModelCatalogue> {
+    return this.http.get<{ models?: unknown; facts?: unknown }>(`${API_MODELS}/${vendor}`, {
+      headers: new HttpHeaders({
+        // The CALLER's token, in the header `isJwtAuth` reads. The provider key is the
+        // BFF's to resolve with `keyFor`, exactly as on the chat path.
+        'Authorization': `Bearer ${this.authService.token}`,
+      }),
+    }).pipe(
+      map(body => ({
+        models: Array.isArray(body?.models)
+          ? body.models.filter((id): id is string => typeof id === 'string')
+          : [],
+        facts: this.readFacts(body?.facts),
+      })),
+      catchError(() => of({ models: [], facts: {} })),
+    )
+  }
+
+  /**
+   * The `facts` member of a catalogue reply, as a record.
+   *
+   * Guarded rather than cast: the reply comes from a route that also proxies a third party,
+   * and a `facts` that is not an object would feed `undefined` prices into the cost
+   * arithmetic. An empty record is the same answer as a registry outage, which the caller
+   * already handles, so there is nothing to report.
+   * @param {unknown} value The raw member.
+   * @return {Record<string, ModelFacts>} The facts, or an empty record.
+   */
+  private readFacts(value: unknown): Record<string, ModelFacts> {
+    return value !== null && typeof value === 'object' ? value as Record<string, ModelFacts> : {}
+  }
+
   sendToJinaAI(url: string, options: JinaOptions, cookies?: string): Observable<string> {
 
-    const encodedUrl = environment.JINAAI_API_KEY !== '' ? url : customUrlEncoder(url);
-    console.log("encodedUrl: ", encodedUrl)
+    // Always encoded, because the BFF ALWAYS decodes (`customUrlDecoder` in `jinaAICrawl`).
+    //
+    // This used to branch on `environment.JINAAI_API_KEY`, and both halves of that were wrong.
+    // It read a PROVIDER KEY's presence in the browser, which is the class of thing the header
+    // work in this file removed: the browser has no business reasoning about which provider keys
+    // the deployment holds. And the branch was inverted -- with a key configured it sent the RAW
+    // url, which the BFF then handed to a base64+reverse+Caesar decoder, so it would have
+    // mangled the target. It never fired only because the key is blank in every environment file.
+    const encodedUrl = customUrlEncoder(url);
     const jinaAiReaderEndpoint: string = this.jinaAiEndpoint + encodedUrl
     const cookie = options.forwardCookies && cookies && cookies?.length ? { "X-Set-Cookie": cookies } : null // If cookies are provided, append them to the headers, )
     const headers = new HttpHeaders({
@@ -140,9 +224,10 @@ export class AiAPIService {
   /**
    * One OpenAI-shaped round WITH tools, non-streaming, returning the parsed reply.
    *
-   * The vendor is decided by `isGroqModel` exactly as `sendToOpenAI` decides it, so
-   * a Groq model offered a tool reaches Groq rather than OpenAI. They speak the same
-   * wire protocol, so endpoint and key are the whole difference.
+   * The vendor is resolved the same way `sendToOpenAI` resolves it -- from the caller when
+   * it is given, otherwise from the model name -- so a Groq model offered a tool reaches
+   * Groq rather than OpenAI. They speak the same wire protocol, so endpoint and key are
+   * the whole difference.
    *
    * `tools` is omitable rather than sent empty on the answering round: an empty
    * array is rejected by some providers, and offering tools there would invite
@@ -150,16 +235,16 @@ export class AiAPIService {
    * @param {Array} messages The conversation, system turn included by the caller.
    * @param {string} modelName The model id.
    * @param {Array} tools The specs to offer; omit for the answering round.
+   * @param {OpenAiChatVendor} vendor The vendor, when the caller knows it.
    * @return {Observable<unknown>} The parsed response body.
    */
   askOpenAiOnce(
     messages: { role: string, content: unknown }[],
     modelName: string,
-    tools?: readonly AiToolSpec[]
+    tools?: readonly AiToolSpec[],
+    vendor?: OpenAiChatVendor
   ): Observable<unknown> {
-    const apiEndpoint = isGroqModel(modelName)
-      ? this.groqAiEndpoint
-      : this.openAiEndpoint
+    const apiEndpoint = this.endpointFor(modelName, vendor)
 
     return this.http.post(apiEndpoint, {
       model: modelName,
@@ -342,16 +427,19 @@ export class AiAPIService {
     // return this.subjectClaudeAI.asObservable()
   }
 
-  sendToOpenAI(content: string | { role: string, content: unknown }[], modelName: string = 'gpt-4o-mini', sys?: string, tools?: readonly AiToolSpec[]): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
+  sendToOpenAI(content: string | { role: string, content: unknown }[], modelName: string = 'gpt-4o-mini', sys?: string, tools?: readonly AiToolSpec[], vendor?: OpenAiChatVendor): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
 
-    // Groq and OpenAI speak the same wire protocol, so the model name is the whole
-    // decision: it picks the endpoint and the key, and nothing else.
+    // Every OpenAI-compatible vendor speaks the same wire protocol, so the vendor is the
+    // whole decision: it picks the endpoint and the key, and nothing else. Taken from the
+    // caller when given -- a model id read out of a vendor's live catalogue is only
+    // attributable to the vendor it was read from -- and otherwise resolved from the name,
+    // which can only work for the two vendors `vendorForModel` knows.
     const model = modelName
-    const isGroq = isGroqModel(modelName)
-    const apiEndpoint = isGroq ? this.groqAiEndpoint : this.openAiEndpoint
-    // Kept: `chooseUsage` below reads it to pick which vendor's `usage` field to
-    // parse, and Groq nests that field differently.
-    const apiName = isGroq ? 'groqai' : 'openai'
+    const resolved = vendor ?? vendorForModel(modelName)
+    const apiEndpoint = this.chatEndpoints[resolved]
+    // Kept: `chooseUsage` below reads it to pick which vendor's `usage` field to parse, and
+    // Groq nests that field differently from everyone else.
+    const apiName = resolved === 'groq' ? 'groqai' : 'openai'
 
     const headers = new HttpHeaders({
       // The CALLER's token, in the header `isJwtAuth` reads. The provider key is the

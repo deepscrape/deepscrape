@@ -54,6 +54,75 @@
     </div>
   }
 
+  <!-- Reader keys, with the ENGINES rather than with the AI vendors: a reader reads a URL, it
+       does not complete a chat. Driven by the server's `byok` list, so a second reader needs
+       no edit here. -->
+  @if (readerKeys().length) {
+    <div class="flex flex-col gap-2 border-t border-gray-200 pt-3 dark:border-gray4/40">
+      <h3 class="text-sm font-semibold text-gray-800 dark:text-gray1">
+        {{ 'AI_KEYS.READER_KEYS' | translate }}
+      </h3>
+
+      @for (reader of readerKeys(); track reader.id) {
+        <div
+          class="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white/70 p-3 dark:border-gray4/40 dark:bg-gray6/60">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-sm font-medium text-gray-800 dark:text-gray1">
+              {{ reader.labelKey | translate }}
+            </span>
+            <span
+              class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+              [class]="reader.hasKey
+                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-100/[0.08] dark:text-gray-300'">
+              {{ (reader.hasKey ? 'AI_KEYS.HAS_KEY' : 'AI_KEYS.NO_KEY') | translate }}
+            </span>
+          </div>
+
+          @if (reader.hasKey) {
+            <div class="flex items-center justify-end">
+              <button
+                type="button"
+                [disabled]="busyReader() !== null"
+                (click)="removeReader(reader.id)"
+                class="inline-flex items-center gap-2 rounded-full border border-pink-300/60 px-4 py-1.5 text-sm font-medium text-pink-600 transition-colors hover:bg-pink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400 dark:border-pink-500/40 dark:text-pink-300 dark:hover:bg-pink-950/30 dark:disabled:border-gray4/40 dark:disabled:text-gray-500">
+                @if (busyReader() === reader.id) {
+                  <span
+                    class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                    aria-hidden="true"></span>
+                }
+                {{ (busyReader() === reader.id ? 'AI_KEYS.REMOVING' : 'AI_KEYS.REMOVE') | translate }}
+              </button>
+            </div>
+          } @else {
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+              <app-stinput
+                class="block w-full"
+                type="password"
+                leftIcon="vpn_key"
+                [control]="readerControlFor(reader.id)"
+                [label]="'AI_KEYS.KEY_LABEL' | translate"
+                [errorLabel]="'AI_KEYS.KEY_HINT' | translate"></app-stinput>
+
+              <button
+                type="button"
+                [disabled]="isReaderSaveDisabled(reader.id)"
+                (click)="saveReader(reader.id)"
+                class="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-cyan-700 px-5 text-sm font-medium text-white transition-colors hover:bg-cyan-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400">
+                @if (busyReader() === reader.id) {
+                  <span
+                    class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"
+                    aria-hidden="true"></span>
+                }
+                {{ (busyReader() === reader.id ? 'AI_KEYS.SAVING' : 'AI_KEYS.SAVE') | translate }}
+              </button>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  }
+
   @if (isLoading() && !isLoaded()) {
     <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
       <span
@@ -106,6 +175,16 @@
         </p>
       }
 
+      <!-- The address in use, for the one vendor whose address is the caller's. Outside the
+           key branch on purpose: it stays visible once a key is stored, which is exactly when
+           someone wants to check what they typed. Empty for every other vendor, so this
+           renders nothing for them. -->
+      @if (storedEndpoint(vendor.id)) {
+        <p class="break-all text-xs text-gray-500 dark:text-gray-300">
+          {{ 'AI_KEYS.ENDPOINT_STORED' | translate }}: {{ storedEndpoint(vendor.id) }}
+        </p>
+      }
+
       @if (acceptsKey(vendor.id)) {
         @if (hasKey(vendor.id)) {
           <div class="flex items-center justify-end">
@@ -123,6 +202,22 @@
             </button>
           </div>
         } @else {
+          <!-- The custom vendor's own address, above its key.
+               `type="url"` and NOT a password field: this is not a secret, and the stored
+               value is shown above once one is set.
+               The input appears only while the vendor has no key, because the address and the
+               key are ONE stored entry -- removing the key removes both, so there is nothing
+               to update independently. -->
+          @if (vendor.id === 'custom') {
+            <app-stinput
+              class="block w-full"
+              type="url"
+              leftIcon="link"
+              [control]="endpointControl"
+              [label]="'AI_KEYS.ENDPOINT_LABEL' | translate"
+              [errorLabel]="'AI_KEYS.ENDPOINT_HINT' | translate"></app-stinput>
+          }
+
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
             <!-- `type="password"` so a key is not shoulder-readable while typed.
                  The control's value is never interpolated anywhere. -->

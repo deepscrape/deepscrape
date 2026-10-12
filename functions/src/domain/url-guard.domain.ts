@@ -190,3 +190,54 @@ export const cdpEndpointFrom = (value: unknown): string | undefined => {
     return undefined
   }
 }
+
+/** The scheme a caller-supplied AI endpoint may use. */
+const AI_ENDPOINT_PROTOCOLS: readonly string[] = ["https:"]
+
+/**
+ * A caller-supplied AI endpoint, or undefined when we will not send a key to it.
+ *
+ * The sibling of `cdpEndpointFrom` for the BYOK custom provider, and `https:`-only
+ * where that one also allows `ws:`. The reason is what TRAVELS: this endpoint receives
+ * the caller's own API key in an `Authorization` header, and plain `http:` would put
+ * that credential on the wire in clear text. A crawler target carries no such payload,
+ * which is why `isSafeTargetUrl` accepts `http:` and this does not.
+ *
+ * Userinfo is refused for the same reason as the CDP sibling: the endpoint is echoed
+ * back to the caller and written into their settings document, so `https://user:pass@`
+ * would persist a credential in a field nothing treats as secret. The key belongs in
+ * the key field, which goes to Secret Manager.
+ *
+ * Private space is refused through `isBlockedHost` -- the load-bearing half, since this
+ * is an attacker-chosen address: without it a caller could aim the BFF at
+ * `169.254.169.254` and read the metadata service through the proxy. The limit
+ * documented at the top of this file applies unchanged: the HOST is judged, not where
+ * DNS sends it.
+ *
+ * A trailing slash is trimmed so the stored base and the request paths built from it
+ * cannot produce a doubled separator.
+ * @param {*} value The caller-supplied endpoint.
+ * @return {*} The trimmed endpoint, or undefined when it is not one we call.
+ */
+export const aiEndpointFrom = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined
+  }
+  const trimmed = value.trim().replace(/\/+$/, "")
+  if (trimmed.length === 0 || trimmed.length > TARGET_URL_MAX_LENGTH) {
+    return undefined
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    if (!AI_ENDPOINT_PROTOCOLS.includes(parsed.protocol)) {
+      return undefined
+    }
+    if (parsed.username || parsed.password) {
+      return undefined
+    }
+    return isBlockedHost(parsed.hostname) ? undefined : trimmed
+  } catch {
+    return undefined
+  }
+}

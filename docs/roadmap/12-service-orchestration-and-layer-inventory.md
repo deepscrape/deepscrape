@@ -39,10 +39,11 @@ Measured by reading the route declarations in `bff/api.ts`. 12 families:
 | `/api/monitor/*` | 5 | `access` + `perm('crawl','execute')` | webrain + Firestore monitor docs |
 | `/api/browser/session*` | 5 | `access` + `perm('crawl','execute')` | Firestore session + arachnefly frames |
 | `/api/storage/*` | 5 | `perm('storage', read/write)` | S3/Tigris |
-| `/api/{anthropic,openai,groq}/*` | 3 | `paid` + `perm('ai','execute')` | vendor APIs (keys never reach the browser) |
+| `/api/{anthropic,openai,groq,deepseek,fireworks,qwen,kimi,openrouter,gemini,custom}/*` | 10 | `paidOrByok(<provider>)` + `perm('ai','execute')` | vendor APIs (keys never reach the browser) |
+| `/api/models/:vendor` | 1 | `perm('ai','execute')` | vendor model catalogues (200 + empty list when unavailable) |
 | `/api/webrain/config*` | 3 | `perm('platform', …)` — **platform admin only** | webrain control plane |
 | `/api/admin/machines`, `/api/admin/sessions` | 2 | `perm('platform','read')` — **read-only** | Firestore projections |
-| `/api/jina/:url` | 1 | `paid` + `perm('ai','execute')` | JinaAI reader |
+| `/api/jina/:url` | 1 | `paidOrByok('jina')` + `perm('ai','execute')` | JinaAI reader — a **scrape provider**, not an AI vendor |
 | `/status`, `/services/contact` | 2 | public (CSRF-bypassed on purpose) | functions |
 
 ---

@@ -275,16 +275,33 @@ beyond 8.2. Two consequences:
 
 Ordering that works, and step 3 is a DELETION:
 
-1. A vendor row in `AI_VENDORS` + a BFF route + a key. DeepSeek and Qwen are OpenAI-compatible
-   (`https://api.deepseek.com`, and DeepSeek also exposes an `/anthropic` base URL), so one
-   parameterised route covers them — no new transport.
-2. `GET /api/models/:vendor` — the server calls that vendor's Models API with the PLATFORM key
-   and caches in Redis. Never the browser; that is what 8.2 just cost.
-3. `setAIModel`'s constant is deleted and the dropdown renders the server's reply.
+**SHIPPED 2026-10-12.** Seven vendors were added, not two: DeepSeek, Fireworks, Qwen
+(DashScope), Kimi (Moonshot), OpenRouter and Gemini, all BYOK-only (`internalKey: false`), plus
+`custom` — the caller's own endpoint, key and model list, guarded by `aiEndpointFrom`
+(https-only, no userinfo, no private space) and fetched with `redirect: "error"`.
 
-Adding Qwen or DeepSeek to the CLIENT list first would ship broken dropdown items: the client
-routes by vendor (`isGroqModel`, else the OpenAI endpoint), so a `deepseek-chat` name would be
-posted to OpenAI and 400.
+Three places this diverged from the plan above, each deliberately:
+
+1. **Chat routes are one registration PER VENDOR, not one parameterised route.** The
+   route-parity gate reads those path literals; a loop over a table would hide eight routes
+   from it. The model catalogue IS one dynamic route (`/api/models/:vendor`), because there the
+   vendor is validated in the handler.
+2. **`setAIModel`'s constant was NOT deleted — it is the fallback.** The dropdown renders the
+   vendor's live catalogue first and falls back to the static list per vendor, so a vendor that
+   is briefly down, keyless or unentitled cannot empty the picker. Only vendors the SERVER
+   resolved as usable are fetched.
+3. **No Redis caching of the catalogue.** Nothing has asked for it and the response is small;
+   add it when the extra vendor round trips show up in latency or spend.
+
+The transport is still one code path: every OpenAI-compatible vendor is a row in
+`VENDOR_WIRE` in `functions/src/handlers/ai_handler.ts`, and Gemini needed no special case
+because Google publishes an OpenAI-compatible base.
+
+The note below was right and is now moot — routing is explicit, from the picked model's `code`:
+
+> Adding Qwen or DeepSeek to the CLIENT list first would ship broken dropdown items: the client
+> routes by vendor (`isGroqModel`, else the OpenAI endpoint), so a `deepseek-chat` name would be
+> posted to OpenAI and 400.
 
 ### 7.4 Where chat tool-calling stands: the loop runs
 

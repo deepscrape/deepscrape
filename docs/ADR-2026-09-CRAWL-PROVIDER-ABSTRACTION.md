@@ -491,16 +491,24 @@ functions/src/infrastructure/syncaiapi.ts
 :979  // this.router.put("/crawl/job/:tempTaskId/cancel",      crawlagent.cancelTask)
 ```
 
-`bff/api.ts` registers **23 routes** and none of them is a crawl job route. The
-only crawl/Jina/AI routes on either host are:
+`bff/api.ts` registers the platform's routes, and none of them is a crawl job
+route. The crawl/Jina/AI routes are:
 
 ```
 POST /api/crawl                    → crawl4aiCore
 GET  /api/jina/:url                → jinaAICrawl
 POST /api/anthropic/messages       → anthropicAICore
-POST /api/openai/chat/completions  → openaiAICore
-POST /api/groq/chat/completions    → groqAICore
+POST /api/{openai,groq,deepseek,fireworks,qwen,kimi,openrouter,gemini}
+     /chat/completions             → chatCompletionsCore(<vendor>)
+POST /api/custom/chat/completions  → customChatCompletionsCore
+GET  /api/models/:vendor           → modelsCore
 ```
+
+*(Inventory refreshed 2026-10-12. `openaiAICore` and `groqAICore` were two
+ninety-line copies of one streaming body; they are now the single
+`chatCompletionsCore` factory keyed by a wire table. The count that used to sit
+in the sentence above is gone rather than updated — it drifted every time a
+route was added, and the route list is the fact worth keeping.)*
 
 So these **live, routed** client calls currently reach nothing:
 

@@ -1542,9 +1542,13 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
             ? Math.round((this.registeredGuestsCount / this.guestCount) * 10000) / 100
             : 0;
 
-        // Fetch user and login data
-        this.userCount = await this.firestoreService.getAuthenticatedUserCount();
-        const loginCountsByDay = await this.firestoreService.getLoginCountsByDay(7);
+        // Fetch user and login data -- two independent queries, so they go out together rather
+        // than one after the other on a dashboard that is already loading a lot.
+        const [userCount, loginCountsByDay] = await Promise.all([
+            this.firestoreService.getAuthenticatedUserCount(),
+            this.firestoreService.getLoginCountsByDay(7),
+        ]);
+        this.userCount = userCount;
 
         // Calculate metrics
         this.totalLogins = Object.values(loginCountsByDay).reduce((a, b) => a + b, 0);

@@ -2162,8 +2162,12 @@ export const sendDeviceVerificationCode = onCall(
     }
 
     try {
-      const userRecord = await adminAuth.getUser(userId)
-      const userSnap = await db.doc(`users/${userId}`).get()
+      // Two different backends -- Identity Toolkit and Firestore -- and neither value feeds the
+      // other, so they go out together. This is the path every verification-code request takes.
+      const [userRecord, userSnap] = await Promise.all([
+        adminAuth.getUser(userId),
+        db.doc(`users/${userId}`).get(),
+      ])
       const userData = userSnap.data() as Record<string, unknown> | undefined
       const enrolledFactors = userRecord.multiFactor?.enrolledFactors || []
       /**

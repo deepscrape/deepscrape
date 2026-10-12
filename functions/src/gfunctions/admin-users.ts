@@ -568,11 +568,18 @@ async function performAccountDeletion(params: {
   const userData = userSnapshot.data() as UserDoc
   const authUser = await adminAuth.getUser(targetUid).catch(() => null)
 
+  // Awaited BEFORE the literal rather than inside it: two awaits inside one object literal run
+  // one after the other, and these two queries are independent of each other.
+  const [platformAdminCount, soleOwnedOrgIdsWithOtherMembers] = await Promise.all([
+    countPlatformAdmins(),
+    findSoleOwnedSharedOrgs(targetUid),
+  ])
+
   const eligibility = evaluateAccountDeletionEligibility({
     isDeleted: Boolean(userData?.profileStatus?.isDeleted),
     isPlatformAdmin: userData?.role === "admin" || isBootstrapAdminEmail(authUser?.email),
-    platformAdminCount: await countPlatformAdmins(),
-    soleOwnedOrgIdsWithOtherMembers: await findSoleOwnedSharedOrgs(targetUid),
+    platformAdminCount,
+    soleOwnedOrgIdsWithOtherMembers,
   })
 
   if (!eligibility.allowed) {

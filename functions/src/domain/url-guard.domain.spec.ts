@@ -176,7 +176,7 @@ describe("aiEndpointFrom", () => {
     assert.equal(aiEndpointFrom("ftp://api.example.com"), undefined)
   })
 
-  it("refuses private space, so the BFF cannot be aimed at the metadata service", () => {
+  it("refuses private space, so the metadata service is unreachable", () => {
     // The load-bearing half: this is an attacker-chosen address, and without the host
     // policy a caller could proxy the cloud metadata service through a chat request.
     for (const url of [

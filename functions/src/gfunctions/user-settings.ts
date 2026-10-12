@@ -306,11 +306,13 @@ export const getMySettings = onCall(OPTIONS, async (request) => {
       // needs no edit here. The set is the whole catalogue and not `selectable`, deliberately:
       // `jina` serves the `jina` route only, so it never appears in the crawl-route list the
       // engines are chosen from.
-      keys: SCRAPE_PROVIDERS.filter((provider) => provider.byok).map((provider) => ({
-        id: provider.id,
-        labelKey: provider.labelKey,
-        hasKey: keyed.includes(provider.id),
-      })),
+      keys: SCRAPE_PROVIDERS
+        .filter((provider) => provider.byok)
+        .map((provider) => ({
+          id: provider.id,
+          labelKey: provider.labelKey,
+          hasKey: keyed.includes(provider.id),
+        })),
     },
     ai: {
       vendors: availableVendors(accessMode, keyed).map((resolution) => ({
@@ -418,7 +420,7 @@ export const setMyAiKey = onCall(OPTIONS, async (request) => {
   if (isCustom && !storedEndpoint) {
     throw new HttpsError(
       "invalid-argument",
-      "A custom vendor needs an https endpoint that is not in private address space."
+      "A custom vendor needs an https endpoint outside private address space."
     )
   }
   if (!isCustom && endpoint !== undefined) {

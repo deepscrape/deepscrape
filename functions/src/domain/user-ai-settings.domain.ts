@@ -228,7 +228,8 @@ export const AI_VENDORS: readonly AiVendorDescriptor[] = [
     byok: true,
     envKeyName: "CUSTOM_AI_API_KEY",
     notes:
-      "Your own OpenAI-compatible endpoint, key and models. Nothing is platform-supplied.",
+      "Your own OpenAI-compatible endpoint, key and models. " +
+      "Nothing is platform-supplied.",
   },
 ] as const
 
@@ -270,7 +271,7 @@ export const isAiVendorId = (value: unknown): value is AiVendorId =>
  * by the narrow union is what forced `jina` to masquerade as a chat vendor, so the width of
  * THIS function is the fix rather than a detail.
  * @param {unknown} value The candidate the caller supplied.
- * @return {value is ProviderKeyId} Whether a key may be stored against it.
+ * @return {boolean} Whether a key may be stored against it.
  */
 export const isProviderKeyId = (value: unknown): value is ProviderKeyId =>
   isAiVendorId(value) || isScrapeProviderId(value)

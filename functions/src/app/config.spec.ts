@@ -1,3 +1,5 @@
+/* eslint-disable indent */
+/* eslint-disable object-curly-spacing */
 import { strict as assert } from "node:assert"
 import { describe, it } from "node:test"
 import { versionsToRetire } from "./config"
@@ -20,7 +22,10 @@ describe("versionsToRetire", () => {
     it("keeps the version just written and retires the rest", () => {
         const versions = [version(1), version(2)]
 
-        assert.deepEqual(versionsToRetire(versions, versions[1].name), [versions[0].name])
+        assert.deepEqual(
+            versionsToRetire(versions, versions[1].name),
+            [versions[0].name],
+        )
     })
 
     it("retires MORE than one when a secret has accumulated versions", () => {
@@ -39,7 +44,10 @@ describe("versionsToRetire", () => {
         // every LATER version enabled.
         const versions = [version(1, "DESTROYED"), version(2), version(3)]
 
-        assert.deepEqual(versionsToRetire(versions, versions[2].name), [versions[1].name])
+        assert.deepEqual(
+            versionsToRetire(versions, versions[2].name),
+            [versions[1].name],
+        )
     })
 
     it("never retires the version it was told to keep", () => {
@@ -48,11 +56,20 @@ describe("versionsToRetire", () => {
     })
 
     it("retires everything when it was told to keep nothing valid", () => {
-        assert.deepEqual(versionsToRetire([version(1)], null), [version(1).name])
-        assert.deepEqual(versionsToRetire([version(1)], undefined), [version(1).name])
+        assert.deepEqual(
+            versionsToRetire([version(1)], null),
+            [version(1).name],
+        )
+        assert.deepEqual(
+            versionsToRetire([version(1)], undefined),
+            [version(1).name],
+        )
     })
 
     it("ignores a malformed listing entry", () => {
-        assert.deepEqual(versionsToRetire([{name: null}, {state: "ENABLED"}], "keep"), [])
+        assert.deepEqual(
+            versionsToRetire([{name: null}, {state: "ENABLED"}], "keep"),
+            [],
+        )
     })
 })

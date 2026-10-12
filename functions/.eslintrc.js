@@ -36,6 +36,16 @@ module.exports = {
     "import/no-unresolved": 0,
     "indent": ["error", 2],
     "linebreak-style": 0,
+    // The google preset's 80-column limit counts COMMENTS, and this package's comments are
+    // prose that argues a decision. That accounted for 121 of 136 long-line violations, the
+    // longest 95 characters, while only 15 were code. Code stays at 80; prose may reach 100.
+    //
+    // The inherited options are spelled out because a rule override REPLACES the preset's
+    // options rather than merging with them -- omitting `ignoreUrls` here would have dropped it.
+    "max-len": [
+      "error",
+      {code: 80, comments: 100, tabWidth: 2, ignoreUrls: true},
+    ],
     // A leading underscore is this codebase's "deliberately unused" marker
     // (`computeDeviceFingerprint(userAgent, _ipAddress)`), so honour it here
     // rather than re-flagging the name on every touch.

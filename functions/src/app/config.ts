@@ -22,19 +22,33 @@ import { env, functionsEnvJson } from "../config/env"
 const secretManager = new SecretManagerServiceClient()
 const EMULATOR_SECRET_PREFIX = "emulator-secret://"
 const EMULATOR_SECRETS_COLLECTION = "_emulator_secrets"
-export const stripeSecretParam = defineSecret("STRIPE_SECRET_KEY")
-export const stripeWebhookSecretParam =
-    defineSecret("STRIPE_WEBHOOK_SECRET")
+// STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are deliberately NOT `defineSecret`
+// params any more. Both come from the `FUNCTIONS_ENV_JSON` secret, the same blob every
+// other Stripe value in `config/env.ts` reads, and `resolveStripeSecret` /
+// `getStripeWebhookSecret` below already fall back to it when the param lookup misses.
+//
+// Why they had to go: declaring them AND supplying them as plain environment variables
+// made Cloud Run reject the entire revision with "Secret environment variable overlaps
+// non secret environment variable: STRIPE_SECRET_KEY", which failed the deploy of every
+// billing function at once (2026-10-15). ONE source per name is the rule, and for these
+// two the blob is that source.
+//
+// Note the precedence this creates, because it is a trap: `getConfigValue` reads
+// `process.env` FIRST and only then the blob. So a plain STRIPE_SECRET_KEY in
+// `functions/.env` would SHADOW the blob rather than conflict with it. Remove it from
+// `functions/.env` or the blob is not actually the source it is meant to be.
 // Holds the Firebase service account JSON in production
 // (stored in Secret Manager). Must be listed in `secrets`
 // on any Cloud Function that cold-starts a new instance.
 export const serviceAccountKeyParam =
     defineJsonSecret("FIRE_SERVICE_ACCOUNT_KEY")
-export const stripeSecrets = [stripeSecretParam, stripeWebhookSecretParam,
-    functionsEnvJson]
-// Sandbox twin of the pair above, bound to the test-mode webhook function.
-// A secret name holds one value per project, so the sandbox cannot share the
-// live names: a sandbox delivery verified with the live secret is a 400.
+// Keeps its exported name and array SHAPE on purpose: ~40 call sites bind
+// `secrets: stripeSecrets`, and every one of them now binds exactly `FUNCTIONS_ENV_JSON`.
+export const stripeSecrets = [functionsEnvJson]
+// Sandbox twin, and it IS still a real param pair -- not for symmetry, because it is not
+// a duplicate: a secret name holds one value per project, so the sandbox cannot share the
+// live names, and a sandbox delivery verified with the live secret is a 400. These two
+// live under `*_TEST`, which nothing else supplies, so there is no overlap to collapse.
 export const stripeTestSecretParam = defineSecret("STRIPE_SECRET_KEY_TEST")
 export const stripeTestWebhookSecretParam =
     defineSecret("STRIPE_WEBHOOK_SECRET_TEST")

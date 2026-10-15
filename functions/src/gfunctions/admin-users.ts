@@ -1530,8 +1530,16 @@ export const purgeDeletedAccounts = onSchedule(
   {
     schedule: "30 3 * * *",
     timeZone: "UTC",
-    // Without these the Stripe secret is unbound and any billing check throws.
-    secrets: [functionsEnvJson, ...stripeSecrets],
+    // Do NOT prepend `functionsEnvJson` here. `stripeSecrets` ALREADY contains it
+    // (`app/config.ts` builds it as `[stripeSecretParam, stripeWebhookSecretParam,
+    // functionsEnvJson]`), so `[functionsEnvJson, ...stripeSecrets]` deployed
+    // `FUNCTIONS_ENV_JSON` TWICE and Cloud Run refused the whole revision with
+    // "Duplicate secret environment variable: FUNCTIONS_ENV_JSON" -- which is how
+    // this function failed to CREATE on 2026-10-15.
+    //
+    // The Stripe secret is still bound, which is what this option is for: it is the
+    // first element of that same array, and without it any billing check throws.
+    secrets: stripeSecrets,
   },
   async () => {
     const now = new Date()

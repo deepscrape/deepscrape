@@ -187,15 +187,21 @@ export const toolFailure = (
  * @param {string} name The worker tool.
  * @param {string | undefined} accessMode The entitlement resolved upstream.
  * @param {Record<string, unknown>} args The worker arguments.
+ * @param {string} [uid] The verified caller, so their OWN egress pool applies
+ *   when they have configured one.
+ * @param {string} [callerToken] The caller's ID token, so a session tool can be
+ *   run on the machine they leased instead of on a platform worker.
  * @return {Promise<WebrainToolResult>} A normalised result, never a rejection.
  */
 const callTool = async (
   name: string,
   accessMode: string | undefined,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  uid?: string,
+  callerToken?: string
 ): Promise<WebrainToolResult> => {
   try {
-    return await webrainTool(name, accessMode, args)
+    return await webrainTool(name, accessMode, args, uid, callerToken)
   } catch (error) {
     console.error(`webrain ${name} call failed:`, error)
     return {
@@ -605,15 +611,26 @@ interface RouteSpec {
  * The shared tail of every route here: call, map the failure, answer.
  * @param {RouteSpec} spec The route's tool, echo and arguments.
  * @param {string | undefined} accessMode The entitlement resolved upstream.
+ * @param {string | undefined} uid The verified caller, for their egress pool.
+ * @param {string | undefined} callerToken The caller's ID token, for their own
+ *   leased machine when they have one and the tool may run there.
  * @param {Response} res The response.
  * @return {Promise<void>} Resolves once the response has been written.
  */
 const runRoute = async (
   spec: RouteSpec,
   accessMode: string | undefined,
+  uid: string | undefined,
+  callerToken: string | undefined,
   res: Response
 ): Promise<void> => {
-  const call = await callTool(spec.tool, accessMode, spec.args)
+  const call = await callTool(
+    spec.tool,
+    accessMode,
+    spec.args,
+    uid,
+    callerToken
+  )
   const failure = toolFailure(call)
 
   if (failure) {
@@ -683,6 +700,8 @@ const route = (
     await runRoute(
       { tool, echo, echoValue: mapped.echo, args: mapped.args },
       req.accessMode,
+      req.user?.uid,
+      req.authToken,
       res
     )
   }
@@ -904,3 +923,221 @@ export const webrainExtract = route(
  * @return {Promise<void>} Resolves once the response has been written.
  */
 export const webrainPdf = route(pdfArguments, "webrain_pdf", "op")
+
+/**
+ * The keys of a body that the worker itself declares, copied unchanged.
+ *
+ * An allowlist rather than a passthrough, and for the reason this file's header
+ * gives about `limit` and `url`: a forwarded argument the worker does not
+ * declare is a request that looks accepted and does nothing. Every name passed
+ * here is read from that tool's `inputSchema` in `webrain-mcp/src/tools.rs`.
+ *
+ * Values are deliberately NOT type-checked. The worker validates its own schema
+ * and answers `{"status":"error","message":...}` when it refuses, and
+ * `toolErrorInPayload` already surfaces that as a 502. Re-checking here would
+ * make this file a second copy of `tools.rs` that drifts from it, which is the
+ * coupling the domain layer rejects for the same reason.
+ * @param {*} source The parsed request body.
+ * @param {*} declared The worker's own argument names.
+ * @return {*} Only the declared keys actually present.
+ */
+const declaredOnly = (
+  source: Record<string, unknown>,
+  declared: readonly string[]
+): Record<string, unknown> => {
+  const args: Record<string, unknown> = {}
+
+  for (const name of declared) {
+    if (name in source) {
+      args[name] = source[name]
+    }
+  }
+
+  return args
+}
+
+/**
+ * `webrain_navigate`'s optional arguments, from its own inputSchema.
+ *
+ * `url` is absent because it is mapped past the target guard rather than copied,
+ * and so is `proxy`: it chooses the WORKER's egress, which the platform reserves
+ * for itself (see `domain/scrape-providers.domain.ts`).
+ */
+const NAVIGATE_ARGS: readonly string[] = [
+  "disable_resources",
+  "block_trackers",
+  "network_idle",
+  "wait_selector",
+  "wait_selector_state",
+  "wait_timeout_secs",
+  "css_selector",
+]
+
+/** `webrain_observe`'s required `what`, from its own inputSchema. */
+const OBSERVE_WHAT: readonly string[] = [
+  "state",
+  "a11y",
+  "semantic",
+  "html",
+  "images",
+  "console",
+  "flatten",
+  "fit",
+  "clean",
+  "screenshot",
+  "pixel",
+  "page_info",
+  "annotate",
+  "media",
+]
+
+/**
+ * `webrain_observe`'s optional arguments, from its own inputSchema.
+ *
+ * `what` is absent because it is validated against `OBSERVE_WHAT`, and `url`
+ * (meaningful only for `what=media`) because it is a caller-supplied address the
+ * worker loads, so it crosses the target guard instead of being copied.
+ */
+const OBSERVE_ARGS: readonly string[] = [
+  "role",
+  "filter",
+  "max_nodes",
+  "selector",
+  "full_page",
+  "dir",
+  "tile_width",
+  "tile_height",
+  "max_tiles",
+  "word_threshold",
+  "exclude_social",
+  "wait_ms",
+]
+
+/**
+ * `webrain_guide` -- the worker's own decision guide.
+ *
+ * Takes NO arguments on the worker (`"properties": {}`), so there is nothing to
+ * map. A body is ignored rather than forwarded, because a forwarded argument the
+ * worker ignores looks accepted and does nothing.
+ *
+ * The cheapest route in this module, and the one an agent should reach first: it
+ * is free, starts no browser, holds no state, and answers from the binary's own
+ * documentation rather than from a page.
+ * @param {unknown} _body Ignored: the tool declares no arguments.
+ * @return {ToolArguments} No arguments.
+ */
+export const guideArguments = (_body: unknown): ToolArguments => ({
+  ok: true,
+  args: {},
+  echo: "webrain_guide",
+})
+
+/**
+ * `webrain_navigate` -- go to a URL in a real browser, return page state.
+ *
+ * Exists because `/api/scrape` is plain HTTP and reports `needs_js` when a page
+ * rendered nothing: without this route, that signal names a remedy no caller can
+ * reach. The reply already carries the page's visible text, so the common
+ * escalation is this one call.
+ *
+ * `url` goes past the platform's target guard rather than being forwarded -- it
+ * is a caller-supplied address handed to a worker, the same boundary `/scrape`
+ * and `op=login` cross.
+ * @param {unknown} body The parsed request body.
+ * @return {ToolArguments} The worker arguments, or why the body is refused.
+ */
+export const navigateArguments = (body: unknown): ToolArguments => {
+  const source = asRecord(body) ?? {}
+  const url = targetUrlFrom(source["url"])
+
+  if (!url) {
+    return {
+      ok: false,
+      error: "navigate needs an http(s) url that is not private",
+    }
+  }
+
+  return {
+    ok: true,
+    args: { url, ...declaredOnly(source, NAVIGATE_ARGS) },
+    echo: url,
+  }
+}
+
+/**
+ * `webrain_observe` -- read the CURRENT page without navigating.
+ *
+ * The projection half of the ladder: `navigate` returns visible text, and this
+ * adds what it does not (accessibility tree, semantic tree, console, a
+ * screenshot, media URLs) for a page the caller is already on.
+ *
+ * It reads the current page, so it is in `SHARED_UNSAFE_TOOLS` -- see
+ * `webrain-tools.domain.ts`, which refuses it on a worker nobody leased. That is
+ * also why the session FRAME route asks a session's own machine for its pixels
+ * instead of calling this.
+ * @param {unknown} body The parsed request body.
+ * @return {ToolArguments} The worker arguments, or why the body is refused.
+ */
+export const observeArguments = (body: unknown): ToolArguments => {
+  const source = asRecord(body) ?? {}
+  const what = nonEmptyString(source["what"])?.toLowerCase()
+
+  if (!what || !OBSERVE_WHAT.includes(what)) {
+    return {
+      ok: false,
+      error:
+        `Unknown observe what "${what ?? ""}"; expected one of ` +
+        OBSERVE_WHAT.join(", "),
+    }
+  }
+
+  const args: Record<string, unknown> = {
+    what,
+    ...declaredOnly(source, OBSERVE_ARGS),
+  }
+
+  if ("url" in source) {
+    const url = targetUrlFrom(source["url"])
+    if (!url) {
+      return {
+        ok: false,
+        error: "observe url must be an http(s) url that is not private",
+      }
+    }
+    args["url"] = url
+  }
+
+  return { ok: true, args, echo: what }
+}
+
+/**
+ * `POST /guide` -- `webrain_guide`, the worker's decision guide. FREE.
+ * @param {Request} req
+ * @param {Response} res
+ * @return {Promise<void>} Resolves once the response has been written.
+ */
+export const webrainGuide = route(guideArguments, "webrain_guide", "tool")
+
+/**
+ * `POST /navigate` -- `webrain_navigate`, the browser escalation. PAID.
+ * @param {Request} req
+ * @param {Response} res
+ * @return {Promise<void>} Resolves once the response has been written.
+ */
+export const webrainNavigate = route(
+  navigateArguments,
+  "webrain_navigate",
+  "url"
+)
+
+/**
+ * `POST /observe` -- `webrain_observe`, a projection of the current page. PAID.
+ * @param {Request} req
+ * @param {Response} res
+ * @return {Promise<void>} Resolves once the response has been written.
+ */
+export const webrainObserve = route(
+  observeArguments,
+  "webrain_observe",
+  "what"
+)

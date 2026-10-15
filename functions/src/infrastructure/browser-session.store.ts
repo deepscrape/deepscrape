@@ -39,6 +39,7 @@ import {
   type SessionMode,
   type SessionState,
 } from "../domain/browser-session.domain"
+import type {OwnMachine} from "../domain/webrain-workers.domain"
 
 /** The per-caller subcollection, named once so a test or a rule can reuse it. */
 export const BROWSER_SESSIONS_COLLECTION = "browserSessions"
@@ -582,6 +583,61 @@ export const listSessionMachineIds = async (
   }
 
   return owned
+}
+
+/**
+ * The machine a caller's own chat should drive, when they have one.
+ *
+ * The join `VAULT_TOOLS` used to say was missing: it makes a caller's leased
+ * machine reachable BY UID, which is what a chat tool call carries, rather than
+ * by the session id everything else in this file is addressed by.
+ *
+ * Two filters, both deliberate:
+ *  - a `closed` session is skipped for the reason `listSessionMachineIds` skips
+ *    it -- closing releases the machine, so addressing it would reach a
+ *    container that is no longer this session's;
+ *  - a session with no `machineId` (a BYO one) is skipped, because there is no
+ *    platform machine behind it to address.
+ *
+ * Why "most recently used" rather than "the only one"
+ * ------------------------------------------------
+ * A caller may hold several live sessions and a chat tool call carries no
+ * session id to disambiguate them, so something has to break the tie. The most
+ * recently used one is the one they are working in. That is an order, not a
+ * guess about intent: whichever session wins is one this caller owns, and the
+ * route behind the choice re-checks ownership against their token -- so a wrong
+ * pick is a wrong BROWSER, never another tenant's browser.
+ *
+ * ponytail: derived from `lastUsedAt`, not from what is on screen. Thread the
+ * selected session id through the chat and this tie-break stops being needed.
+ * @param {string} uid The verified caller uid.
+ * @return {Promise<OwnMachine | undefined>} The machine, or undefined.
+ */
+export const ownBrowserMachine = async (
+  uid: string,
+): Promise<OwnMachine | undefined> => {
+  const snapshot = await sessionsRef(uid).get()
+
+  let best: OwnMachine | undefined
+  let bestAt = -1
+
+  for (const doc of snapshot.docs) {
+    const raw = (doc.data() ?? {}) as Record<string, unknown>
+    const record = parseSession(doc.id, raw)
+    const machineId = record?.machineId
+    if (!record || !machineId || record.state === "closed") {
+      continue
+    }
+
+    // `>=`, so a tie resolves to the last document in the snapshot rather than
+    // to whichever order the SDK happened to return.
+    if (record.lastUsedAt >= bestAt) {
+      bestAt = record.lastUsedAt
+      best = {machineId: machineId, sessionId: record.id}
+    }
+  }
+
+  return best
 }
 
 /**

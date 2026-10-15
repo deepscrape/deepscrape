@@ -43,6 +43,7 @@ import { withPlatformProxy } from "../domain/webrain-proxy.domain"
 import {
   decideWebrainTool,
   isEndpointCookieCall,
+  isSessionTool,
   needsCallerOwnWorker,
   needsExclusiveWorker,
   webrainToolRefusalMessage,
@@ -52,8 +53,12 @@ import {
   webrainMcpToken,
   webrainProxyPool,
 } from "./webrain-config.store"
+import {resolveEgress} from "./egress-settings.store"
 import {webrainPayloadSignals} from "../domain/webrain-signals.domain"
 import {acquireWorkerTarget} from "./webrain-worker-acquire"
+import {callMachineTool} from "./browser-session.provisioner"
+import {ownBrowserMachine} from "./browser-session.store"
+import {arachneflyBaseUrl} from "../config/upstreams"
 
 /** A tool result, normalised out of webrain's MCP envelope. */
 export interface WebrainToolResult {
@@ -180,11 +185,24 @@ const transportFailure = (message: string): WebrainToolResult => ({
  * @param {*} name
  * @param {*} accessMode
  * @param {*} args
+ * @param {string} [uid] The verified caller uid. When present, it selects the
+ *   caller's OWN egress pool if they configured one. Omitted by the smoke probe
+ *   and by the internal monitoring checks, which have no caller and therefore
+ *   use the platform pool -- which is also the behaviour for every caller who
+ *   has not configured anything.
+ * @param {string} [callerToken] The caller's Firebase ID token, when the route
+ *   has one. Needed ONLY to drive the caller's own machine, because arachnefly's
+ *   machine route authenticates with that token and checks machine ownership
+ *   against it. A pool call does not use it -- the platform's worker token
+ *   authenticates there -- so this is omitted by the smoke probe, by jobs and by
+ *   monitors, none of which can have a caller's machine.
  */
 export const webrainTool = async (
   name: string,
   accessMode: string | undefined,
-  args: Record<string, unknown> = {}
+  args: Record<string, unknown> = {},
+  uid?: string,
+  callerToken?: string
 ): Promise<WebrainToolResult> => {
   const decision = decideWebrainTool(accessMode, name, args)
   if (!decision.allowed) {
@@ -198,10 +216,10 @@ export const webrainTool = async (
     }
   }
 
-  // A vault tool is refused BEFORE a worker is taken, because no source this
-  // function can reach is the caller's own machine -- see `VAULT_TOOLS`. Admin
-  // is exempt to match the allowlist's own decision (an operator diagnosing a
-  // failure needs the tool that failed), and the smoke probe depends on it.
+  // A vault tool is refused BEFORE a worker is taken, because the vault needs
+  // state that OUTLIVES the machine -- see `VAULT_TOOLS`. Admin is exempt to
+  // match the allowlist's own decision (an operator diagnosing a failure needs
+  // the tool that failed), and the smoke probe depends on it.
   //
   // The cookie pair is the one exception, because it is the one pair that does
   // not need the caller's MACHINE: it needs the caller's BROWSER, which is what
@@ -223,12 +241,58 @@ export const webrainTool = async (
     }
   }
 
+  // A caller's OWN egress pool, resolved BEFORE a worker is taken, and the order
+  // is load-bearing rather than tidy: an exclusive worker is released in the
+  // `finally` further down, so a refusal placed after the acquisition would
+  // strand that lease for its whole TTL. `null` here means "no caller", which is
+  // the smoke probe and the internal monitoring checks -- the platform pool,
+  // exactly as this behaved before a caller could supply their own.
+  // An empty-string uid is read as absent HERE rather than guarded at every call
+  // site: one rule at the consumer beats the same guard copied into four
+  // producers, where one of them would eventually forget it.
+  const callerUid = uid && uid.length > 0 ? uid : undefined
+  const egress = callerUid ? await resolveEgress(callerUid) : null
+
+  if (egress?.kind === "unusable") {
+    // Deliberately NOT a silent fall-back to the platform pool. A caller who
+    // configured their own exits did so to avoid appearing on our addresses --
+    // privacy, geolocation, reputation -- so substituting would undo the exact
+    // thing they configured for, and they would never learn their traffic came
+    // out somewhere they did not choose. See `domain/byo-egress.domain.ts`.
+    return {
+      ok: false,
+      text: "",
+      error:
+        "This account has its own egress proxy configured, but it " +
+        "could not be used, so the request was not sent through the " +
+        "platform's addresses instead. Fix or clear it in Settings " +
+        "and try again.",
+      status: 0,
+    }
+  }
+
+  // A caller who has leased a machine drives THAT browser rather than a pool
+  // worker: it holds their cookies, their logins and the page they are watching,
+  // and they are already being billed for it by the minute. Eligibility is
+  // `SESSION_TOOLS`, the SAME allowlist the machine route enforces for itself,
+  // so this cannot widen what may run on a machine -- it only decides whether we
+  // TRY. A tool outside it (`batch`, `crawl`, `extract`, `pdf`) keeps using the
+  // pool, which is why the check is here and not in the plan.
+  //
+  // Best-effort by design: this is an optimisation for callers who have a
+  // session, so a caller who has none -- or a store that cannot be read -- must
+  // fall through to the pool rather than fail the call.
+  const ownMachine =
+    callerUid && callerToken && isSessionTool(name) ?
+      await ownBrowserMachine(callerUid) :
+      undefined
+
   // One exclusive worker for this call, released in the `finally` below. With
   // no pool configured the single `WEBRAIN_MCP_URL` is still the source;
   // `planWorkerAcquisition` decides, and it deliberately does NOT fall back to
   // that URL once a pool exists -- a fully busy pool must not degrade into the
   // shared worker, which is the sharing the pool was introduced to remove.
-  const acquired = await acquireWorkerTarget(baseUrl())
+  const acquired = await acquireWorkerTarget(baseUrl(), ownMachine)
   if (!acquired.ok) {
     return transportFailure(
       acquired.reason === "all_workers_busy" ?
@@ -239,14 +303,14 @@ export const webrainTool = async (
   }
   const url = acquired.target.url
 
-  // A tool that reads "the current page" needs a worker nobody else is in:
+  // A tool that reads "the current page" needs a browser nobody else is in:
   // on a shared process the caller reads whatever the previous caller left.
   // The check is HERE rather than with the tier decision above because this
-  // is the first point at which the worker is known. `leased` is true only
-  // when an exclusive lease was taken, and the single `WEBRAIN_MCP_URL` is
-  // deliberately unleased -- so refusing at this point costs nothing there,
-  // since the unleased path never took a lease to give back.
-  if (!acquired.target.leased && needsExclusiveWorker(name)) {
+  // is the first point at which the worker is known. `exclusive` is true for a
+  // pool lease AND for the caller's own machine, and false only for the single
+  // `WEBRAIN_MCP_URL` -- so refusing at this point costs nothing there, since
+  // the unleased path never took a lease to give back.
+  if (!acquired.target.exclusive && needsExclusiveWorker(name)) {
     await acquired.target.release()
     return {
       ok: false,
@@ -262,10 +326,14 @@ export const webrainTool = async (
   // be visible to the next request on this instance, or the rotate button does
   // not rotate. The store serves both values from a short TTL cache, so this is
   // not a Secret Manager access per call.
-  const [token, pool] = await Promise.all([
+  const [token, platformPool] = await Promise.all([
     webrainMcpToken(),
     webrainProxyPool(),
   ])
+
+  // Which pool applies was already decided, before the worker was taken: the
+  // caller's own when they have one, otherwise the platform's.
+  const pool = egress?.kind === "tenant" ? egress.pool : platformPool
 
   const options: RequestInit = {
     method: "POST",
@@ -307,9 +375,41 @@ export const webrainTool = async (
   let raw: string
   let status: number
   try {
-    const response = await fetch(url, options)
-    status = response.status
-    raw = await response.text()
+    if (acquired.target.transport.kind === "machine") {
+      // The caller's own machine, reached through arachnefly, which checks its
+      // ownership against THIS caller's token. Note the different credential
+      // from the engine branch below: there the platform authenticates with its
+      // worker token, here the caller authenticates as themselves.
+      //
+      // No proxy is attached beyond what `withPlatformProxy` drops, matching the
+      // machine route's own decision: the machine's address IS the egress the
+      // caller leased, so a proxy they chose would decide where their traffic
+      // appears to come from. Explicitly the platform pool -- an empty one -- so
+      // a tenant egress policy cannot silently reroute a machine call.
+      const call = await callMachineTool({
+        baseUrl: arachneflyBaseUrl(),
+        token: callerToken ?? "",
+        machineId: acquired.target.transport.machine.machineId,
+        tool: name,
+        args: withPlatformProxy(name, accessMode, args, []),
+      })
+      if (!call.ok) {
+        return transportFailure(
+          `caller's machine did not answer: ${call.error}`
+        )
+      }
+      // Re-serialised ON PURPOSE so the reader below stays the ONE reader. It is
+      // a stringify of an object already in hand rather than a second round
+      // trip, and the alternative -- a second interpretation of the same
+      // envelope -- is how two paths start disagreeing about `tokens`, `isError`
+      // and the payload signals, on the branch that has no operator watching it.
+      raw = JSON.stringify(call.json)
+      status = 200
+    } else {
+      const response = await fetch(url, options)
+      status = response.status
+      raw = await response.text()
+    }
   } catch (error) {
     return transportFailure(`worker unreachable: ${String(error)}`)
   } finally {
@@ -317,7 +417,9 @@ export const webrainTool = async (
     // free the moment its body has been read, and holding it through JSON
     // parsing and signal extraction would strand capacity for no benefit.
     // This runs on the error path too, including the `return` above -- the
-    // path that would otherwise strand a worker for the whole TTL.
+    // path that would otherwise strand a worker for the whole TTL. A machine
+    // target's release is a no-op: it holds no pool lease, and releasing it
+    // would end the caller's session.
     await acquired.target.release()
   }
 

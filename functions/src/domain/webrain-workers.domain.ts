@@ -33,6 +33,24 @@ export interface WorkerEntry {
 }
 
 /**
+ * A browser machine the caller has leased for their own session.
+ *
+ * Deliberately NOT a `WorkerEntry`. A worker is an endpoint this platform
+ * operates and serialises behind a lease; a machine is a container the caller
+ * rented by the minute and is already paying for, so the exclusivity that a
+ * worker lease has to CONSTRUCT is a property of the machine itself. That
+ * difference is why the two cannot share a shape: a machine has no URL to reach
+ * (it is addressed by id through arachnefly) and nothing to release back to a
+ * pool -- releasing it would end the caller's session.
+ */
+export interface OwnMachine {
+  /** The Fly machine id arachnefly returned at deploy time. */
+  machineId: string
+  /** The session that holds it, for messages and for the ownership join. */
+  sessionId: string
+}
+
+/**
  * A display label for a worker URL, unique per endpoint.
  *
  * Port-inclusive ON PURPOSE, and this is where a worker pool differs from the
@@ -170,12 +188,14 @@ export const leaseGrantedBy = (result: unknown): boolean =>
  * How a call should obtain a worker.
  *
  * A value rather than a performed lookup so the ORDER is testable, because the
- * order is the safety property: the pool is tried first, and `use-single` is
- * reachable **only** when no pool is configured. Once a pool exists, a fully
- * busy pool must not quietly degrade to the shared single worker -- that is
- * precisely the sharing the pool was introduced to remove.
+ * order is the safety property: the caller's OWN machine wins, then the pool,
+ * then the single worker URL -- and `use-single` is reachable **only** when
+ * neither of the first two applies. Once a pool exists, a fully busy pool must
+ * not quietly degrade to the shared single worker -- that is precisely the
+ * sharing the pool was introduced to remove.
  */
 export type WorkerPlan =
+  {kind: "use-own-machine", machine: OwnMachine} |
   {kind: "try-pool", order: WorkerEntry[]} |
   {kind: "use-single", url: string} |
   {kind: "refuse", reason: WorkerRefusal}
@@ -183,7 +203,12 @@ export type WorkerPlan =
 /**
  * Decide where a call looks for a worker.
  *
- * Three branches, and deliberately no fourth:
+ * Four branches, and the order is the decision:
+ *  - the caller's OWN machine -> use it. It holds their cookies, their logins
+ *    and the page they are watching, so it is both the correct browser for the
+ *    task and the one they are already paying for by the minute. Routing them
+ *    to a platform worker instead would waste what they rented and hand them a
+ *    browser state that is not theirs.
  *  - a configured pool -> try each worker in order until one claims;
  *  - no pool but a single worker URL -> use it, unleased. A lone worker cannot
  *    be pooled, and refusing here would break local dev without making anything
@@ -193,14 +218,27 @@ export type WorkerPlan =
  *
  * `singleUrl` is ignored whenever the pool is non-empty. That is not an
  * oversight; it is the point of the function.
+ *
+ * `ownMachine` is supplied by the caller and NOT looked up here, which is what
+ * keeps this module import-free. Eligibility is also the caller's decision: only
+ * the tools that may legitimately run on a machine are allowed to be planned
+ * onto one, so this function never has to know the allowlist and cannot widen
+ * it by being handed the wrong tool.
  * @param {WorkerEntry[]} pool The configured worker pool.
  * @param {string} singleUrl The legacy single-worker URL.
+ * @param {OwnMachine} [ownMachine] A machine the caller leased, when the tool
+ *   may run on one and they have one.
  * @return {WorkerPlan} Which branch the call takes.
  */
 export const planWorkerAcquisition = (
   pool: WorkerEntry[],
-  singleUrl: string
+  singleUrl: string,
+  ownMachine?: OwnMachine
 ): WorkerPlan => {
+  if (ownMachine) {
+    return {kind: "use-own-machine", machine: ownMachine}
+  }
+
   if (pool.length > 0) {
     return {kind: "try-pool", order: pool}
   }

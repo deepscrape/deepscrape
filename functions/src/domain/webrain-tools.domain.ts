@@ -107,11 +107,15 @@ export const PAID_ONLY_TOOLS: readonly string[] = [
  * fetched, and a paid one cannot. That is not a gap in the tier sets above; it
  * is a gap in what a SHARED process can attribute to anybody.
  *
- * They stay in `SHARED_POOL_TOOLS` deliberately. What they need is not a tier,
- * it is exclusivity: on a LEASED worker the caller owns the current page and
- * both tools are correct, for a free caller as much as for a paid one. So this
- * is a second axis, and it is checked where the worker is known rather than
+ * They stay in `SHARED_POOL_TOOLS` deliberately, so this list is a SUBSET of it:
+ * a second axis ON the shared tier rather than a tier of its own. The spec pins
+ * that. What they need is not a tier, it is exclusivity: on a LEASED worker the
+ * caller owns the current page and both tools are correct, for a free caller as
+ * much as for a paid one. So it is checked where the worker is known rather than
  * where the tier is -- see `webrainTool`.
+ *
+ * The PAID tools needing the same exclusivity are in `EXCLUSIVE_PAID_TOOLS`
+ * below, kept separate precisely so this one keeps the subset contract.
  *
  * Verified: `WEBRAIN_NO_STATE` does NOT cover either of these. It refuses
  * exactly `profiles`, `launch` and `login`. The shared-worker guard therefore
@@ -124,12 +128,90 @@ export const SHARED_UNSAFE_TOOLS: readonly string[] = [
 ]
 
 /**
- * Whether a tool reads state a shared worker cannot attribute to one caller.
+ * PAID tools that need an exclusive worker for the same reason.
+ *
+ * A separate list because `SHARED_UNSAFE_TOOLS` is asserted to be a subset of
+ * `SHARED_POOL_TOOLS`, and every tool here is in `PAID_ONLY_TOOLS` instead: they
+ * are browser or capacity tools first, which is what makes them paid, and page
+ * tools second.
+ *
+ * Two ways they reach a page another caller left:
+ *
+ * - `webrain_navigate` CREATES the current page, and `webrain_observe` then
+ *   reads whichever one the previous caller left there.
+ * - `webrain_batch` opens concurrent tabs and `webrain_crawl` starts a spider,
+ *   which contend with whatever else holds the worker.
+ *
+ * Without this list a paid caller would run any of them on the single unleased
+ * `WEBRAIN_MCP_URL` and read a page the previous caller fetched -- the same
+ * disclosure `SHARED_UNSAFE_TOOLS` prevents, one tier up.
+ *
+ * `webrain_interact` is listed although no route exposes it yet: listing it is
+ * one line and makes the first `/api/interact` fail closed, where omitting it
+ * would make that route a shared-process browser driver by default.
+ *
+ * `webrain_guide` is in NEITHER list. It answers from the binary's own
+ * documentation, touches no page, and holds no state, which is why the shared
+ * pool serves it.
+ */
+export const EXCLUSIVE_PAID_TOOLS: readonly string[] = [
+  "webrain_navigate",
+  "webrain_observe",
+  "webrain_interact",
+  "webrain_batch",
+  "webrain_crawl",
+]
+
+/**
+ * Whether a tool touches page state a shared worker cannot attribute to one
+ * caller.
+ *
+ * One predicate over two lists, because the call site asks one question: may
+ * this run on a worker somebody else may be in? The lists are split by TIER
+ * membership rather than by the answer, which is why the answer is an OR.
  * @param {unknown} name The tool name as the caller supplied it.
  * @return {boolean} True when the tool needs an exclusive worker.
  */
 export const needsExclusiveWorker = (name: unknown): boolean =>
-  typeof name === "string" && SHARED_UNSAFE_TOOLS.includes(name)
+  typeof name === "string" &&
+  (SHARED_UNSAFE_TOOLS.includes(name) ||
+    EXCLUSIVE_PAID_TOOLS.includes(name))
+
+/**
+ * The tools a caller may run on their OWN leased machine.
+ *
+ * A named set rather than "any MCP call the client sends", and the distinction is
+ * the whole safety argument. The route behind this reaches a machine leased to
+ * exactly one tenant, so exclusivity -- and therefore I2 -- is satisfied by the
+ * LEASE rather than by a tier allowlist: that is why these three do not have to
+ * be in `SHARED_POOL_TOOLS` to be legitimate here.
+ *
+ * But "the lease is the boundary" is a claim about a MACHINE, not a licence to
+ * forward whatever tool name a client invents. These three are the ones that make
+ * a session at once usable and inspectable -- open a page, read the page, act on
+ * the page -- and every one is already in `EXCLUSIVE_PAID_TOOLS`, so a caller who
+ * reached them through the POOL would have needed an exclusive worker anyway.
+ * Adding a fourth is a decision, made here, in one place.
+ *
+ * Deliberately absent, and not for tier reasons: `webrain_eval` and
+ * `webrain_eval_in_frame` run arbitrary JavaScript, `webrain_crawl` and
+ * `webrain_batch` are long-running, and `webrain_download` and `webrain_watch`
+ * move unbounded bytes. `webrain_profiles`, `webrain_login` and `webrain_launch`
+ * need state that outlives the machine, which no machine has.
+ */
+export const SESSION_TOOLS: readonly string[] = [
+  "webrain_navigate",
+  "webrain_observe",
+  "webrain_interact",
+]
+
+/**
+ * Whether a tool may be run on a caller's own machine.
+ * @param {unknown} name The tool name as the caller supplied it.
+ * @return {boolean} True when `SESSION_TOOLS` lists it.
+ */
+export const isSessionTool = (name: unknown): boolean =>
+  typeof name === "string" && SESSION_TOOLS.includes(name)
 
 /**
  * Tools that read or write the worker's credential VAULT.
@@ -153,12 +235,14 @@ export const needsExclusiveWorker = (name: unknown): boolean =>
  * `SHARED_UNSAFE` asks whether anyone else is in this worker right now; this
  * asks whether anything outlives my visit to it, which is a different question.
  *
- * Nothing available today is a caller's own worker. `acquireWorkerTarget` has
- * exactly two sources -- the pool, and the single `WEBRAIN_MCP_URL` -- and
- * neither is a tenant's leased machine. That join is roadmap `03` Part A.
- * Until it exists these tools are refused, and this predicate is what makes the
- * future route fail closed instead of quietly writing a customer's credentials
- * into a platform worker.
+ * The join now EXISTS -- `acquireWorkerTarget` takes a caller's own machine as
+ * its first source, and `ownBrowserMachine` resolves it from their live lease --
+ * and it deliberately does NOT satisfy this predicate. What that join offers the
+ * three `SESSION_TOOLS` is a machine for the DURATION of a session, and these
+ * four write to `profiles_dir()` expecting the state to still be there
+ * afterwards, which no ephemeral machine provides. They therefore stay refused,
+ * and this predicate is what keeps the "run it on my machine" route from quietly
+ * writing a customer's credentials into a platform worker.
  */
 export const VAULT_TOOLS: readonly string[] = [
   "webrain_profiles",

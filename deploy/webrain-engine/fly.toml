@@ -30,7 +30,7 @@ primary_region = "iad"
   # downloaded at runtime — so a floating tag would silently change which
   # engine every session talks to, which is the failure class the whole
   # musl/glibc episode belonged to.
-  image = "registry.fly.io/deepscrape-webrain:webrain-2026-10-04"
+  image = "registry.fly.io/deepscrape-webrain:webrain-2026-10-15"
 
 [env]
   # A NON-LOOPBACK bind, which makes the token MANDATORY: webrain refuses to
@@ -73,8 +73,19 @@ primary_region = "iad"
 # Explicit size, because the platform default (shared-cpu-1x / 256 MB) is not
 # obviously survivable for a V8 runtime — and a machine that OOMs under a burst
 # reads as "the engine is flaky" rather than "the machine is too small".
-# No browser is ever launched here (`WEBRAIN_NO_STATE=1` refuses launch), so
-# this is sized for HTTP fetches and JS evaluation, not for chromium.
+#
+# CORRECTION (2026-10-15). This comment used to say "No browser is ever launched
+# here (`WEBRAIN_NO_STATE=1` refuses launch)". That is WRONG, and it was checked
+# against the code rather than assumed. `WEBRAIN_NO_STATE` refuses the STATEFUL
+# tools (`webrain_profiles` / `launch` / `login` / `session` —
+# `webrain-mcp/src/lib.rs:197`), and nothing else. The SERP path is not stateful
+# and is not gated: for engine `google`/`brave` it calls
+# `launch_chrome_guest` (`lib.rs:468`), which starts a real Chrome on this
+# machine. `handlers/serp.ts` states the requirement outright — "google/brave
+# need a browser whatever this says" — and `bing` needs one when `browser: true`.
+# So this machine DOES run chromium, and the 1 GB is partly sized for it. Do not
+# remove chromium from the image on the strength of the old comment: see
+# `Dockerfile.api-only` in this directory for what that would break.
 [[vm]]
   size = "shared-cpu-2x"
   memory = "1gb"

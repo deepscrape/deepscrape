@@ -1,0 +1,109 @@
+# syntax=docker/dockerfile:1
+#
+# The API-ONLY webrain engine: webrain's binary, NO browser.
+#
+# ============================================================================
+# READ THIS BEFORE DEPLOYING IT. IT IS NOT A DROP-IN FOR `fly.toml`'s IMAGE.
+# ============================================================================
+#
+# What it removes: the `chromium` package webrain's own runtime stage installs.
+# That package is a single ~268 MB layer — the largest in the engine image, and
+# the layer that repeatedly failed to push to registry.fly.io on 2026-10-15.
+#
+# What it BREAKS, and this is measured against the code rather than assumed:
+#
+#   `POST /api/serp` on three of its five engines.
+#
+#     engine=google   needs a browser, ALWAYS
+#     engine=brave    needs a browser, ALWAYS
+#     engine=bing     needs one when `browser: true` (its default HTTP path is fine)
+#     engine=duckduckgo  HTTP only, unaffected
+#     engine=auto     merges providers; check whether any is browser-backed
+#
+#   The dependency is stated in `functions/src/handlers/serp.ts`:
+#   *"`google`/`brave` need a browser whatever this says"*. The mechanism is
+#   `launch_chrome_guest` in `webrain-mcp/src/lib.rs:468`, reached from the SERP
+#   path at `lib.rs:449` — and `WEBRAIN_NO_STATE` does NOT gate it, because SERP
+#   is not a stateful tool. So the failure is not a degraded result, it is
+#   `"cannot connect to a browser and guest-launch failed…"` on that request.
+#
+# THEREFORE: this image is only correct once `CDP_URL` points at a browser that
+# is reachable from this machine. With `CDP_URL` set, `connect_default()` attaches
+# there instead of guest-launching (`lib.rs:452`) and no local browser is needed:
+#
+#   flyctl secrets set CDP_URL=ws://<browser-host>:9222 -a deepscrape-webrain
+#
+# Without that, leave the deployed image on the chromium-bearing tag.
+#
+# WHY AN ADAPTER AND NOT A PATCH — invariant I1
+#   webrain is consumed as versioned releases and never rebuilt, forked or
+#   patched. So this does not edit webrain's Dockerfile; it takes webrain's own
+#   built binary out of webrain's own image and re-hosts it on the SAME base
+#   (`debian:12-slim`) minus one package. The binary is unchanged, byte for byte,
+#   and the base stays glibc — which matters, because webrain's runtime stage
+#   chose Debian over Alpine precisely so it can exec glibc-built engines, and
+#   `chromium` is not the only thing that needs it.
+#
+# WHAT THIS IS NOT
+#   It is not a security improvement and it does not fix the I2 question. SERP
+#   already runs on a shared browser inside the shared engine; removing the
+#   browser stops SERP from running at all rather than making it exclusive.
+#   A pool of EXCLUSIVE single-tenant browser workers is the fix for that, and
+#   it is a separate decision with its own trigger — see
+#   `docs/roadmap/07-pricing-and-budgets.md` Part H.
+#
+# BUILD — `WEBRAIN_IMAGE` is required and deliberately undefaulted, exactly as
+# the browser-session adapter does it: a floating tag would silently change which
+# engine every future request runs.
+#
+#   docker build -f deploy/webrain-engine/Dockerfile.api-only \
+#     --build-arg WEBRAIN_IMAGE=registry.fly.io/deepscrape-webrain:webrain-2026-10-15 \
+#     -t registry.fly.io/deepscrape-webrain:webrain-2026-10-15-api .
+#
+# Note the source tag: the API-only image is built FROM an existing engine image,
+# so it is a DERIVATION of one. Keep the suffix so the two can never be confused
+# in a registry listing.
+
+ARG WEBRAIN_IMAGE
+FROM ${WEBRAIN_IMAGE} AS engine-source
+
+# The same base webrain uses, minus chromium. Kept identical on purpose: this is
+# a re-host, not a re-build, and changing the base would change the libc the
+# binary links against.
+FROM debian:12-slim
+
+# `ca-certificates` is NOT optional and is the one package that must survive the
+# cut: the engine fetches HTTPS pages and a missing trust store fails opaquely,
+# mid-request, with a TLS error that reads as "the site is down".
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The binary, verbatim from webrain's own image. Path is where webrain's
+# Dockerfile puts it (`COPY --from=builder /app/webrain /usr/local/bin/webrain`).
+COPY --from=engine-source /usr/local/bin/webrain /usr/local/bin/webrain
+
+# ASSERT THE CUT, so "no browser" is a build-time fact rather than a hope.
+# A `chromium` that reappeared — because the base changed, or someone added a
+# package — would otherwise surface as a working build and a broken SERP.
+#
+# `command -v` is the right test rather than a file check: it asks the same
+# question the SERP path asks when it spawns Chrome.
+#
+# The executability check tolerates a non-zero exit from `--help` and FAILS ONLY
+# ON 127, which is the dynamic-loader code. That is the failure this re-host
+# could actually introduce (a base change dropping a shared library), whereas
+# `--help` returning 0 or 2 is a CLI convention, not a statement about the base.
+RUN set -eux; \
+    command -v webrain; \
+    rc=0; webrain --help > /dev/null 2>&1 || rc=$?; \
+    test "$rc" -ne 127; \
+    if command -v chromium > /dev/null 2>&1 || command -v chromium-browser > /dev/null 2>&1; then \
+        echo "FATAL: chromium is present in an API-only image" >&2; \
+        exit 1; \
+    fi
+
+EXPOSE 9223
+
+ENTRYPOINT ["webrain"]
+CMD ["mcp", "--http", "9223"]

@@ -10,11 +10,14 @@
   >
     @if (live()) {
       <img
+        #frame
         class="block h-auto w-full"
+        [class.cursor-crosshair]="canDrive()"
         [src]="frameUrl()"
         [alt]="'BROWSER_SESSION.FRAME_ALT' | translate"
         (load)="onFrameLoad()"
         (error)="onFrameError()"
+        (click)="clickFrame($event)"
       />
     } @else {
       <!--
@@ -49,4 +52,121 @@
       {{ statusKey() | translate }}
     </span>
   </div>
+
+  <!--
+    Driving controls, kept in the SAME component as the picture because the click
+    mapping is what makes them correct: the offset has to be scaled by the
+    picture's own display ratio, and only this component holds the <img>.
+
+    Offered only while the view is live. A paused picture is not the current page,
+    so a click mapped against it would land at coordinates nobody chose.
+
+    Typing is index-based: the engine's `type` action dispatches to a call that
+    refuses a missing element index, so it needs the page's element list first.
+    `Load fields` fetches that list from the session's own machine, and the picker
+    is built from the very same indexed list `navigate` reports.
+  -->
+  @if (canDrive()) {
+    <div class="flex flex-col gap-3">
+      <p class="text-xs text-gray6 dark:text-gray-300">
+        {{ 'BROWSER_SESSION.DRIVE_HINT' | translate }}
+      </p>
+
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        @for (key of KEYS; track key.value) {
+          <button
+            type="button"
+            class="rounded-full border border-slate-200/70 px-3 py-1 font-medium text-gray6 hover:bg-slate-50 disabled:opacity-50 dark:border-gray5/60 dark:text-gray-300 dark:hover:bg-gray6"
+            [disabled]="acting()"
+            (click)="pressKey(key.value)"
+          >
+            {{ key.label | translate }}
+          </button>
+        }
+
+        <span class="mx-1 h-4 w-px bg-slate-200/70 dark:bg-gray5/60"></span>
+
+        <button
+          type="button"
+          class="rounded-full border border-slate-200/70 px-3 py-1 font-medium text-gray6 hover:bg-slate-50 disabled:opacity-50 dark:border-gray5/60 dark:text-gray-300 dark:hover:bg-gray6"
+          [disabled]="acting()"
+          (click)="scrollPage('up')"
+        >
+          {{ 'BROWSER_SESSION.SCROLL_UP' | translate }}
+        </button>
+        <button
+          type="button"
+          class="rounded-full border border-slate-200/70 px-3 py-1 font-medium text-gray6 hover:bg-slate-50 disabled:opacity-50 dark:border-gray5/60 dark:text-gray-300 dark:hover:bg-gray6"
+          [disabled]="acting()"
+          (click)="scrollPage('down')"
+        >
+          {{ 'BROWSER_SESSION.SCROLL_DOWN' | translate }}
+        </button>
+        <button
+          type="button"
+          class="rounded-full border border-slate-200/70 px-3 py-1 font-medium text-gray6 hover:bg-slate-50 disabled:opacity-50 dark:border-gray5/60 dark:text-gray-300 dark:hover:bg-gray6"
+          [disabled]="acting()"
+          (click)="reloadPage()"
+        >
+          {{ 'BROWSER_SESSION.RELOAD' | translate }}
+        </button>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <button
+          type="button"
+          class="rounded-full border border-slate-200/70 px-3 py-1 font-medium text-gray6 hover:bg-slate-50 disabled:opacity-50 dark:border-gray5/60 dark:text-gray-300 dark:hover:bg-gray6"
+          [disabled]="acting() || fieldsLoading()"
+          (click)="loadFields()"
+        >
+          {{
+            (fieldsLoading()
+              ? 'BROWSER_SESSION.LOADING_FIELDS'
+              : 'BROWSER_SESSION.LOAD_FIELDS'
+            ) | translate
+          }}
+        </button>
+
+        <!--
+          ngValue, NOT value: [value] would hand the control a STRING, and the
+          engine reads the index as an integer -- so the call would come back
+          "index required" while nothing on screen looked wrong.
+        -->
+        <select
+          class="max-w-[14rem] rounded-lg border border-slate-200/70 bg-transparent px-2 py-1 text-gray6 dark:border-gray5/60 dark:text-gray-300"
+          [formControl]="fieldControl"
+          [attr.aria-label]="'BROWSER_SESSION.FIELD_LABEL' | translate"
+        >
+          @for (field of fields(); track field.index) {
+            <option [ngValue]="field.index">{{ field.index }} · {{ field.label }}</option>
+          }
+        </select>
+
+        <input
+          type="text"
+          class="min-w-[8rem] flex-1 rounded-lg border border-slate-200/70 bg-transparent px-2 py-1 text-gray6 dark:border-gray5/60 dark:text-gray-300"
+          [formControl]="textControl"
+          [attr.aria-label]="'BROWSER_SESSION.TYPE_PLACEHOLDER' | translate"
+          [attr.placeholder]="'BROWSER_SESSION.TYPE_PLACEHOLDER' | translate"
+          (keyup.enter)="typeText()"
+        />
+
+        <button
+          type="button"
+          class="rounded-full border border-slate-200/70 px-3 py-1 font-medium text-gray6 hover:bg-slate-50 disabled:opacity-50 dark:border-gray5/60 dark:text-gray-300 dark:hover:bg-gray6"
+          [disabled]="acting() || fields().length === 0"
+          (click)="typeText()"
+        >
+          {{ 'BROWSER_SESSION.TYPE_SEND' | translate }}
+        </button>
+      </div>
+
+      <!-- Text, not only colour, so the outcome survives greyscale. -->
+      @if (actionNote(); as note) {
+        <span class="text-xs text-gray6 dark:text-gray-300" role="status">
+          {{ note | translate }}
+        </span>
+      }
+    </div>
+  }
 </div>

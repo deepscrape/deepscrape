@@ -219,7 +219,7 @@ export class MachinesComponent {
 
     startMachine(machine: { id: string, laststate: string, instance_id: string }) {
         // Implement your machine start/stop logic here
-        this.showSnackbar(`Machine ${machine.id} starting`, SnackBarType.info)
+        this.showSnackbar(this.translate.instant('MACHINES.MSG_STARTING', { id: machine.id }), SnackBarType.info)
         this.deploySub = this.deployService.startMachine(machine.id)
             .pipe(
                 concatMap((response: any) => {
@@ -235,12 +235,12 @@ export class MachinesComponent {
             .subscribe({
                 next: (response: any) => {
                     this.machineStoreService.nextPage(1, 10)
-                    this.showSnackbar(`Machine ${machine.id} started`, SnackBarType.success)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_STARTED', { id: machine.id }), SnackBarType.success)
                 },
                 error: (error: any) => {
                     console.error('Error starting machine:', error)
                     this.machineStoreService.updateMachineState(machine.id, machine.laststate)
-                    this.showSnackbar(`Machine ${machine.id} starting failed`, SnackBarType.error)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_START_FAILED', { id: machine.id }), SnackBarType.error)
                 },
                 complete: () => {
                     this.deploySub?.unsubscribe()
@@ -250,7 +250,7 @@ export class MachinesComponent {
     suspendMachine(machine: any): void {
         // Implement your suspend machine logic here
         machine.status = 'Suspended';
-        this.showSnackbar(`Machine ${machine.id} suspending`, SnackBarType.info)
+        this.showSnackbar(this.translate.instant('MACHINES.MSG_SUSPENDING', { id: machine.id }), SnackBarType.info)
         this.deploySub = this.deployService.suspendMachine(machine.id)
             .pipe(
                 concatMap((response: any) => {
@@ -266,12 +266,12 @@ export class MachinesComponent {
             .subscribe({
                 next: (response: any) => {
                     this.machineStoreService.nextPage(1, 10)
-                    this.showSnackbar(`Machine ${machine.id} suspended`, SnackBarType.success)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_SUSPENDED', { id: machine.id }), SnackBarType.success)
                 },
                 error: (error: any) => {
                     console.error('Error suspending machine:', error)
                     this.machineStoreService.updateMachineState(machine.id, machine.laststate)
-                    this.showSnackbar(`Machine ${machine.id} suspending failed`, SnackBarType.error)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_SUSPEND_FAILED', { id: machine.id }), SnackBarType.error)
                 },
                 complete: () => {
                 }
@@ -316,7 +316,7 @@ export class MachinesComponent {
             return
         }
 
-        this.showSnackbar(`Machine ${machine.id} stopping`, SnackBarType.info)
+        this.showSnackbar(this.translate.instant('MACHINES.MSG_STOPPING', { id: machine.id }), SnackBarType.info)
         this.machineStoreService.updateMachineState(machine.id, MACHNINE_STATE.STOPPING)
 
         this.deploySub = this.deployService.stopMachine(machine.id)
@@ -336,12 +336,12 @@ export class MachinesComponent {
                     // update machine state to 'stopped'
                     // machine reaced the e desired state
                     this.machineStoreService.nextPage(1, 10)
-                    this.showSnackbar(`Machine ${machine.id} ${MACHNINE_STATE.STOPPED}`, SnackBarType.success)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_STOPPED', { id: machine.id }), SnackBarType.success)
                 },
                 error: (error) => {
                     console.error('Error stopping machine:', error)
                     this.machineStoreService.updateMachineState(machine.id, machine.laststate)
-                    this.showSnackbar(`Machine ${machine.id} stopping failed`, SnackBarType.error)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_STOP_FAILED', { id: machine.id }), SnackBarType.error)
                 }
             })
 
@@ -355,7 +355,7 @@ export class MachinesComponent {
         }
 
         // show snackbar
-        this.showSnackbar(`Machine ${machine.id} ${MACHNINE_STATE.DESTROYING}`, SnackBarType.info)
+        this.showSnackbar(this.translate.instant('MACHINES.MSG_DESTROYING', { id: machine.id }), SnackBarType.info)
 
         // update machine state to 'destroying' and destroy the machine
         this.machineStoreService.updateMachineState(machine.id, MACHNINE_STATE.DESTROYING)
@@ -377,13 +377,13 @@ export class MachinesComponent {
                     // update machine state to 'destroyed'
                     // machine reaced the e desired state
                     this.machineStoreService.nextPage(1, 10)
-                    this.showSnackbar(`Machine ${machine.id} successfully ${MACHNINE_STATE.DESTROYED}`, SnackBarType.success);
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_DESTROYED', { id: machine.id }), SnackBarType.success);
                 },
                 error: (error) => {
-                    const isRunning = (machine.laststate === MACHNINE_STATE.STARTED ? machine.id + ' currently running!' : '')
+                    const wasRunning = machine.laststate === MACHNINE_STATE.STARTED
                     console.error('Error destroying machine:', error);
                     this.machineStoreService.updateMachineState(machine.id, machine.laststate)
-                    this.showSnackbar(`Error destroying machine ${isRunning}`, SnackBarType.error);
+                    this.showSnackbar(this.translate.instant(wasRunning ? 'MACHINES.MSG_DESTROY_RUNNING' : 'MACHINES.MSG_DESTROY_FAILED', { id: machine.id }), SnackBarType.error);
                 }
             });
     }
@@ -407,7 +407,7 @@ export class MachinesComponent {
         try {
             parsed = JSON.parse(this.taskPayload.value)
         } catch {
-            this.showSnackbar('Task payload is not valid JSON', SnackBarType.error)
+            this.showSnackbar(this.translate.instant('MACHINES.MSG_TASK_BAD_JSON'), SnackBarType.error)
             return
         }
 
@@ -416,12 +416,12 @@ export class MachinesComponent {
             next: () => {
                 this.isTaskRunning = false
                 this.isTaskModalOpen.setValue(false)
-                this.showSnackbar(`Task executed on machine ${this.taskMachineId}`, SnackBarType.success)
+                this.showSnackbar(this.translate.instant('MACHINES.MSG_TASK_DONE', { id: this.taskMachineId }), SnackBarType.success)
             },
             error: (error) => {
                 this.isTaskRunning = false
                 console.error('Error executing task:', error)
-                this.showSnackbar('Failed to execute task on machine', SnackBarType.error)
+                this.showSnackbar(this.translate.instant('MACHINES.MSG_TASK_FAILED'), SnackBarType.error)
             }
         })
     }
@@ -474,9 +474,9 @@ export class MachinesComponent {
                     // preset the machine's state to 'started'
                     machine.state = MACHNINE_STATE.STARTED
                     this.updateSelfComponent()
-                    this.showSnackbar('Machine successfully deployed', SnackBarType.success)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_DEPLOYED'), SnackBarType.success)
                     this.machineStoreService.nextPage(1, 10)
-                    this.showSnackbar(`Machine ${machine.id} starting`, SnackBarType.info)
+                    this.showSnackbar(this.translate.instant('MACHINES.MSG_STARTING', { id: machine.id }), SnackBarType.info)
                 }),
                 concatMap((machine: FlyMachine) => {
                     console.log('Machine created waiting for state change:', machine)
@@ -541,7 +541,7 @@ export class MachinesComponent {
         this.currentStep.set(this.currentStep() + 1)
         this.isModalOpen.setValue(false)
 
-        this.showSnackbar('Deployment successful', SnackBarType.success, '', 5000)
+        this.showSnackbar(this.translate.instant('MACHINES.MSG_DEPLOY_DONE'), SnackBarType.success, '', 5000)
     }
 
     themeIsDark() {

@@ -30,12 +30,19 @@ import {
 import { scrapeMiddleware } from '../functions/src/handlers/scrape'
 import { webrainSerp } from '../functions/src/handlers/serp'
 import {
+  webrainBatch,
+  webrainDownload,
   webrainExtract,
+  webrainGuide,
+  webrainNavigate,
+  webrainObserve,
   webrainPdf,
   webrainScrape,
   webrainSearch,
+  webrainSpider,
   webrainVault,
   webrainVision,
+  webrainWatch,
 } from '../functions/src/handlers/webrain-tools'
 import { browserVault } from '../functions/src/handlers/vault'
 import { schemaCompiler } from '../functions/src/handlers/schema-compiler'
@@ -48,6 +55,7 @@ import {
 } from '../functions/src/handlers/monitors'
 import {
   storageGetSettings,
+  storageDelete,
   storageList,
   storagePresign,
   storageSave,
@@ -71,6 +79,7 @@ import {
   browserSessionFrame,
   browserSessionKeepalive,
   browserSessionList,
+  browserSessionTool,
 } from '../functions/src/handlers/browser-sessions'
 import {
   getWebrainConfig,
@@ -86,6 +95,7 @@ import {
   billingPolicyGet,
   billingPolicySet,
 } from '../functions/src/handlers/billing-policy'
+import { getEgress, setEgress } from '../functions/src/handlers/egress'
 import { pricingEstimate, pricingRates } from '../functions/src/handlers/pricing'
 import { requirePermission } from '../functions/src/infrastructure/authz.middleware'
 import { ReverseAPIProxy } from '../functions/src/infrastructure/syncaiapi'
@@ -318,6 +328,70 @@ api.post(
   h(guard([access, perm('crawl', 'execute'), webrainPdf])),
 )
 
+// The worker's own decision guide. FREE like the six above, and the only one
+// that starts no browser: it answers from the binary's documentation, so the
+// shared pool serves it. It is the tool whose own description says to call it
+// FIRST when unsure, which makes it the cheapest thing here to expose.
+api.post(
+  '/api/guide',
+  h(guard([access, perm('crawl', 'execute'), webrainGuide])),
+)
+
+// `paid`, for the reason `/api/vision` gives and one more.
+//
+// The first: these two ARE the browser escalation. `/api/scrape` is plain HTTP
+// and reports `needs_js` when a page rendered nothing, so until these existed
+// that signal named a remedy no caller could reach. A free caller who wants a
+// browser is being sold one, so a 402 is the right answer rather than a 502.
+//
+// The second: both are in `SHARED_UNSAFE_TOOLS`, so `needsExclusiveWorker`
+// refuses them on the single unleased `WEBRAIN_MCP_URL` and serves them only
+// from a pooled lease. `navigate` CREATES the current page and `observe` reads
+// it; neither is safe on a process another tenant is in.
+api.post(
+  '/api/navigate',
+  h(guard([paid, perm('crawl', 'execute'), webrainNavigate])),
+)
+api.post(
+  '/api/observe',
+  h(guard([paid, perm('crawl', 'execute'), webrainObserve])),
+)
+
+// The four CAPACITY tools the worker advertises and nothing routed.
+//
+// `webrain_batch`, `webrain_crawl`, `webrain_download` and `webrain_watch` were
+// all named in `PAID_ONLY_TOOLS` and reachable from no route at all, so
+// `decideWebrainTool` was never asked about them and the chat could not call
+// any of them. The tier table was right; it simply had nothing to gate.
+//
+// `batch` and `crawl` are also in `EXCLUSIVE_PAID_TOOLS`, so
+// `needsExclusiveWorker` refuses both on the single unleased `WEBRAIN_MCP_URL`
+// and serves them only from a pooled lease -- the existing answer for a
+// capacity tool, because multi-target and spider calls would otherwise let one
+// tenant exhaust a pool everyone else queues behind. These two therefore answer
+// a refusal until an exclusive pool exists. The door is built and locked on
+// purpose: opening it is the pool's job, not a route's.
+//
+// `/api/spider` and not `/api/crawl`: the latter is already
+// `scrapeMiddleware`'s provider-abstracted scrape endpoint, which is a
+// different tool with a different contract.
+api.post(
+  '/api/batch',
+  h(guard([paid, perm('crawl', 'execute'), webrainBatch])),
+)
+api.post(
+  '/api/spider',
+  h(guard([paid, perm('crawl', 'execute'), webrainSpider])),
+)
+api.post(
+  '/api/download',
+  h(guard([paid, perm('crawl', 'execute'), webrainDownload])),
+)
+api.post(
+  '/api/watch',
+  h(guard([paid, perm('crawl', 'execute'), webrainWatch])),
+)
+
 // `POST /api/vision` was never registered, while the tools panel and
 // `webrainTools.vision()` have called it since they landed -- so the Vision tab
 // answered 404 for every caller, paid ones included. `bff/api.spec.ts` had it in
@@ -424,6 +498,15 @@ api.get(
   '/api/browser/session/:id/frame',
   h(guard([access, perm('crawl', 'execute'), browserSessionFrame])),
 )
+// The write half of the same join. `frame` reads the session's own machine; this
+// drives it. Same guard, same owner-scoped 404, and the same refusal to touch the
+// shared pool -- which is what makes it safe for a tool like `webrain_interact`
+// that the pool refuses on purpose. The handler refuses any tool outside
+// `SESSION_TOOLS` and names the allowed set in the response.
+api.post(
+  '/api/browser/session/:id/tool',
+  h(guard([access, perm('crawl', 'execute'), browserSessionTool])),
+)
 
 // The credential vault: `access`, like its four neighbours, and the tier
 // boundary lives in the handler instead of in this guard.
@@ -498,6 +581,23 @@ api.get('/api/pricing/estimate', h(guard([access, pricingEstimate])))
 api.get('/api/billing/policy', h(guard([access, billingPolicyGet])))
 api.put('/api/billing/policy', h(guard([access, billingPolicySet])))
 
+// ── the caller's OWN egress proxy ────────────────────────────────────────────
+// The counterpart to `/api/webrain/config/proxies`, which is the PLATFORM's pool
+// and is consequently admin-only. This one configures where ONE caller's crawls
+// leave from, so the document path is derived from the verified token and there
+// is no id in the URL to tamper with. Nothing here spends a credit or reads a
+// billing document, so it carries no `access` -- the same reasoning the stored
+// artifacts below record.
+//
+// The write is `crawl.execute`, and NOT a `crawl.write`, which does not exist.
+// Pointing your own traffic at your own exit is at least as privileged as
+// running a crawl, and it grants nothing over anybody else, so `crawl.read` is
+// enough to look and `crawl.execute` is what it takes to change. Adding a
+// `crawl.write` action would mean deciding who holds it, which is an entitlement
+// decision rather than a route change (roadmap 12 records it as open).
+api.get('/api/egress', h(guard([perm('crawl', 'read'), getEgress])))
+api.put('/api/egress', h(guard([perm('crawl', 'execute'), setEgress])))
+
 // ── stored artifacts ─────────────────────────────────────────────────────────
 // Deliberately WITHOUT `paid` or `access`: this surface spends no credits and
 // reads no billing document, so it must not require an entitlement to resolve.
@@ -523,6 +623,13 @@ api.post(
 api.post(
   '/api/storage/presign',
   h(guard([perm('storage', 'read'), storagePresign])),
+)
+// `storage.write`, not `read`: this removes an object. The scoping the other
+// routes rely on still applies -- the handler answers 404 for a key the caller
+// may not read, and refuses a shared key outright.
+api.post(
+  '/api/storage/delete',
+  h(guard([perm('storage', 'write'), storageDelete])),
 )
 api.post(
   '/api/storage/settings',

@@ -191,6 +191,44 @@ export const cdpEndpointFrom = (value: unknown): string | undefined => {
   }
 }
 
+/**
+ * Filters an untrusted LIST of CDP endpoints, or undefined when any entry is
+ * one we will not dial.
+ *
+ * REFUSES the whole list rather than dropping the bad entries -- the opposite
+ * of `safeTargetUrls`, and for `vaultArguments`'s reason. A dropped endpoint
+ * does not merely make the request safer, it makes it a DIFFERENT request from
+ * the one the caller sent: `webrain_batch` round-robins over this list, so
+ * dropping one silently sends calls to a browser the caller did not name while
+ * they believe it did.
+ *
+ * An absent (`undefined`/`null`) field is a legitimate request for "no
+ * endpoints", which is how the worker is told to attach to whatever it has. A
+ * present-but-empty array is refused instead, because the caller sent a list
+ * and a list that names nothing is not the one they meant.
+ * @param {*} value The caller-supplied list.
+ * @return {string[] | undefined} The trimmed endpoints, or undefined when the
+ *   list is present and any entry is unusable.
+ */
+export const cdpEndpointsFrom = (value: unknown): string[] | undefined => {
+  if (value === undefined || value === null) {
+    return []
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined
+  }
+
+  const kept: string[] = []
+  for (const entry of value) {
+    const endpoint = cdpEndpointFrom(entry)
+    if (!endpoint) {
+      return undefined
+    }
+    kept.push(endpoint)
+  }
+  return kept
+}
+
 /** The scheme a caller-supplied AI endpoint may use. */
 const AI_ENDPOINT_PROTOCOLS: readonly string[] = ["https:"]
 

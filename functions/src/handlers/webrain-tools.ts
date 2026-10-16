@@ -43,7 +43,12 @@ import {
   integer,
   nonEmptyString,
 } from "./serp"
-import { cdpEndpointFrom, targetUrlFrom } from "../domain/url-guard.domain"
+import {
+  MAX_TARGETS,
+  cdpEndpointFrom,
+  cdpEndpointsFrom,
+  targetUrlFrom,
+} from "../domain/url-guard.domain"
 import { isSafeVaultName } from "../domain/vault-entry.domain"
 import {
   webrainTool,
@@ -1141,3 +1146,428 @@ export const webrainObserve = route(
   "webrain_observe",
   "what"
 )
+
+/**
+ * A caller-supplied list of targets, or undefined when ANY entry is unusable.
+ *
+ * REFUSES the whole list rather than filtering it the way `safeTargetUrls`
+ * does, and the difference is deliberate. These routes take an EXPLICIT list --
+ * "fetch these five urls" -- so fetching three and answering 200 is a wrong
+ * answer delivered as a success. `safeTargetUrls` serves the enqueue path,
+ * where a filtered list IS the contract; this serves the direct-call path,
+ * where it is not.
+ * @param {unknown} value The candidate list.
+ * @return {string[] | undefined} The targets, or undefined when unusable.
+ */
+const targetListFrom = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined
+  }
+  if (value.length > MAX_TARGETS) {
+    return undefined
+  }
+
+  const kept: string[] = []
+  for (const entry of value) {
+    const url = targetUrlFrom(entry)
+    if (!url) {
+      return undefined
+    }
+    kept.push(url)
+  }
+  return kept
+}
+
+/**
+ * A positive integer, or undefined for anything else.
+ *
+ * Zero and negatives are treated as absent rather than clamped: `concurrency:
+ * 0` is a caller asking for no work, which is a mistake to surface as a default
+ * instead of an answer.
+ * @param {unknown} value The candidate.
+ * @return {number | undefined} The integer, when it is one above zero.
+ */
+const positiveInteger = (value: unknown): number | undefined => {
+  const parsed = integer(value)
+  return parsed !== undefined && parsed > 0 ? parsed : undefined
+}
+
+/** The `webrain_batch` ops this gateway forwards, from its inputSchema. */
+const BATCH_OPS: readonly string[] = ["fetch", "extract", "screenshot"]
+
+/** `webrain_crawl`'s required `mode`, from its inputSchema. */
+const CRAWL_MODES: readonly string[] = ["spider", "sitemap", "scan", "validate"]
+
+/** `webrain_crawl`'s `strategy`, from its inputSchema. */
+const CRAWL_STRATEGIES: readonly string[] = ["bfs", "dfs", "bestfirst"]
+
+/** `webrain_download`'s `engine`, from its inputSchema. */
+const DOWNLOAD_ENGINES: readonly string[] = ["http", "ytdlp"]
+
+/**
+ * The four capacity tools, routed so the agent can reach them.
+ *
+ * Why they were unrouted, and why that stopped being right
+ * -------------------------------------------------------
+ * `webrain_batch`, `webrain_crawl`, `webrain_download` and `webrain_watch` are
+ * advertised by the worker and named in `PAID_ONLY_TOOLS`, but no route existed
+ * for any of them, so `decideWebrainTool` was never asked and the tools were
+ * unreachable from the chat. The tier table was already correct about them; it
+ * simply had nothing to gate. These routes are the missing half.
+ *
+ * Three scalars are refused on all four, and for one reason: the worker's
+ * filesystem is the PLATFORM'S.
+ * -------------------------------------------------------------------------
+ * `dir`, `crawldir` and `download.args` each let the caller name a location or
+ * a flag on a machine they do not own. `args` is the sharpest -- it is
+ * forwarded to ytdlp, so it is an argument list for a tool that writes files
+ * and can be told to run a hook. None of them is needed to fetch or to crawl,
+ * so they are 400s rather than fields nobody validates. `output` IS forwarded,
+ * held to a bare filename by the same rule the vault entries use.
+ *
+ * `op` is narrowed, not just validated
+ * ------------------------------------
+ * `webrain_batch`'s own enum carries `interact` and `eval` beside the three
+ * this gateway forwards. Both are refused rather than passed through:
+ *
+ *  - `eval` runs arbitrary JavaScript. A lease is exclusive FOR THE CALL, but
+ *    the PROCESS is reused across tenants -- the fact `VAULT_TOOLS` is built on
+ *    -- so an eval could read whatever the previous tenant left in it. That
+ *    needs a container of its own, not a lease.
+ *  - `interact` drives a page an open session holds. `webrain_interact` is the
+ *    tool for that, and it already routes through the caller's own machine.
+ *
+ * `cdp_urls` is a LIST, so it crosses the CDP guard as one
+ * ------------------------------------------------------
+ * One unusable entry refuses the whole call. The worker round-robins over this
+ * list, so dropping an entry would silently send calls to a browser the caller
+ * did not name.
+ * @param {unknown} body The parsed request body.
+ * @return {ToolArguments} The worker arguments, or why the body is refused.
+ */
+export const batchArguments = (body: unknown): ToolArguments => {
+  const source = asRecord(body)
+  const op = nonEmptyString(source?.["op"])?.toLowerCase()
+  if (!op) {
+    return { ok: false, error: "Missing batch op" }
+  }
+  if (op === "eval") {
+    return {
+      ok: false,
+      error:
+        "op=eval runs arbitrary JavaScript and needs a container of its own",
+    }
+  }
+  if (!BATCH_OPS.includes(op)) {
+    return {
+      ok: false,
+      error:
+        `Unknown batch op "${op}"; expected one of ` + BATCH_OPS.join(", "),
+    }
+  }
+
+  const urls = targetListFrom(source?.["urls"])
+  if (!urls) {
+    return {
+      ok: false,
+      error:
+        "A batch needs a urls array of 1-" + MAX_TARGETS +
+        " http(s) urls that are not private addresses",
+    }
+  }
+
+  const args: Record<string, unknown> = { op, urls }
+
+  if (source?.["cdp_urls"] !== undefined && source?.["cdp_urls"] !== null) {
+    const endpoints = cdpEndpointsFrom(source["cdp_urls"])
+    if (!endpoints) {
+      return {
+        ok: false,
+        error:
+          "Every cdp_urls entry must be ws(s) or http(s) to a " +
+          "non-private host; one unusable entry refuses the list",
+      }
+    }
+    args["cdp_urls"] = endpoints
+  }
+
+  if (source?.["dir"] !== undefined) {
+    return {
+      ok: false,
+      error: "dir is refused: the worker's filesystem is the platform's",
+    }
+  }
+
+  const output = source?.["output"]
+  if (output !== undefined) {
+    if (!isSafeVaultName(output)) {
+      return {
+        ok: false,
+        error:
+          "output must be a bare filename of letters, digits, dot, dash " +
+          "or underscore",
+      }
+    }
+    args["output"] = output
+  }
+
+  const fields = source?.["fields"]
+  if (fields !== undefined) {
+    if (!Array.isArray(fields)) {
+      return { ok: false, error: "fields must be an array of field objects" }
+    }
+    args["fields"] = fields
+  }
+
+  const concurrency = positiveInteger(source?.["concurrency"])
+  if (concurrency !== undefined) {
+    args["concurrency"] = concurrency
+  }
+
+  return { ok: true, args, echo: op }
+}
+
+/**
+ * `POST /crawl` -- `webrain_crawl`, a site walked from one or more seeds.
+ *
+ * `mode` is required by the worker and validated here. At least one of `url`,
+ * `urls` or `seed_url` is required, and all three cross the target guard; a
+ * caller may send more than one and every entry is vetted.
+ *
+ * `allow`, `deny` and `allowed_domains` are forwarded as string lists. They
+ * narrow or steer a walk whose SEEDS are already vetted, so they cannot reach
+ * an address the seeds could not -- they are a scope filter, not an escape.
+ * `crawldir` is refused like `dir`.
+ * @param {unknown} body The parsed request body.
+ * @return {ToolArguments} The worker arguments, or why the body is refused.
+ */
+export const crawlArguments = (body: unknown): ToolArguments => {
+  const source = asRecord(body)
+  const mode = nonEmptyString(source?.["mode"])?.toLowerCase()
+  if (!mode) {
+    return { ok: false, error: "Missing crawl mode" }
+  }
+  if (!CRAWL_MODES.includes(mode)) {
+    return {
+      ok: false,
+      error:
+        `Unknown crawl mode "${mode}"; expected one of ` +
+        CRAWL_MODES.join(", "),
+    }
+  }
+
+  const args: Record<string, unknown> = { mode }
+  const single = targetUrlFrom(source?.["url"])
+  const seeds = targetListFrom(source?.["urls"])
+  const seed = targetUrlFrom(source?.["seed_url"])
+
+  if (!single && !seeds && !seed) {
+    return {
+      ok: false,
+      error:
+        "A crawl needs a url, a urls array or a seed_url of http(s) urls " +
+        "that are not private addresses",
+    }
+  }
+  if (source?.["url"] !== undefined && !single) {
+    return { ok: false, error: "url must be a public http(s) address" }
+  }
+  if (source?.["urls"] !== undefined && !seeds) {
+    return {
+      ok: false,
+      error:
+        "Every urls entry must be a public http(s) address; one unusable " +
+        "entry refuses the list",
+    }
+  }
+  if (source?.["seed_url"] !== undefined && !seed) {
+    return { ok: false, error: "seed_url must be a public http(s) address" }
+  }
+
+  if (single) {
+    args["url"] = single
+  }
+  if (seeds) {
+    args["urls"] = seeds
+  }
+  if (seed) {
+    args["seed_url"] = seed
+  }
+
+  if (source?.["crawldir"] !== undefined) {
+    return {
+      ok: false,
+      error: "crawldir is refused: the worker's filesystem is the platform's",
+    }
+  }
+
+  const strategy = nonEmptyString(source?.["strategy"])?.toLowerCase()
+  if (strategy) {
+    if (!CRAWL_STRATEGIES.includes(strategy)) {
+      return {
+        ok: false,
+        error:
+          `Unknown strategy "${strategy}"; expected one of ` +
+          CRAWL_STRATEGIES.join(", "),
+      }
+    }
+    args["strategy"] = strategy
+  }
+
+  for (const field of ["max_pages", "max_depth", "concurrency"]) {
+    const value = positiveInteger(source?.[field])
+    if (value !== undefined) {
+      args[field] = value
+    }
+  }
+  for (const field of ["same_domain", "respect_robots", "no_content"]) {
+    if (source?.[field] === true) {
+      args[field] = true
+    }
+  }
+  for (const field of ["allow", "deny", "allowed_domains", "keywords"]) {
+    const list = source?.[field]
+    if (Array.isArray(list)) {
+      args[field] = list.filter((entry) => typeof entry === "string")
+    }
+  }
+
+  return { ok: true, args, echo: mode }
+}
+
+/**
+ * `POST /download` -- `webrain_download`, files fetched from urls. PAID.
+ *
+ * `args` is REFUSED. It is forwarded to ytdlp, so it is an argument list for a
+ * tool that writes files and accepts `--exec`; a caller does not need it to
+ * fetch a url, and the platform cannot enumerate every flag a future ytdlp
+ * adds. `dir` is refused for the same reason as everywhere else.
+ * @param {unknown} body The parsed request body.
+ * @return {ToolArguments} The worker arguments, or why the body is refused.
+ */
+export const downloadArguments = (body: unknown): ToolArguments => {
+  const source = asRecord(body)
+  if (source?.["args"] !== undefined) {
+    return {
+      ok: false,
+      error:
+        "args is refused: it is an argument list for ytdlp, not a fetch " +
+        "option",
+    }
+  }
+  if (source?.["dir"] !== undefined) {
+    return {
+      ok: false,
+      error: "dir is refused: the worker's filesystem is the platform's",
+    }
+  }
+
+  const urls = targetListFrom(source?.["urls"])
+  if (!urls) {
+    return {
+      ok: false,
+      error:
+        "A download needs a urls array of 1-" + MAX_TARGETS +
+        " http(s) urls that are not private addresses",
+    }
+  }
+
+  const args: Record<string, unknown> = { urls }
+
+  const engine = nonEmptyString(source?.["engine"])?.toLowerCase()
+  if (engine) {
+    if (!DOWNLOAD_ENGINES.includes(engine)) {
+      return {
+        ok: false,
+        error:
+          `Unknown engine "${engine}"; expected one of ` +
+          DOWNLOAD_ENGINES.join(", "),
+      }
+    }
+    args["engine"] = engine
+  }
+
+  const format = nonEmptyString(source?.["format"])
+  if (format) {
+    args["format"] = format
+  }
+  const extension = nonEmptyString(source?.["filter_extension"])
+  if (extension) {
+    args["filter_extension"] = extension
+  }
+  if (source?.["audio_only"] === true) {
+    args["audio_only"] = true
+  }
+
+  return { ok: true, args, echo: urls[0] }
+}
+
+/**
+ * `POST /watch` -- `webrain_watch`, one video watched with a prompt. PAID.
+ *
+ * The smallest of the four: a vetted url and the caller's own prompt. Both are
+ * forwarded as given, because a prompt is the tool's whole input and is not the
+ * platform's to rewrite.
+ * @param {unknown} body The parsed request body.
+ * @return {ToolArguments} The worker arguments, or why the body is refused.
+ */
+export const watchArguments = (body: unknown): ToolArguments => {
+  const source = asRecord(body)
+  const url = targetUrlFrom(source?.["url"])
+  if (!url) {
+    return {
+      ok: false,
+      error: "A watch needs an http(s) url that is not a private address",
+    }
+  }
+
+  const args: Record<string, unknown> = { url }
+  const prompt = nonEmptyString(source?.["prompt"])
+  if (prompt) {
+    args["prompt"] = prompt
+  }
+
+  return { ok: true, args, echo: url }
+}
+
+/**
+ * `POST /batch` -- `webrain_batch`. PAID + EXCLUSIVE via the tier table.
+ * @param {Request} req
+ * @param {Response} res
+ * @return {Promise<void>} Resolves once the response has been written.
+ */
+export const webrainBatch = route(batchArguments, "webrain_batch", "op")
+
+/**
+ * `POST /spider` -- `webrain_crawl`. PAID + EXCLUSIVE via the tier table.
+ *
+ * Named for the SPIDER and not for the route it drives, because `handlers/scrape.ts`
+ * already exports a `webrainCrawl` and `/api/crawl` is already the provider-abstracted
+ * scrape endpoint (`scrapeMiddleware`, which loops `webrain_scrape` per url). That is a
+ * different tool with a different contract; sharing the name would make the two
+ * indistinguishable at the import site, and reusing the path would shadow a live route.
+ * @param {Request} req
+ * @param {Response} res
+ * @return {Promise<void>} Resolves once the response has been written.
+ */
+export const webrainSpider = route(crawlArguments, "webrain_crawl", "mode")
+
+/**
+ * `POST /download` -- `webrain_download`. PAID.
+ * @param {Request} req
+ * @param {Response} res
+ * @return {Promise<void>} Resolves once the response has been written.
+ */
+export const webrainDownload = route(
+  downloadArguments,
+  "webrain_download",
+  "urls"
+)
+
+/**
+ * `POST /watch` -- `webrain_watch`. PAID.
+ * @param {Request} req
+ * @param {Response} res
+ * @return {Promise<void>} Resolves once the response has been written.
+ */
+export const webrainWatch = route(watchArguments, "webrain_watch", "url")

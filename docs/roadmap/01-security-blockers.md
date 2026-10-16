@@ -140,6 +140,42 @@ and CDP itself is full control of whatever browser answers, including `Network.g
 **Acceptance:** a `cdp_url` naming `169.254.169.254`, `127.0.0.1`, or `*.internal` is refused with a named
 error and never dialled — assert with a request-spy, not by reading the status code alone.
 
+### Status — audited 2026-10-16: closed for every REACHABLE vector
+
+The `CDP_URL` env is the operator's own (`flyctl secrets`), not a caller input, so only the
+caller-facing vectors need a guard. All three have one today.
+
+| Vector | Guard |
+|---|---|
+| `session(op=cookies\|setcookies, cdp_url=…)` | `cdpEndpointFrom` (`url-guard.domain.ts:171`) via `vaultArguments` (`handlers/webrain-tools.ts:862`) |
+| a dedicated/BYO machine's endpoint | `decideCdpUrl` (`browser-session.domain.ts:183`), called from `browser-session.store.ts:225` |
+| `batch.cdp_urls[]`, routed at `/api/batch` since 2026-10-16 | `cdpEndpointsFrom`, the list sibling — one bad entry refuses the whole call |
+| `CDP_URL` env | operator only — not a caller input |
+
+Both guards are built on `isBlockedHost`, and `BLOCKED_HOST` already carries `.*\.internal$`, `127\.`,
+`169\.254\.` and the non-routable IPv6 families. The acceptance is asserted at both layers — the predicate
+(`url-guard.domain.spec.ts`, "refuses a ws endpoint that private space could serve") and the route
+(`webrain-vault.spec.ts`, "refuses an endpoint it cannot use instead of dropping it", which answers 400
+rather than silently dropping the field).
+
+**BYO CDP is intact, and deliberately so.** The same specs assert that `wss://chrome.browserless.io`,
+`wss://connect.browserbase.com`, `ws://chrome.example.net:9222` and the `http(s)` spellings are forwarded
+unchanged. The control is "not private space", not "not user-supplied" — which is why closing this blocker
+removes no feature.
+
+### Residuals — both outside the TypeScript layer
+
+1. **The worker's filesystem.** `batch.dir`, `crawl.crawldir` and `download.args` are REFUSED at the
+   gateway (asserted in `webrain-capacity.spec.ts`), so through this API the platform owns those locations.
+   `args` is the sharpest of the three: it is forwarded to ytdlp, a tool that writes files and accepts
+   `--exec`. This is a gateway decision and not a worker one — a direct caller of the worker still reaches
+   all three, so closing it properly means the worker refusing a caller-chosen path.
+2. **DNS rebinding.** `isBlockedHost` judges the **host**, not where it resolves, so `wss://evil.example.com`
+   pointing at `169.254.169.254` passes. This is documented in `url-guard.domain.ts`'s header and cannot be
+   fixed here: the check runs before the request and the dial happens inside the worker. Enforcement belongs
+   in `CdpBackend::connect_with_url` (resolve, then refuse private results) — the webrain repo, the same
+   place `docs/RESIDUAL-RISK-CRAWL-TRUST-BOUNDARY.md` §6 already names for crawl targets.
+
 ---
 
 ## 0.5 Optional, cheap, and worth it: pre-check on our side
@@ -162,5 +198,7 @@ fails closed even if arachnefly regresses.
 - [ ] `X-Authenticated-User-Id` carries a real uid or the header is gone
 - [ ] Worker token set everywhere; `WEBRAIN_NO_STATE=1` on shared workers; compose file no longer tokenless
 - [ ] 6379 not publicly exposed; 11235 reachable only over the private network
-- [ ] `cdp_url` allowlisted or refused on shared workers
+- [x] `cdp_url` refused for private space on every reachable vector, `batch.cdp_urls[]` included (0.4 Status)
+- [x] The four capacity tools the worker advertises are routed: `/api/batch`, `/api/spider`, `/api/download`,
+      `/api/watch` (`webrain_eval` is deliberately still unrouted — arbitrary JS needs its own container)
 - [ ] Gates green: `go test ./...` (arachnefly), webrain `fmt`/`clippy`/`test`, functions `tsc`/`lint`/`test`, bff `tsc`/`test`, app `tsc` + `build` + `ng test --watch=false`

@@ -84,18 +84,6 @@ export class ResetPasswordComponent implements OnInit {
         }
     }
 
-    // private getErrorMessage(error: any): string {
-    //     switch (error.code) {
-    //         case 'auth/user-not-found':
-    //             return 'No user found with this email address.';
-    //         case 'auth/invalid-email':
-    //             return 'Invalid email address.';
-    //         case 'auth/too-many-requests':
-    //             return 'Too many reset attempts. Please try again later.';
-    //         default:
-    //             return 'An error occurred. Please try again.';
-    //     }
-    // }
     ngOnDestroy(): void {
         this.langChangeSubscription?.unsubscribe();
     }

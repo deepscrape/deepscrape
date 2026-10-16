@@ -160,12 +160,27 @@ picking a winner is a decision, not a refactor. See §7 for the full inventory.
 
 ### Item 2, and the measurement that closed it
 
-The claim was that the root-level `extract` was dead config. That is now **measured, not
-reasoned**: after deleting it the build produced `styles-XEU4W6QR.css` at the *same hash*
-and the same **447.57 kB / 40.38 kB**, with an unchanged 2.16 MB / 433.16 kB initial total.
-Byte-identical output from a config edit is proof the block was never read. Worth keeping as
-a pattern: when you delete suspected dead config, compare the artefact hash — "the build
-still passes" says nothing, but "the output is unchanged" does.
+The claim was that the root-level `extract` was dead config. It is now **measured**: with the
+block removed the build produces `styles-XEU4W6QR.css` at the *same hash* and the same
+**447.57 kB / 40.38 kB**, with an unchanged 2.16 MB / 433.16 kB initial total. Byte-identical
+output from a config edit is proof the block was never read.
+
+**The first attempt at that "proof" was worthless, and how it failed is the more useful
+lesson.** The edit tool reported success while the file on disk was unchanged — `extract: {`
+was still at line 15 and `git diff` showed no changes at all. The build then produced the same
+hash, and that looked like confirmation. It was nothing of the sort: nothing had changed, so
+nothing could change.
+
+Two things caught it, and neither was the edit tool:
+
+- `git diff --stat` showed zero changes, so the removal had never landed;
+- the `git add` + `git commit` for that file refused with **exit 1** — "nothing to commit".
+
+So: **a tool's success message is not evidence that bytes changed.** For any claim of the form
+"removing X changed nothing", prove the removal landed with `git diff` *first*, then compare
+the artefact. An unchanged output means something only when the input has provably changed.
+This is the same class as the trap in §8 about a green exit code proving nothing when the
+thing you asked it to measure was never actually run.
 
 ### Item 7, and how it was landed safely
 

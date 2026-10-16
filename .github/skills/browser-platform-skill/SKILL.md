@@ -509,12 +509,28 @@ machine-less one with 409 `no_frame_source`, applies the fps cap, and relays the
 at load, so it cannot be imported by a test without an emulator. Its fps state is a module-level Map, so it
 is per-INSTANCE: N warm instances permit up to N times the tier's fps.
 
-**A latent hazard the frame route deliberately routes around.** `webrain_observe` sits in
-`PAID_ONLY_TOOLS` but NOT in `SHARED_UNSAFE_TOOLS`, so a *pooled* `webrainTool("webrain_observe", ...)`
-would run on a shared worker and photograph whatever page the PREVIOUS tenant left — a cross-tenant
-disclosure, and worse than the `extract` / `pdf` case because it is an image of someone else's screen.
-The frame route therefore never uses the pool: it always asks the session's own machine. Do not
-"simplify" it onto `webrainTool` without first adding `webrain_observe` to `SHARED_UNSAFE_TOOLS`.
+**A hazard the frame route routes around — and one this file had WRONG (corrected 2026-10-15).**
+`webrain_observe` is in `PAID_ONLY_TOOLS` and NOT in `SHARED_UNSAFE_TOOLS`; that much was true, but the
+conclusion drawn from it was not. `needsExclusiveWorker` is an OR over `SHARED_UNSAFE_TOOLS` **and
+`EXCLUSIVE_PAID_TOOLS`**, and `observe` has been in the second list all along — as have `navigate`,
+`interact`, `batch` and `crawl`. So a pooled `webrainTool("webrain_observe", ...)` is **already** refused
+on an unleased worker, and the disclosure described here cannot happen. **Do not "fix" it by adding
+`observe` to `SHARED_UNSAFE_TOOLS`**: that list is spec-pinned to be a SUBSET of `SHARED_POOL_TOOLS` and
+`observe` is not in it. The frame route still never uses the pool — it asks the session's own machine,
+which is what makes the image the tenant's own rather than a shared one's.
+`webrain_interact` was listed in `EXCLUSIVE_PAID_TOOLS` "although no route exposes it yet" precisely so
+the first drive route fails closed; that route is now built
+(`POST /api/browser/session/:id/tool`, `SESSION_TOOLS`).
+**`SESSION_TOOLS` is now FIVE, not three (2026-10-16): `navigate`, `observe`, `interact`, `batch`,
+`crawl`.** The capacity pair was held back for being long-running, and the meter already prices duration
+(per started 5-minute block, 20-credit ceiling), so that objection bought nothing -- while it made the new
+`/api/batch` and `/api/spider` routes **doors into a wall**, because `needsExclusiveWorker` refuses both on
+the unleased `WEBRAIN_MCP_URL` and no pool exists. `download`/`watch` stay out (unbounded bytes, not metered
+by payload) and so do `eval`/`eval_in_frame`. **The pool is a cost optimisation, not the unlock**: the lease
+is the boundary, which is what makes the machine the first surface these tools can legitimately use.
+Note the shape of the guard around all of this: the machine-direct route takes the caller's args RAW by
+recorded design, so the mappers on `/api/batch` are narrowing for the POOL and are **not** a boundary on a
+machine the caller already owns.
 The earlier note stands and is worth keeping: `webrain_observe(what="screenshot")` -> base64 PNG is the
 frame primitive, NOT `webrain_screenshot` (absent from the binary's own 17-tool `AGENT_GUIDE`).
 
@@ -727,12 +743,17 @@ deliberately not the `leased` one: webrain's vault is **process-global**
 written on a pooled worker outlives the lease that wrote it and is readable by whoever leases that worker
 next. A pooled lease is exclusive *for the call*; what persists here is the *process*. So `SHARED_UNSAFE`
 (needs a worker nobody is in) and `VAULT_TOOLS` (needs one that outlives my visit) are two predicates, and
-neither implies the other. **Nothing available today is a caller's own worker** — `acquireWorkerTarget` has
-exactly two sources, the pool and the single `WEBRAIN_MCP_URL`, and neither is a tenant's leased machine.
-That join is `03` Part A. These four are **not routed** today (only `scripts/webrain-smoke.ts` probes them),
-so this is latent rather than live: the guard exists so the first `/api/browser/profiles` route fails closed
-instead of writing a customer's credentials into a platform worker. Admin is exempt, matching the allowlist's
-own decision. Spec'd (586 tests / 0 fail).
+neither implies the other. **The join EXISTS now (2026-10-16), and it deliberately does NOT satisfy this
+predicate.** `acquireWorkerTarget` takes a caller's own machine as its FIRST source -- an `OwnMachine`
+resolved by `ownBrowserMachine(uid)` from their live lease -- ahead of the pool and the single
+`WEBRAIN_MCP_URL`. What that join offers is a machine for the DURATION of a session, and these four write to
+`profiles_dir()` expecting the state to still be there afterwards, which no ephemeral machine provides (see
+the profiles note below: no volume, and Fly resets the root filesystem). So they stay refused, and
+`needsCallerOwnWorker` is what keeps the "run it on my machine" route from quietly writing a customer's
+credentials into a platform worker. These four are **not routed** today (only `scripts/webrain-smoke.ts`
+probes them), so this is latent rather than live: the guard exists so the first `/api/browser/profiles` route
+fails closed instead of writing a customer's credentials into a platform worker. Admin is exempt, matching
+the allowlist's own decision. Spec'd (586 tests / 0 fail).
 
 **Profiles are NOT durable, and the landing page says they are (verified 2026-10-04).** Three facts, and they
 compound: the vault is process-global (above); `BuildConfigMap` sets no `mounts`, so a session machine has

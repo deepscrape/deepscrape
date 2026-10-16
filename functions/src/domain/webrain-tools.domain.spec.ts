@@ -10,6 +10,8 @@
 import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {
+  EXCLUSIVE_PAID_TOOLS,
+  SESSION_TOOLS,
   PAID_ONLY_TOOLS,
   SHARED_POOL_TOOLS,
   SHARED_UNSAFE_TOOLS,
@@ -17,6 +19,7 @@ import {
   decideWebrainTool,
   isEndpointCookieCall,
   needsCallerOwnWorker,
+  isSessionTool,
   needsExclusiveWorker,
   webrainTierFor,
   webrainToolRefusalMessage,
@@ -156,6 +159,27 @@ describe("needsExclusiveWorker", () => {
     }
   })
 
+  it("covers the PAID page tools from the second list, not the shared one", () => {
+    // The subset contract above forbids putting these in `SHARED_UNSAFE_TOOLS`,
+    // and a PAID caller on the single unleased worker has exactly the same
+    // cross-tenant read a free one has. Both halves are asserted: that the answer
+    // is true, and that it comes from the other list rather than by widening this
+    // one.
+    for (const tool of EXCLUSIVE_PAID_TOOLS) {
+      assert.equal(needsExclusiveWorker(tool), true, tool)
+      assert.equal(PAID_ONLY_TOOLS.includes(tool), true, tool)
+      assert.equal(SHARED_UNSAFE_TOOLS.includes(tool), false, tool)
+    }
+  })
+
+  it("leaves the free, browserless guide in neither list", () => {
+    // It answers from the binary's own documentation and touches no page, so
+    // requiring exclusivity for it would refuse the one tool the shared pool can
+    // serve at no cost.
+    assert.equal(needsExclusiveWorker("webrain_guide"), false)
+    assert.equal(EXCLUSIVE_PAID_TOOLS.includes("webrain_guide"), false)
+  })
+
   it("answers false for a name that is not a string", () => {
     // A requirement check, not a gate: the allowlist behind it already refuses an
     // uncatalogued name, so false here cannot let one through. Answering true
@@ -207,6 +231,67 @@ describe("needsCallerOwnWorker", () => {
   it("answers false for a name that is not a string", () => {
     for (const value of [undefined, null, 0, false, {}, []]) {
       assert.equal(needsCallerOwnWorker(value), false)
+    }
+  })
+})
+
+describe("SESSION_TOOLS", () => {
+  const REFUSED: readonly string[] = [
+    "webrain_eval",
+    "webrain_eval_in_frame",
+    "webrain_download",
+    "webrain_watch",
+    "webrain_profiles",
+    "webrain_login",
+    "webrain_launch",
+  ]
+
+  it("allows the page tools and the two capacity tools", () => {
+    assert.deepEqual([...SESSION_TOOLS], [
+      "webrain_navigate",
+      "webrain_observe",
+      "webrain_interact",
+      "webrain_batch",
+      "webrain_crawl",
+    ])
+  })
+
+  it("admits the two capacity tools, which the meter already prices", () => {
+    // They were held back for being long-running. Duration is what a leased
+    // machine is BILLED for -- per started 5-minute block, up to a 20-credit
+    // ceiling -- so a long crawl on one tenant's own machine is an expensive
+    // request rather than an unsafe one. Excluding them cost more than it
+    // bought: `needsExclusiveWorker` refuses both on the unleased
+    // `WEBRAIN_MCP_URL`, no pool exists, so `/api/batch` and `/api/spider` were
+    // doors into a wall.
+    for (const tool of ["webrain_batch", "webrain_crawl"]) {
+      assert.equal(isSessionTool(tool), true, tool)
+    }
+  })
+
+  it("keeps the arbitrary-JS and payload-heavy tools out", () => {
+    // The route behind this list reaches a machine LEASED to one tenant, so the
+    // lease is the safety boundary rather than a tier allowlist. That says nothing
+    // about `eval`, which would run arbitrary JavaScript on that machine, nor
+    // about the tools that move unbounded bytes and are not metered by payload.
+    for (const tool of REFUSED) {
+      assert.equal(isSessionTool(tool), false, tool)
+    }
+  })
+
+  it("never exempts a tool the POOL would have refused", () => {
+    // Every session tool is also in `EXCLUSIVE_PAID_TOOLS`, which is what makes a
+    // caller who reached it through the pool require an exclusive worker. If one
+    // ever stopped being there, the machine-direct route would quietly become the
+    // only place it is safe -- a decision rather than a drift, so it fails here.
+    for (const tool of SESSION_TOOLS) {
+      assert.equal(EXCLUSIVE_PAID_TOOLS.includes(tool), true, tool)
+    }
+  })
+
+  it("answers false for a name that is not a string", () => {
+    for (const value of [undefined, null, 0, false, {}, []]) {
+      assert.equal(isSessionTool(value), false)
     }
   })
 })

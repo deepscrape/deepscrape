@@ -193,16 +193,45 @@ export const needsExclusiveWorker = (name: unknown): boolean =>
  * reached them through the POOL would have needed an exclusive worker anyway.
  * Adding a fourth is a decision, made here, in one place.
  *
+ * Why `webrain_batch` and `webrain_crawl` ARE here (decided 2026-10-16)
+ * --------------------------------------------------------------------
+ * They were absent because they are long-running, and that reason does not
+ * survive contact with the meter. A leased machine is billed per started
+ * 5-minute block up to a 20-credit ceiling, so duration is already the thing the
+ * customer pays for -- `machineChargeFor` exists precisely because browser time
+ * is per minute. A long crawl on a machine leased to ONE tenant is therefore an
+ * expensive request, not an unsafe one.
+ *
+ * Holding them back cost more than it bought: `needsExclusiveWorker` refuses
+ * both on the unleased `WEBRAIN_MCP_URL`, no pool exists, so leaving them off
+ * this list made `/api/batch` and `/api/spider` doors into a wall.
+ *
+ * The safety argument is the one already recorded for this list -- the lease is
+ * the boundary, so I2 is satisfied by the lease rather than by an allowlist --
+ * and both stay in `EXCLUSIVE_PAID_TOOLS`, which is what keeps that true: a
+ * caller who reaches either through the POOL still needs an exclusive worker,
+ * and the spec asserts that for every member of this list.
+ *
  * Deliberately absent, and not for tier reasons: `webrain_eval` and
- * `webrain_eval_in_frame` run arbitrary JavaScript, `webrain_crawl` and
- * `webrain_batch` are long-running, and `webrain_download` and `webrain_watch`
- * move unbounded bytes. `webrain_profiles`, `webrain_login` and `webrain_launch`
- * need state that outlives the machine, which no machine has.
+ * `webrain_eval_in_frame` run arbitrary JavaScript, `webrain_download` and
+ * `webrain_watch` move unbounded bytes and are not metered by payload, and
+ * `webrain_profiles`, `webrain_login` and `webrain_launch` need state that
+ * outlives a machine, which no machine has.
+ *
+ * What this list is NOT
+ * ---------------------
+ * The machine-direct route (`POST /api/browser/session/:id/tool`) takes the
+ * caller's args RAW, because the lease is the boundary -- so it does not consult
+ * the mappers in `handlers/webrain-tools.ts` at all. Those mappers narrow the
+ * POOL routes (`/api/batch` refuses `op=eval` and `dir`); they are not, and must
+ * not be mistaken for, a boundary on a machine the caller already owns.
  */
 export const SESSION_TOOLS: readonly string[] = [
   "webrain_navigate",
   "webrain_observe",
   "webrain_interact",
+  "webrain_batch",
+  "webrain_crawl",
 ]
 
 /**

@@ -75,8 +75,16 @@ export const RUN_SURFACE_REQUIREMENTS: Readonly<Record<PlaygroundModeId, RunSurf
   },
   tools: {
     rbac: { resource: 'crawl', action: 'execute' },
+    // Left at the mode level rather than moved: FOUR of this mode's seven tools
+    // are paid-only routes (`vision`, `batch`, `spider`, `watch`), so `true`
+    // would gate the three free ones with them. The paid routes answer 402.
     paid: false,
-    source: 'POST /api/search, /api/extract, /api/pdf',
+    // All SEVEN routes the panel can call, not the three an earlier version of
+    // this string claimed. The gate panel shows it, so an incomplete list is
+    // a false statement about the mode.
+    source:
+      'POST /api/search, /api/extract, /api/pdf, /api/vision, /api/batch, ' +
+      '/api/spider, /api/watch',
   },
   browser: {
     rbac: { resource: 'crawl', action: 'execute' },

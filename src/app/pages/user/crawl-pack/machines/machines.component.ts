@@ -16,7 +16,7 @@ import { BrowserSessionPanelComponent } from 'src/app/core/components/browser-se
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { RippleDirective, TooltipDirective } from 'src/app/core/directives';
 import { MACHNINE_STATE } from 'src/app/core/enum';
-import { describeMachineFailure } from 'src/app/core/functions';
+import { describeMachineFailure, hasSessionBacking } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
 import { DeploymentService, FirestoreService, LocalStorage, MachineStoreService, ScrollService, SnackbarService } from 'src/app/core/services';
 import { FlyMachine, MachineResponse } from 'src/app/core/types';
@@ -92,7 +92,10 @@ export class MachinesComponent {
                 next: reply => {
                     const owned: Record<string, string> = {}
                     for (const machine of reply.machines ?? []) {
-                        if (machine.kind === 'browser-session' && machine.sessionId) {
+                        // The predicate is shared with the chat's machine tools: one rule,
+                        // two callers, so the page and the chat cannot disagree about which
+                        // rows are allowed to refuse an action.
+                        if (hasSessionBacking(machine)) {
                             owned[machine.id] = machine.sessionId
                         }
                     }

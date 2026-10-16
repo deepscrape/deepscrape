@@ -66,7 +66,11 @@ export const RUN_SURFACE_REQUIREMENTS: Readonly<Record<PlaygroundModeId, RunSurf
   search: {
     rbac: { resource: 'crawl', action: 'execute' },
     paid: false,
-    source: 'POST /api/search, /api/serp, /api/scrape, /api/extract, /api/pdf',
+    // ONE route, not five. SearchService owns `POST /api/serp` and its only
+    // endpoint is `API_BASE_URL + '/serp'`; `app-search.component.ts` injects
+    // that service and nothing else. The earlier string listed four this mode
+    // cannot reach, which is the same defect `tools` had.
+    source: 'POST /api/serp',
   },
   monitor: {
     rbac: { resource: 'crawl', action: 'execute' },

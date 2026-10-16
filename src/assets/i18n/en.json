@@ -432,7 +432,7 @@
     "Q2": "How is usage measured, pages or credits?",
     "A2": "Every plan is metered in credits, and the cost depends on the operation: a crawl request is 3 credits, AI provider calls are 1-2, and deploying a machine is 5. Free includes 100 credits/month, Starter 1,000, Pro 5,000 and Enterprise 20,000. If you run out mid-month, credit packs can be added at any time.",
     "Q3": "What kind of websites can deepscrape handle?",
-    "A3": "Any public website. deepscrape handles static pages, SPAs (React, Vue, Angular), infinite scroll, JavaScript-heavy sites, login-protected content (with session management), and sites with aggressive anti-bot measures. Our browser pool runs real Chromium instances with advanced stealth profiles.",
+    "A3": "Any public website. deepscrape handles static pages, SPAs (React, Vue, Angular), infinite scroll, JavaScript-heavy sites, login-protected content (with session management), and sites with aggressive anti-bot measures. Real Chromium does the browser work, either on a shared engine for one-off fetches or on a machine dedicated to your session when the job needs a browser of its own.",
     "Q4": "Why use deepscrape instead of self-hosting a scraper?",
     "A4": "Managing your own scraping stack in production requires significant DevOps work: provisioning browser instances, handling memory pressure, managing proxy rotation, dealing with anti-detection, scaling horizontally under load, and monitoring uptime. deepscrape handles all of this automatically. For teams that want to focus on data, not infrastructure, deepscrape delivers 10x faster time-to-value.",
     "Q5": "How does pricing compare to self-hosting?",

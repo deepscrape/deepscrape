@@ -795,6 +795,24 @@
     "SAVE_FAILED": "Échec de l'enregistrement. Vérifiez les URL des proxys et réessayez.",
     "EMPTY": "Saisissez au moins une URL de proxy ou utilisez le pool de la plateforme."
   },
+  "SETTINGS_COMPUTE": {
+    "TITLE": "Calcul",
+    "HINT": "Exécutez les machines de ce compte dans votre propre organisation Fly plutôt que celle de la plateforme. Vous payez Fly directement, et aucun calcul n'est facturé ici.",
+    "LABEL_APP": "Nom de l'app Fly",
+    "LABEL_REGION": "Région (facultatif)",
+    "LABEL_TOKEN": "Jeton de déploiement Fly",
+    "TOKEN_HINT": "Créez-le avec : fly tokens create deploy -a VOTRE-APP. Utilisez un jeton de DÉPLOIEMENT, jamais un jeton d'organisation — un jeton d'organisation permettrait à cette plateforme d'agir sur toutes vos apps.",
+    "REPLACES": "Enregistrer remplace le jeton stocké. Il n'est plus jamais affiché, saisissez-le donc à chaque fois.",
+    "SAVE": "Enregistrer",
+    "CLEAR": "Utiliser les machines de la plateforme",
+    "ACTIVE_BYO": "Votre propre organisation Fly exécute les machines de ce compte.",
+    "ACTIVE_PLATFORM": "L'organisation Fly de la plateforme exécute les machines de ce compte.",
+    "UNUSABLE": "Votre configuration Fly est stockée mais n'a pas pu être lue ; les opérations sur les machines sont donc refusées plutôt que créées dans l'organisation de la plateforme. Enregistrez-la à nouveau ou revenez en arrière.",
+    "LOADING": "Chargement…",
+    "LOAD_FAILED": "Impossible de charger vos paramètres de calcul.",
+    "SAVE_FAILED": "Échec de l'enregistrement. Vérifiez le nom de l'app et le jeton, puis réessayez.",
+    "MISSING": "Saisissez à la fois un nom d'app et un jeton de déploiement, ou utilisez les machines de la plateforme."
+  },
   "PAYMENT": {
     "CARD_TITLE": "Carte de paiement",
     "NAME": "Nom",

@@ -795,6 +795,24 @@
     "SAVE_FAILED": "Speichern fehlgeschlagen. Prüfe die Proxy-URLs und versuche es erneut.",
     "EMPTY": "Gib mindestens eine Proxy-URL ein oder verwende den Plattform-Pool."
   },
+  "SETTINGS_COMPUTE": {
+    "TITLE": "Compute",
+    "HINT": "Führe die Maschinen dieses Kontos in deiner eigenen Fly-Organisation aus statt auf der Plattform. Du zahlst direkt an Fly, und hier wird keine Rechenleistung abgerechnet.",
+    "LABEL_APP": "Fly-App-Name",
+    "LABEL_REGION": "Region (optional)",
+    "LABEL_TOKEN": "Fly-Deploy-Token",
+    "TOKEN_HINT": "Erstellen mit: fly tokens create deploy -a DEINE-APP. Verwende einen DEPLOY-Token, niemals einen Organisationstoken — ein Org-Token würde dieser Plattform Zugriff auf alle deine Apps geben.",
+    "REPLACES": "Speichern ersetzt den hinterlegten Token. Er wird nie wieder angezeigt, gib ihn also jedes Mal erneut ein.",
+    "SAVE": "Speichern",
+    "CLEAR": "Maschinen der Plattform verwenden",
+    "ACTIVE_BYO": "Deine eigene Fly-Organisation betreibt die Maschinen dieses Kontos.",
+    "ACTIVE_PLATFORM": "Die Fly-Organisation der Plattform betreibt die Maschinen dieses Kontos.",
+    "UNUSABLE": "Deine Fly-Konfiguration ist gespeichert, konnte aber nicht gelesen werden. Maschinenvorgänge werden daher abgelehnt, statt in der Organisation der Plattform ausgeführt zu werden. Speichere sie erneut oder wechsle zurück.",
+    "LOADING": "Lädt…",
+    "LOAD_FAILED": "Deine Compute-Einstellungen konnten nicht geladen werden.",
+    "SAVE_FAILED": "Speichern fehlgeschlagen. Prüfe App-Name und Token und versuche es erneut.",
+    "MISSING": "Gib sowohl einen App-Namen als auch einen Deploy-Token ein, oder verwende die Maschinen der Plattform."
+  },
   "PAYMENT": {
     "CARD_TITLE": "Zahlungskarte",
     "NAME": "Name",

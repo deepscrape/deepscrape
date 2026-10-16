@@ -12,8 +12,9 @@ import { BillingPolicyService } from '../../../../core/services/billing-policy.s
 import { FirestoreService } from '../../../../core/services/firestore.service';
 import { NotificationService, type PushState } from '../../../../core/services/notification.service';
 import { AiKeysComponent } from '../../../../core/components/ai-keys/ai-keys.component';
+import { ComputeService } from '../../../../core/services/compute.service';
 import { EgressService } from '../../../../core/services/egress.service';
-import type { EgressMode, EgressWrite } from '../../../../core/types/webrain-config.interface';
+import type { ComputeSource, ComputeWrite, EgressMode, EgressWrite } from '../../../../core/types/webrain-config.interface';
 
 @Component({
   selector: 'app-general-tab',
@@ -28,6 +29,8 @@ export class GeneralTabComponent {
   private readonly destroyRef = inject(DestroyRef);
   /** The caller's own egress pool, so this page can move it the way it moves the cap. */
   private readonly egress = inject(EgressService);
+  /** The caller's own Fly organization -- the OTHER BYO axis, and a separate one. */
+  private readonly compute = inject(ComputeService);
 
   /** Custom radio toggle doubles as the push enable/disable control. */
   readonly pushControl = new FormControl<boolean>(this.notification.isSubscribed(), { nonNullable: true });
@@ -137,6 +140,47 @@ export class GeneralTabComponent {
       && this.egressExitCount() === 0,
   );
 
+  /**
+   * The caller's own Fly app, region and token, as TEXT.
+   *
+   * The token control is never filled from the reply, and that is not an
+   * oversight: the server stores it in Secret Manager behind a pointer and never
+   * returns it, so saving REPLACES it and the field is re-entered every time.
+   * The app control IS filled, because an app name is not a credential.
+   */
+  readonly computeAppControl = new FormControl('', { nonNullable: true });
+  readonly computeRegionControl = new FormControl('', { nonNullable: true });
+  readonly computeTokenControl = new FormControl('', { nonNullable: true });
+
+  private readonly computeHasCredentials = signal(false);
+  private readonly computeApp = signal('');
+
+  /** Which organization is in force, as the SERVER answered it. */
+  readonly computeMode = signal<ComputeSource>('platform');
+
+  /** The read succeeded, so the fields may be rendered at all. */
+  readonly computeReady = signal(false);
+
+  readonly computeLoading = signal(true);
+  readonly computeSaving = signal(false);
+
+  /** An i18n KEY, never a sentence -- the template translates it at render time. */
+  readonly computeError = signal('');
+
+  /**
+   * Configured, but the server could not read the config.
+   *
+   * `hasCredentials` with an EMPTY app is the only shape that state can take:
+   * the pointer says a config is stored, and an empty projection of it means it
+   * did not resolve. Those operations are REFUSED rather than moved into the
+   * platform's organization, so this row is the only place a caller could learn.
+   */
+  readonly computeBroken = computed(() =>
+    this.computeMode() === 'byo'
+      && this.computeHasCredentials()
+      && this.computeApp().length === 0,
+  );
+
   constructor() {
     // Mirror service state into the toggle (no event echo, so no feedback loop)
     // and lock it while an update is in flight or permission is unavailable.
@@ -174,6 +218,9 @@ export class GeneralTabComponent {
     // A second, INDEPENDENT read. The two need no shared error channel: each has
     // its own `ready` flag, so one failing cannot blank the other's rows.
     void this.loadEgress();
+    // A third, independent for the same reason: compute and egress are separate
+    // axes, so one failing must not blank the other's fields.
+    void this.loadCompute();
   }
 
   async sendTestPush(): Promise<void> {
@@ -383,5 +430,120 @@ export class GeneralTabComponent {
     this.egressHasCredentials.set(hasCredentials);
     this.egressExitCount.set(exits);
     this.egressReady.set(true);
+  }
+
+  /**
+   * Read the caller's own compute configuration.
+   *
+   * The APP is filled from the reply; the TOKEN is not, and cannot be. An app
+   * name is no credential, so rendering it lets a caller confirm WHICH
+   * organization they configured -- while the token lives in Secret Manager and
+   * is never returned, so its field stays empty and a save replaces it.
+   * @return {Promise<void>} Nothing.
+   */
+  private async loadCompute(): Promise<void> {
+    this.computeError.set('');
+
+    try {
+      const settings = await firstValueFrom(this.compute.get());
+      this.applyCompute(settings.mode, settings.hasCredentials, settings.app);
+      this.computeRegionControl.setValue(settings.region, { emitEvent: false });
+    } catch {
+      // A failed READ is reported, never rendered as the platform default: that
+      // default is what a caller with their own organization is trying to LEAVE,
+      // so showing it would state the opposite of their account's state.
+      this.computeError.set('SETTINGS_COMPUTE.LOAD_FAILED');
+    } finally {
+      this.computeLoading.set(false);
+    }
+  }
+
+  /**
+   * Persist the typed app, region and token as the caller's own organization.
+   *
+   * NOT save-on-change, for the reason the egress box gives: a text field emits
+   * on every keystroke and the write REPLACES the stored token, so a save per
+   * input could destroy a working credential mid-edit.
+   * @return {Promise<void>} Nothing.
+   */
+  async saveCompute(): Promise<void> {
+    const app = this.computeAppControl.value.trim();
+    const region = this.computeRegionControl.value.trim();
+    const token = this.computeTokenControl.value.trim();
+
+    // Refused HERE rather than sent. The route requires both fields, and its
+    // refusal does not say which one is missing -- from its side an empty app and
+    // an empty token are the same sentence, while from the caller's they are two
+    // different mistakes.
+    if (app.length === 0 || token.length === 0) {
+      this.computeError.set('SETTINGS_COMPUTE.MISSING');
+      return;
+    }
+
+    await this.writeCompute({ mode: 'byo', app, token, region });
+  }
+
+  /**
+   * Go back to the platform's own Fly organization.
+   *
+   * A distinct action from saving an empty form, because the two mean different
+   * things: this STATES the intent, and the route purges the stored secret with
+   * it -- so "I removed my token" is true rather than merely unevaluated.
+   * @return {Promise<void>} Nothing.
+   */
+  async usePlatformMachines(): Promise<void> {
+    await this.writeCompute({ mode: 'platform' });
+  }
+
+  /**
+   * One write, in one place.
+   *
+   * The reply IS the new state, so it is applied rather than re-read: a second
+   * GET would be a round trip to learn something the write already answered.
+   * @param {ComputeWrite} write The request body.
+   * @return {Promise<void>} Nothing.
+   */
+  private async writeCompute(write: ComputeWrite): Promise<void> {
+    this.computeError.set('');
+    this.computeSaving.set(true);
+
+    try {
+      const settings = await firstValueFrom(this.compute.set(write));
+      this.applyCompute(settings.mode, settings.hasCredentials, settings.app);
+      this.computeRegionControl.setValue(settings.region, { emitEvent: false });
+
+      // Emptied after EVERY successful write, not only after a clear: the field
+      // would otherwise be sitting on a token the user has stopped looking at,
+      // and the status line above already confirms the write landed.
+      this.computeTokenControl.setValue('', { emitEvent: false });
+    } catch {
+      this.computeError.set('SETTINGS_COMPUTE.SAVE_FAILED');
+    } finally {
+      this.computeSaving.set(false);
+    }
+  }
+
+  /**
+   * The four pieces of compute state, applied together.
+   *
+   * One place, because the read and the write must leave the view in the same
+   * shape -- and a partial application would render a mode beside an app taken
+   * from a different answer.
+   *
+   * `app` is held as its own signal rather than read back off the control, and
+   * that is the difference between a warning and a flicker: the control is
+   * user-editable, so a broken config would stop reading as broken the moment
+   * someone began typing a replacement.
+   * @param {ComputeSource} mode Which organization is in force.
+   * @param {boolean} hasCredentials Whether a pointer is stored.
+   * @param {string} app The app the config projected to, empty when it did not.
+   * @return {void}
+   */
+  private applyCompute(mode: ComputeSource, hasCredentials: boolean, app: string): void {
+    this.computeMode.set(mode);
+    this.computeHasCredentials.set(hasCredentials);
+    this.computeApp.set(app);
+    this.computeAppControl.setValue(app, { emitEvent: false });
+    this.computeReady.set(true);
   }
 }

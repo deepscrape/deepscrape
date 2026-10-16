@@ -5,8 +5,11 @@ import { Observable, of } from 'rxjs';
 import { GeneralTabComponent } from './general.component';
 import { BillingPolicyService } from '../../../../core/services/billing-policy.service';
 import { AiKeysService } from '../../../../core/services/ai-keys.service';
+import { ComputeService } from '../../../../core/services/compute.service';
 import { EgressService } from '../../../../core/services/egress.service';
 import type {
+  ComputeSettings,
+  ComputeWrite,
   EgressSettings,
   EgressWrite,
 } from '../../../../core/types/webrain-config.interface';
@@ -18,10 +21,12 @@ describe('GeneralTabComponent', () => {
   let fixture: ComponentFixture<GeneralTabComponent>;
   let patches: { spendCapCredits?: number }[];
   let egressWrites: EgressWrite[];
+  let computeWrites: ComputeWrite[];
 
   beforeEach(async () => {
     patches = [];
     egressWrites = [];
+    computeWrites = [];
 
     const policyStub = {
       get: (): Observable<unknown> =>
@@ -76,6 +81,41 @@ describe('GeneralTabComponent', () => {
       },
     } as unknown as EgressService;
 
+    // Stubbed for the same reason as the three above, and it needs one
+    // regardless: the component reads it in its CONSTRUCTOR, so leaving the real
+    // service in place would fire a live `/api/compute` request from a unit test.
+    const computeStub = {
+      get: (): Observable<ComputeSettings> =>
+        of({
+          mode: 'platform',
+          computeSource: 'platform',
+          hasCredentials: false,
+          app: '',
+          region: '',
+        }),
+      set: (write: ComputeWrite): Observable<ComputeSettings> => {
+        computeWrites.push(write);
+        // A BYO write that succeeded projects an app; an empty projection beside
+        // a pointer is the BROKEN state, and a stub should not model a failure
+        // while claiming success.
+        return of(write.mode === 'byo'
+          ? {
+            mode: 'byo' as const,
+            computeSource: 'byo' as const,
+            hasCredentials: true,
+            app: write.app,
+            region: write.region,
+          }
+          : {
+            mode: 'platform' as const,
+            computeSource: 'platform' as const,
+            hasCredentials: false,
+            app: '',
+            region: '',
+          });
+      },
+    } as unknown as ComputeService;
+
     await TestBed.configureTestingModule({
       imports: [GeneralTabComponent],
       providers: [
@@ -83,6 +123,7 @@ describe('GeneralTabComponent', () => {
         { provide: BillingPolicyService, useValue: policyStub },
         { provide: AiKeysService, useValue: aiKeysStub },
         { provide: EgressService, useValue: egressStub },
+        { provide: ComputeService, useValue: computeStub },
       ],
     })
     .compileComponents();

@@ -795,6 +795,24 @@
     "SAVE_FAILED": "Could not save. Check the proxy URLs and try again.",
     "EMPTY": "Enter at least one proxy URL, or use the platform pool."
   },
+  "SETTINGS_COMPUTE": {
+    "TITLE": "Compute",
+    "HINT": "Run this account's machines in your own Fly organization instead of the platform's. You pay Fly directly, and no compute is billed here.",
+    "LABEL_APP": "Fly app name",
+    "LABEL_REGION": "Region (optional)",
+    "LABEL_TOKEN": "Fly deploy token",
+    "TOKEN_HINT": "Create it with: fly tokens create deploy -a YOUR-APP. Use a DEPLOY token, never an organization token — an org token would let this platform act on every app you own.",
+    "REPLACES": "Saving replaces the stored token. It is never shown again, so re-enter it every time.",
+    "SAVE": "Save",
+    "CLEAR": "Use the platform's machines",
+    "ACTIVE_BYO": "Your own Fly organization runs this account's machines.",
+    "ACTIVE_PLATFORM": "The platform's Fly organization runs this account's machines.",
+    "UNUSABLE": "Your Fly configuration is stored but could not be read, so machine operations are refused rather than created in the platform's organization. Save it again, or switch back.",
+    "LOADING": "Loading…",
+    "LOAD_FAILED": "Could not load your compute settings.",
+    "SAVE_FAILED": "Could not save. Check the app name and token, then try again.",
+    "MISSING": "Enter both an app name and a deploy token, or use the platform's machines."
+  },
   "PAYMENT": {
     "CARD_TITLE": "Payment Card",
     "NAME": "Name",

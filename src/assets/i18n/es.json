@@ -795,6 +795,24 @@
     "SAVE_FAILED": "No se pudo guardar. Comprueba las URL de los proxies e inténtalo de nuevo.",
     "EMPTY": "Introduce al menos una URL de proxy o usa el pool de la plataforma."
   },
+  "SETTINGS_COMPUTE": {
+    "TITLE": "Cómputo",
+    "HINT": "Ejecuta las máquinas de esta cuenta en tu propia organización de Fly en lugar de la de la plataforma. Pagas directamente a Fly y aquí no se factura cómputo.",
+    "LABEL_APP": "Nombre de la app de Fly",
+    "LABEL_REGION": "Región (opcional)",
+    "LABEL_TOKEN": "Token de despliegue de Fly",
+    "TOKEN_HINT": "Créalo con: fly tokens create deploy -a TU-APP. Usa un token de DESPLIEGUE, nunca un token de organización — un token de organización permitiría a esta plataforma actuar sobre todas tus apps.",
+    "REPLACES": "Guardar reemplaza el token almacenado. Nunca se vuelve a mostrar, así que vuelve a introducirlo cada vez.",
+    "SAVE": "Guardar",
+    "CLEAR": "Usar las máquinas de la plataforma",
+    "ACTIVE_BYO": "Tu propia organización de Fly ejecuta las máquinas de esta cuenta.",
+    "ACTIVE_PLATFORM": "La organización de Fly de la plataforma ejecuta las máquinas de esta cuenta.",
+    "UNUSABLE": "Tu configuración de Fly está almacenada pero no se pudo leer, por lo que las operaciones de máquina se rechazan en lugar de crearse en la organización de la plataforma. Guárdala de nuevo o vuelve atrás.",
+    "LOADING": "Cargando…",
+    "LOAD_FAILED": "No se pudo cargar tu configuración de cómputo.",
+    "SAVE_FAILED": "No se pudo guardar. Comprueba el nombre de la app y el token, e inténtalo de nuevo.",
+    "MISSING": "Introduce tanto un nombre de app como un token de despliegue, o usa las máquinas de la plataforma."
+  },
   "PAYMENT": {
     "CARD_TITLE": "Tarjeta de pago",
     "NAME": "Nombre",

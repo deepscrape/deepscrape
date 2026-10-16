@@ -124,3 +124,45 @@ export interface EgressSettings {
 export type EgressWrite =
   | { mode: 'platform' }
   | { mode: 'byo'; proxies: string[] }
+
+/**
+ * Which Fly organization runs a caller's machines.
+ *
+ * The counterpart of `EgressMode`, and a SEPARATE axis: a caller may bring their
+ * own exits and still run on our hardware, or the reverse. Like `EgressMode`
+ * this is not a preference with a default -- it is decided server-side by the
+ * PRESENCE of a stored pointer, so this reports the server's answer.
+ *
+ * It is also the field a BILL reads. `byo` means the caller pays Fly directly,
+ * so the platform's compute line must be zero; the UI shows it so a caller can
+ * see which side of that line they are on.
+ */
+export type ComputeSource = 'platform' | 'byo'
+
+/** `GET /api/compute` reply. */
+export interface ComputeSettings {
+  mode: ComputeSource
+  /** The value the billing path reads. Follows `mode` today. */
+  computeSource: ComputeSource
+  /** A presence bit for the token, never a prefix or a length. */
+  hasCredentials: boolean
+  /** Their Fly app, echoed so they can confirm WHICH one. Empty on platform. */
+  app: string
+  /** Their region, empty when unset. */
+  region: string
+}
+
+/**
+ * `PUT /api/compute` request.
+ *
+ * `mode` is REQUIRED, and the union makes omitting it unrepresentable rather
+ * than merely discouraged: read as "set", a typo would overwrite a working
+ * config, and read as "clear", a typo would quietly move the caller's machines
+ * back onto our account.
+ *
+ * `token` is write-only. The server keeps it in Secret Manager behind a pointer
+ * and never returns it, so no field here carries one back.
+ */
+export type ComputeWrite =
+  | { mode: 'platform' }
+  | { mode: 'byo'; app: string; token: string; region: string }

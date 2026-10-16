@@ -72,13 +72,27 @@ A Fly token is far more dangerous than a bucket key. It creates and destroys mac
 5. **Phase 0.1 matters more, not less.** You are now acting inside a third party's org, so a missing
    ownership check means one tenant could drive another tenant's machines *in their own account*.
 
-### Verify before you start (unresolved)
+### Resolved 2026-10-16 - not a discrepancy: the two claims are different HOPS
 
-`functions/src/handlers/machines.ts` forwards the **caller's** Firebase ID token
-(`const token = req.authToken`) on every call, while the platform ADR describes a *"server-held token
-only"*. One of those is stale. Resolve it first — you cannot cleanly add a second credential type on top
-of an ambiguous one. Read `forwardToArachnefly` and the arachnefly `FireAuthMiddleware` and decide which
-is true, then correct whichever doc or code is wrong.
+`FireAuthMiddleware` (`arachnefly/interfaces/controller/middleware.go:12-44`) calls
+`firebaseAuth.VerifyIDToken(...)` and puts `decodedToken.UID` into `c.Locals("userID")`. So
+`machines.ts` forwarding `req.authToken` is **correct**: arachnefly authenticates as the CALLER,
+and the ownership guard depends on that uid being a real Firebase uid.
+
+The ADR's server-held-secret claims are about a DIFFERENT hop -- the crawl4ai/webrain worker,
+where a relayed end-user token is a verified **401** and `CRAWL4AI_API_KEY` is required. Both
+documents are right about their own hop; reading them as one global claim was the error.
+
+| Hop | Credential |
+|---|---|
+| browser -> BFF | the caller's Firebase ID token |
+| BFF -> arachnefly | the caller's Firebase ID token (verified; yields the uid) |
+| arachnefly -> machine MCP | the MACHINE's own `WEBRAIN_HTTP_TOKEN` |
+| BFF/functions -> webrain engine | server-held `WEBRAIN_MCP_TOKEN` |
+
+**This is what makes 4.0b possible.** arachnefly already resolves a per-request uid, so
+`resolveFlyTenant(uid)` has an authoritative input. A server-held platform identity would have
+made per-tenant resolution impossible.
 
 ---
 

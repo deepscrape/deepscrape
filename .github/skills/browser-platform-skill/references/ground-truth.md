@@ -255,9 +255,14 @@ a Firebase JWT), `GET /status` (health, outside `/api`), `POST /services/contact
 deliberately CSRF-exempt), and `POST /machines/execute-task/:machineId`, which one live UI path calls:
 `deployment.service.ts:255` → `/api/machines/execute-task/:machineId` ← `machines.component.ts:312`.
 
-Related unresolved discrepancy (unchanged): `functions/src/handlers/machines.ts` forwards the
-**caller's** token (`const token = req.authToken`) while
-`docs/ADR-2026-09-PLATFORM-ARCHITECTURE.md` says the platform uses a server-held token only.
+Related discrepancy -- **RESOLVED 2026-10-16, and it was never a contradiction.**
+`functions/src/handlers/machines.ts` forwards the caller's token
+(`const token = req.authToken`) and that is CORRECT: arachnefly's `FireAuthMiddleware`
+(`interfaces/controller/middleware.go:12-44`) calls `firebaseAuth.VerifyIDToken(...)` and keeps
+`decodedToken.UID`, so it authenticates as the CALLER -- which the ownership guard requires.
+The ADR's server-held-secret claims describe a different hop (the crawl4ai/webrain worker, where a
+relayed end-user token is a verified 401). Both are right about their own hop; treating them as one
+global claim was the error.
 
 ---
 

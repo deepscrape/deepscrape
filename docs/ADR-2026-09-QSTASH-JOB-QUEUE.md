@@ -1,9 +1,66 @@
 # ADR-2026-09-QSTASH-JOB-QUEUE: the crawl job queue
 
-- **Status:** proposed (one open decision: which host receives deliveries)
+- **Status:** accepted — the queue runs on the BFF (open decision closed 2026-10-16)
 - **Date:** 2026-09-30
 - **Scope:** `deepscrape/deepscrape` — Bun/Elysia BFF (`bff/`), Firebase
   Functions (`functions/`), Angular client (`src/app`)
+
+## Status of this plan — audited 2026-10-16
+
+The "Verified current state" table further down was measured on **2026-09-30** and
+is kept for the record. **Phases 0-2 have since been built**, so reading that table
+as current would send someone to re-implement a working feature. Measured now:
+
+| Item | Then | Now |
+|---|---|---|
+| `@upstash/qstash` installed | no | **yes** — `^2.12.0` in `functions/package.json`, resolved on disk |
+| Publisher | no | **yes** — `publishCrawlTarget`, called per target at `webrain-jobs.ts:396` |
+| Worker endpoint | no | **yes** — `POST /api/jobs/crawl/worker` + `/failed`, in `bff/api.ts` |
+| Signature verification | no | **yes** — `verifyQstashDelivery`, both keys, raw-body exact |
+| Flow control | no | **yes** — added 2026-10-16, see below |
+| Billing idempotency key | no | **still absent, deliberately — see below** |
+
+### The open decision is closed: the queue runs on the BFF
+
+Followed as recommended. `bff/api.ts` is the only host registering the worker and
+failure endpoints, and neither sits behind `guard([...])` — the signature IS the
+authentication, and throttling a delivery would turn a retry into a failure. The
+Functions host registers the enqueue and status routes and **no** delivery target,
+which is the half nothing in the code can enforce.
+
+### §4's per-target and ack requirements are met as written
+
+Bodies carry a reference (`{taskId, uid, url, accessMode}`), never a scraped
+result. `runCrawlTarget` throws on `transportError` so the route answers 502 and
+QStash retries; a target-level refusal is recorded and answered 200, so it is NOT
+retried three times and billed for it.
+
+### §6's billing half does not apply to this path
+
+It says to pass `Upstash-Message-Id` as the idempotency key to
+`applyBillingCreditMutation`. **That call does not exist on the crawl-target path:**
+`functions/src/handlers/webrain-jobs.ts` contains no reference to `credit`, `billing`
+or `charge` at all. There is therefore no charge for a redelivery to double, and
+adding a key would mean adding a charge first — a product decision, not a fix.
+The *document* half of §6 IS implemented: `runCrawlTarget` records through
+`FieldValue.arrayUnion`, so a redelivered message cannot push `completed` past
+`total`, and `failed` is derived on read rather than incremented.
+
+### §3 deviates on purpose: `parallelism` is derived, `rate`/`period` are not set
+
+`parallelism` comes from the live pool (`webrainWorkerPool().length`), because a
+lease on a pool worker is exclusive and held for the duration of the call — so the
+pool size **is** the concurrency ceiling, and §3's "a measurement, not a guess" is
+satisfied by construction rather than by a constant somebody can set above it. That
+also removes the ADR's top risk rather than mitigating it: there is no ceiling value
+to misconfigure.
+
+`rate`/`period` are deliberately omitted. They cap how fast messages **activate**,
+which is a different property from how many may be **in flight**; a fixed activation
+rate would throttle a fast pool below the capacity its own size already licenses.
+
+`parallelismFor` floors at 1, and that is load-bearing: QStash reads a `parallelism`
+of **0 as unlimited**, so an unconfigured pool must not silently remove the ceiling.
 
 ## Context
 
@@ -39,7 +96,7 @@ request for the full duration and then reports `Completed` in one frame.
 So this ADR is not "add a queue for performance". It is: **the queue is the
 missing half of a feature that is already built on the client.**
 
-### Verified current state
+### Verified current state (measured 2026-09-30 — superseded above)
 
 | Item | State | Evidence |
 |---|---|---|
@@ -53,8 +110,9 @@ missing half of a feature that is already built on the client.**
 | Guard on those routes | **yes** | `paid` + `perm('crawl','execute')` on both hosts |
 | Local dev server | **works** | see §Local development |
 
-The four env vars are declared and typed but unread. That is deliberate
-groundwork from the provider-abstraction phase, not an oversight.
+Every "no" in this table except the billing key was resolved by the time of the
+2026-10-16 audit. The four env vars were declared and typed but unread when this
+was written; all four are read now.
 
 ### Why QStash, and what was rejected
 
@@ -297,7 +355,10 @@ a permanent failure is not retried.
 
 ### Phase 3 — concurrency ceiling
 
-- Measure the pool's real ceiling, then set `parallelism` to it.
+- ~~Measure the pool's real ceiling, then set `parallelism` to it.~~
+  **DONE 2026-10-16** — `parallelism` is derived from `webrainWorkerPool().length`
+  at publish time rather than measured and hard-coded, so there is no ceiling
+  constant that can drift above the real one.
 - Prove a tenant's 50-target job cannot exceed it.
 
 **Acceptance:** measured concurrency stays at or under the ceiling under two
@@ -308,9 +369,12 @@ simultaneous large jobs.
 The core win needs **no** client change. This phase is polish:
 
 - Surface `completed / total` progress (the job doc already has it).
-- Fix `WebSocketService` putting the Firebase ID token in the **query string**
-  (`websocket.service.ts:44,75`) — live on `/operations`, lands in access logs.
-  Any touch of the status path is the moment to fix it.
+- ~~Fix `WebSocketService` putting the Firebase ID token in the **query string**~~
+  **ALREADY FIXED** — audited 2026-10-16. `websocket.service.ts` now documents the
+  query-string design as the thing it replaced (its own docblock, ~L36-47) and
+  POLLs a guarded same-origin route instead, so the token never enters a URL.
+  This bullet described the pre-fix state and would have sent someone to fix code
+  that is already correct.
 - Deep-link a notification to its job (the `/operations` link already exists).
 
 **Acceptance:** `/operations` shows real progress for a multi-target job; no

@@ -29,6 +29,7 @@
  */
 import { Client, Receiver } from "@upstash/qstash"
 import { env } from "../config/env"
+import { webrainWorkerPool } from "./webrain-config.store"
 
 /**
  * The payload of one queued crawl target.
@@ -135,9 +136,62 @@ export async function publishCrawlTarget(
     body: message,
     retries: 3,
     failureCallback: failureUrl(),
+    flowControl: {
+      key: FLOW_CONTROL_KEY,
+      parallelism: await crawlParallelism(),
+    },
   })
   return response.messageId
 }
+
+/**
+ * The flow-control key every crawl delivery shares.
+ *
+ * ONE key for the whole platform rather than one per tenant, and the choice is
+ * the whole point of the setting: the scarce resource is the shared worker
+ * pool, so the ceiling has to be global. A per-tenant key would cap each
+ * tenant's concurrency while letting the TOTAL run unbounded into a pool that
+ * cannot serve it -- and the refusals that follow are each retried three times,
+ * which amplifies the load that caused them.
+ */
+export const FLOW_CONTROL_KEY = "webrain-pool"
+
+/**
+ * The concurrency ceiling for a pool of `workerCount` workers.
+ *
+ * A lease on a pool worker is EXCLUSIVE and a slot is held for the length of
+ * the call, so the number of workers IS the number of calls the pool can serve
+ * at once. That is why this is derived from the pool rather than configured:
+ * a ceiling set ABOVE the real one does not queue politely, it earns a refusal
+ * per excess call, and each of those burns three retries.
+ *
+ * Floored at 1 because QStash reads a `parallelism` of **0 as unlimited**,
+ * which is the exact opposite of the intent -- so an empty or unparseable pool
+ * must not silently uncap delivery concurrency.
+ * @param {number} workerCount How many workers the pool currently resolves to.
+ * @return {*} A parallelism of at least 1.
+ */
+export const parallelismFor = (workerCount: number): number =>
+  Number.isFinite(workerCount) && workerCount >= 1 ?
+    Math.floor(workerCount) :
+    1
+
+/**
+ * The concurrency ceiling to publish with, from the live pool.
+ *
+ * Read per delivery rather than frozen at import so a pool resize takes effect
+ * without a deploy. The store caches the underlying secret read, so this is not
+ * a Firestore round trip per message.
+ *
+ * `rate`/`period` are deliberately NOT set. They would cap how fast messages
+ * ACTIVATE, which is a different property from how many may be in flight, and
+ * a fixed activation rate throttles a fast pool below the capacity its size
+ * already licenses -- the pool ceiling is a concurrency fact and this is the
+ * only field that expresses it.
+ * @return {*} The parallelism for the next publish.
+ */
+export const crawlParallelism = async (): Promise<number> =>
+  parallelismFor((await webrainWorkerPool()).length)
 
 /**
  * Verifies a delivery's signature, accepting either signing key.

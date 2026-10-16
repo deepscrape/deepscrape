@@ -21,6 +21,8 @@ import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  FLOW_CONTROL_KEY,
+  parallelismFor,
   verifyQstashDelivery,
   workerUrl,
   workerUrlFor,
@@ -110,5 +112,32 @@ describe("verifyQstashDelivery — the reject path", () => {
       await verifyQstashDelivery(spaced, forged, URL_UNDER_TEST),
       false
     )
+  })
+})
+
+describe("parallelismFor", () => {
+  it("equals the pool size, because a lease holds a worker", () => {
+    assert.equal(parallelismFor(1), 1)
+    assert.equal(parallelismFor(4), 4)
+    assert.equal(parallelismFor(12), 12)
+  })
+
+  it("never returns 0, which QStash reads as UNLIMITED", () => {
+    // The regression this pins: an unconfigured pool resolves to no workers,
+    // and a parallelism of 0 would remove the ceiling entirely -- turning a
+    // safe default into the unbounded-concurrency case the setting exists to
+    // prevent.
+    assert.equal(parallelismFor(0), 1)
+  })
+
+  it("floors anything unusable to 1 rather than propagating it", () => {
+    assert.equal(parallelismFor(-3), 1)
+    assert.equal(parallelismFor(Number.NaN), 1)
+    assert.equal(parallelismFor(Number.POSITIVE_INFINITY), 1)
+    assert.equal(parallelismFor(2.9), 2)
+  })
+
+  it("keys every delivery on the shared pool, not the tenant", () => {
+    assert.equal(FLOW_CONTROL_KEY, "webrain-pool")
   })
 })

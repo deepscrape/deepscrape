@@ -3297,6 +3297,7 @@ export const updateUsage = onDocumentCreated(
   {
     document: "projects/{projectId}",
     database: dbName,
+    secrets: stripeSecrets,
   },
   async (event) => {
     const snap = event.data

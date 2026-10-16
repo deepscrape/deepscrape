@@ -109,9 +109,11 @@ Do not build a feature on top of them.
    fail-closed (2026-10-01).** The token gate and the deepscrape client were already correct.
    Added: webrain **refuses to start** on a non-loopback bind with no token unless
    `WEBRAIN_ALLOW_UNAUTHENTICATED=1` states the intent, so an exposed unauthenticated engine
-   can no longer arise from a forgotten setting. **Load-bearing work is uncommitted in
-   webrain — every tagged release predates the auth gate entirely.** See
-   `references/ground-truth.md`.
+   can no longer arise from a forgotten setting. ~~**Load-bearing work is uncommitted in
+   webrain — every tagged release predates the auth gate entirely.**~~ **CORRECTED 2026-10-16:
+   nothing is uncommitted.** webrain's working tree holds only two untracked `build-webrain.log`
+   / `push-webrain.log` leftovers, and arachnefly's reaper + ownership guard + machine MCP
+   transport were all committed as `8d91cdc`. See `references/ground-truth.md`.
 3. ~~SSRF on arachnefly's `check-image` registry probe~~ — **fixed 2026-10-01** via arachnefly
    `registryIsBlocked`, which mirrors the platform's existing `BLOCKED_HOST` policy. `cdp_url`
    is **not yet an input** — `cdp` appears zero times in `functions/src/**` — so no validation
@@ -148,12 +150,26 @@ ARE the paths, e.g. `API_ARACHNEFLY_URL` is `/api/machines`). **(2) `POST /machi
 The route bypasses `MakeAPICallback` on purpose: that wrapper calls `c.Type("json")` before
 serialising, which would label a PNG `application/json`. **Frames are closable end-to-end:** the BFF
 route and the fps cap are both in place. Phase 3 order: a verified dead constant (§3.1) →
-profiles correctness (§3.3) → the two undeployed indexes (§3.4) → the purchase path (§3.2, §3.5).
+profiles correctness (§3.3) → the purchase path (§3.2, §3.5). **~~the two undeployed indexes
+(§3.4)~~ — CORRECTED 2026-10-16: both are DEPLOYED and READY.** Measured with
+`npx firebase firestore:indexes --project libnet-d76db --database easyscrape`: 34 composite
+indexes, all `READY`, plus 7 `fieldOverrides` carrying `browserSessions.idleDeadline` and
+`browserSessions.state` at `COLLECTION_GROUP` scope. The reason this stayed mis-labelled is a
+trap worth keeping: **the list command defaults to `(default)` while the app's data is in
+`easyscrape`**, so `firebase firestore:indexes` with no `--database` answers
+`{"indexes":[],"fieldOverrides":[]}` and reads as "nothing was ever deployed". `firebase.json`
+does carry `"database": "easyscrape"`, which is why *deploy* was always targeting the right
+one. `gcloud firestore indexes composite list` has the same default and the same trap.
 
 **Phase 0 complete. Phase 1: §1.1, §1.2, §1.3, §1.4, §1.5 all done.** Domain, store, the four
 `/api/browser/session*` routes, machine provisioning with the deploy charge, and the reaper wired end to
-end. **The reaper is LIVE in source: the next arachnefly deploy suspends machines every minute — and §1.4
-now writes `machineId`, so it has something to act on.** Closing a session releases its own machine
+end. ~~**The reaper is LIVE in source: the next arachnefly deploy suspends machines every minute — and §1.4
+now writes `machineId`, so it has something to act on.**~~ **CORRECTED 2026-10-16: the reaper is
+DEPLOYED.** Its files were written 2026-10-01, and the newest `.go` in the repo (`machine_mcp_test.go`,
+2026-10-10) also predates the last release (`v11`, 2026-10-15 17:16) — and `flyctl deploy` builds the
+working tree, so v11 carries it. The late commit `8d91cdc` (19:12 that same day) committed code that was
+already live. **What is still unproven is that it REAPS:** that needs a session with an expired
+`idleDeadline`, and none exists. Closing a session releases its own machine
 (suspend), because the reaper skips `closed` sessions by design; a failed release deliberately leaves the
 session OPEN so the reaper stays the backstop. **Only §1.6 is outstanding** — it needs pricing amounts,
 which is a human decision.
@@ -759,9 +775,15 @@ the allowlist's own decision. Spec'd (586 tests / 0 fail).
 compound: the vault is process-global (above); `BuildConfigMap` sets no `mounts`, so a session machine has
 **no volume** (`deploy/browser-session/Dockerfile:47`); and Fly **resets a stopped machine's root filesystem**
 (same comment), while suspending idle machines is the reaper's whole job on a 15-minute clock. So a profile
-lives only as long as one un-suspended machine — yet `src/assets/i18n/en.json:401` advertises *"Persistent
+lives only as long as one un-suspended machine. ~~yet `src/assets/i18n/en.json:401` advertises *"Persistent
 stealth browser profiles with an encrypted credential vault, native login…"*. That is a published claim the
-platform cannot honour, which makes the storage work a CORRECTNESS item rather than a feature. The shape to
+platform cannot honour, which makes the storage work a CORRECTNESS item rather than a feature.~~
+**CORRECTED 2026-10-16: the copy no longer claims persistence.** It was fixed in all five locales by
+`cc2fcbe` ("describe the profile directory instead of promising persistence"), and `A8` now states that
+credentials are held *"for the duration of the session rather than saved as a permanent browser profile"*.
+So the published copy and the platform agree, and what remains is the storage work itself — a FEATURE gap
+rather than a false claim. One over-claim in that copy did survive and was fixed separately (`c15c0ab`):
+`A3` advertised "our browser pool", and there is no pool. The shape to
 build is the one BYO storage already uses: blob encrypted under a per-tenant data key in the tenant's bucket
 via `resolveBlobStore`, and the **key** (never the blob) in Secret Manager. Secret Manager is the wrong home
 for the blob itself: thousands of per-tenant cookie jars, every read billed and audited, size-capped. Do NOT

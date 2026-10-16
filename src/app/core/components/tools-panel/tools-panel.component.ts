@@ -227,6 +227,78 @@ const VISION_TOOL: ToolDescriptor = {
   ],
 };
 
+/** One operation across many URLs, in a single worker call. */
+const BATCH_TOOL: ToolDescriptor = {
+  id: 'batch',
+  path: '/batch',
+  label: 'TOOLS.TAB_BATCH',
+  note: 'TOOLS.NOTE_BATCH',
+  modeField: 'op',
+  fields: [
+    {
+      name: 'op',
+      label: 'TOOLS.FIELD_OP',
+      kind: 'select',
+      required: true,
+      options: ['fetch', 'extract', 'screenshot'],
+    },
+    { name: 'urls', label: 'TOOLS.FIELD_URLS', kind: 'json', required: true },
+    { name: 'concurrency', label: 'TOOLS.FIELD_CONCURRENCY', kind: 'number' },
+    { name: 'output', label: 'TOOLS.FIELD_OUTPUT', kind: 'text' },
+    {
+      name: 'fields',
+      label: 'TOOLS.FIELD_FIELDS',
+      kind: 'json',
+      whenMode: ['extract'],
+    },
+  ],
+};
+
+/** A site walked from one seed. */
+const SPIDER_TOOL: ToolDescriptor = {
+  id: 'spider',
+  path: '/spider',
+  label: 'TOOLS.TAB_SPIDER',
+  note: 'TOOLS.NOTE_SPIDER',
+  fields: [
+    {
+      name: 'mode',
+      label: 'TOOLS.FIELD_MODE',
+      kind: 'select',
+      required: true,
+      options: ['spider', 'sitemap', 'scan', 'validate'],
+    },
+    { name: 'url', label: 'TOOLS.FIELD_URL', kind: 'text', required: true },
+    {
+      name: 'strategy',
+      label: 'TOOLS.FIELD_STRATEGY',
+      kind: 'select',
+      options: ['bfs', 'dfs', 'bestfirst'],
+    },
+    { name: 'max_pages', label: 'TOOLS.FIELD_MAX_PAGES', kind: 'number' },
+    // The three the gateway accepts and this panel never sent. Its crawl mapper
+    // reads `max_depth` beside `max_pages`, and `respect_robots` / `no_content`
+    // beside `same_domain`, so the API accepted them and this panel never sent
+    // them -- reachable by API, unreachable from the UI.
+    { name: 'max_depth', label: 'TOOLS.FIELD_MAX_DEPTH', kind: 'number' },
+    { name: 'same_domain', label: 'TOOLS.FIELD_SAME_DOMAIN', kind: 'flag' },
+    { name: 'respect_robots', label: 'TOOLS.FIELD_RESPECT_ROBOTS', kind: 'flag' },
+    { name: 'no_content', label: 'TOOLS.FIELD_NO_CONTENT', kind: 'flag' },
+  ],
+};
+
+/** One video, watched and answered. */
+const WATCH_TOOL: ToolDescriptor = {
+  id: 'watch',
+  path: '/watch',
+  label: 'TOOLS.TAB_WATCH',
+  note: 'TOOLS.NOTE_WATCH',
+  fields: [
+    { name: 'url', label: 'TOOLS.FIELD_URL', kind: 'text', required: true },
+    { name: 'prompt', label: 'TOOLS.FIELD_PROMPT', kind: 'text' },
+  ],
+};
+
 /**
  * One hint per field, keyed by `<tool>.<field>`.
  *
@@ -262,6 +334,18 @@ const TOOL_FIELD_HINTS: Record<string, string> = {
   'vision.query': 'TOOLS.HINT_QUERY_VISION',
   'vision.tag': 'TOOLS.HINT_TAG',
   'vision.scale': 'TOOLS.HINT_SCALE',
+  'batch.op': 'TOOLS.HINT_OP_BATCH',
+  'batch.urls': 'TOOLS.HINT_URLS_BATCH',
+  'batch.concurrency': 'TOOLS.HINT_CONCURRENCY',
+  'batch.output': 'TOOLS.HINT_OUTPUT_BATCH',
+  'batch.fields': 'TOOLS.HINT_FIELDS_BATCH',
+  'spider.mode': 'TOOLS.HINT_MODE_SPIDER',
+  'spider.url': 'TOOLS.HINT_URL_SPIDER',
+  'spider.strategy': 'TOOLS.HINT_STRATEGY',
+  'spider.max_pages': 'TOOLS.HINT_MAX_PAGES',
+  'spider.same_domain': 'TOOLS.HINT_SAME_DOMAIN',
+  'watch.url': 'TOOLS.HINT_URL_WATCH',
+  'watch.prompt': 'TOOLS.HINT_PROMPT_WATCH',
 };
 
 /** Every tool, in strip order. */
@@ -270,6 +354,9 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   EXTRACT_TOOL,
   PDF_TOOL,
   VISION_TOOL,
+  BATCH_TOOL,
+  SPIDER_TOOL,
+  WATCH_TOOL,
 ];
 
 /**
@@ -323,13 +410,18 @@ export class ToolsPanelComponent {
    * What each tool needs before it runs, and what a call costs.
    *
    * Two axes on purpose. `credits` is from
-   * `functions/src/domain/billing-pricing.domain.ts`: these three routes are
+   * `functions/src/domain/billing-pricing.domain.ts`: these routes are
    * registered with `resolveAccess`, not `requirePaidAccess`, so the CALL is
    * free on every plan. What `extract` and `pdf` need is not credits but a
    * private worker -- `extract` reads the current page of a browser session and
    * `pdf` reads a path on the worker, so on the shared pool neither can be
    * attributed to a caller. Collapsing that into one "tier" word would hide the
    * axis that actually gates them.
+   *
+   * A tool with NO entry here renders no cost box at all, which is the intended
+   * answer for one whose gate is neither axis: `vision` and the three capacity
+   * tools (`batch`, `spider`, `watch`) are PAID routes, so their `note` says so
+   * in words rather than the box implying "free, so it works".
    *
    * Lease prices are from the same table and stated in `TOOLS.LEASE_COST`:
    * `POST /machines/deploy` is 5 credits, `start`/`suspend`/`stop` are 1 each,
@@ -548,7 +640,14 @@ export class ToolsPanelComponent {
     this.state.set('loading');
     this.errorMessage.set('');
 
-    this.tools[this.active().id as 'search' | 'extract' | 'pdf'](body)
+    // The cast names every tool that HAS a method on the service, which is one
+    // more than it used to: `vision` was absent before the capacity tools were
+    // added, so a cut-and-paste that dropped a name here would have compiled.
+    this.tools[
+      this.active().id as
+        | 'search' | 'extract' | 'pdf' | 'vision'
+        | 'batch' | 'spider' | 'watch'
+    ](body)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: reply => this.apply(reply),

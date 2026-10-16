@@ -26,6 +26,18 @@ class StubTools {
     return this.record('pdf', body);
   }
 
+  batch(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.record('batch', body);
+  }
+
+  spider(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.record('spider', body);
+  }
+
+  watch(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.record('watch', body);
+  }
+
   private record(name: string, body: ToolRequestBody): Observable<ToolEnvelope> {
     StubTools.called = name;
     StubTools.sent = body;
@@ -119,6 +131,12 @@ describe('ToolsPanelComponent', () => {
         .toEqual(['schema', 'regex', 'jsonld', 'table', 'autoschema', 'bm25']);
       expect(tool('pdf').fields.find(f => f.name === 'op')?.options)
         .toEqual(['page', 'extract', 'render', 'images']);
+      expect(tool('batch').fields.find(f => f.name === 'op')?.options)
+        .toEqual(['fetch', 'extract', 'screenshot']);
+      expect(tool('spider').fields.find(f => f.name === 'mode')?.options)
+        .toEqual(['spider', 'sitemap', 'scan', 'validate']);
+      expect(tool('spider').fields.find(f => f.name === 'strategy')?.options)
+        .toEqual(['bfs', 'dfs', 'bestfirst']);
     });
   });
 

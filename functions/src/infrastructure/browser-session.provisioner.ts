@@ -460,3 +460,128 @@ export const observeMachineFrame = async (
     bytes: bytes,
   }
 }
+
+/** What the caller must supply to run one tool on a session's own machine. */
+export type MachineToolInput = {
+  /** Arachnefly's base URL, resolved by the caller from config. */
+  baseUrl: string
+  /** The caller's Firebase ID token, relayed verbatim. */
+  token: string
+  /** The Fly machine id arachnefly returned at deploy time. */
+  machineId: string
+  /** One of `SESSION_TOOLS`; the route refuses anything else long before here. */
+  tool: string
+  /** The tool's arguments, already stripped of anything egress-bearing. */
+  args: Record<string, unknown>
+}
+
+/** One tool result, or why there is none. */
+export type MachineToolResult =
+  | {ok: true; json: unknown}
+  | {ok: false; error: string; status?: number}
+
+/**
+ * The MCP request that runs one tool on a machine's own engine.
+ *
+ * Exported so the shape is testable without reaching a machine, exactly as
+ * `OBSERVE_FRAME_BODY` is. `id` is a literal rather than a counter: the transport
+ * answers one call at a time, so a mismatched id would be a bug in this module,
+ * not a multiplexing concern.
+ * @param {string} tool The MCP tool name.
+ * @param {Record<string, unknown>} args The tool's arguments.
+ * @return {*} The JSON-RPC body.
+ */
+export const machineToolBody = (
+  tool: string,
+  args: Record<string, unknown>,
+) => ({
+  jsonrpc: "2.0",
+  id: "tool",
+  method: "tools/call",
+  params: {name: tool, arguments: args},
+})
+
+/** Streamable HTTP may answer as SSE. Returns the last `data:` payload, or the
+ * body unchanged when it is already plain JSON.
+ * @param {string} raw The response body.
+ * @return {string} The JSON to parse.
+ */
+const unwrapMachineBody = (raw: string): string => {
+  const dataLines = raw.split("\n").filter((line) => /^\s*data:\s*/.test(line))
+  if (!dataLines.length) {
+    return raw
+  }
+  return dataLines[dataLines.length - 1].replace(/^\s*data:\s*/, "").trim()
+}
+
+/**
+ * Run ONE tool on ONE leased machine's own engine.
+ *
+ * The frame reader's sibling, and split from it for the reason that one gives: a
+ * screenshot is BYTES and this is JSON, so reading both through one function
+ * would mean one of the two readers lying about the other's payload. A tool that
+ * answers bytes (a screenshot requested through `webrain_observe`) therefore
+ * lands here as a JSON parse failure rather than as a corrupted success, which is
+ * why the frame path keeps its own reader.
+ *
+ * Why it is safe to send a caller's token to this path
+ * ---------------------------------------------------
+ * The same argument `observeMachineFrame` makes: `/api/machine/mcp/:id` sits
+ * behind arachnefly's ownership middleware, which checks the machine against the
+ * uid the token carries. A machine id belonging to another tenant is a 404
+ * upstream, so the id in the session record is an address and never a credential.
+ *
+ * Never throws, matching its siblings: the route above it has to answer, and an
+ * unhandled rejection would hold the request to its timeout instead.
+ * @param {MachineToolInput} input The machine and the call.
+ * @return {Promise<MachineToolResult>} The parsed result, or why not.
+ */
+export const callMachineTool = async (
+  input: MachineToolInput,
+): Promise<MachineToolResult> => {
+  const machineId = input.machineId.trim()
+  if (!machineId) {
+    return {ok: false, error: "no machine to drive"}
+  }
+
+  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/machine/mcp/` +
+    encodeURIComponent(machineId)
+
+  let response: Awaited<ReturnType<typeof fetch>>
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${input.token}`,
+        "Content-Type": "application/json",
+        // Streamable HTTP may answer as SSE, so both are acceptable.
+        "Accept": "application/json, text/event-stream",
+      },
+      body: JSON.stringify(machineToolBody(input.tool, input.args)),
+    })
+  } catch (error) {
+    return {ok: false, error: `arachnefly unreachable: ${String(error)}`}
+  }
+
+  const raw = await response.text()
+
+  if (!response.ok) {
+    // Status only. The upstream body names internal services and validation
+    // rules, and this is the path a caller reaches by guessing a machine id.
+    return {
+      ok: false,
+      status: response.status,
+      error: `arachnefly answered ${response.status}`,
+    }
+  }
+
+  try {
+    return {ok: true, json: JSON.parse(unwrapMachineBody(raw))}
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      error: "the machine did not answer JSON",
+    }
+  }
+}

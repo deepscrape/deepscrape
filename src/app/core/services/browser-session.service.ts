@@ -62,6 +62,41 @@ export class BrowserSessionService {
   }
 
   /**
+   * Run ONE tool on the session's OWN machine.
+   *
+   * `frameUrl`'s write counterpart: that one reads the machine's page, this one
+   * acts on it. Before it existed the platform could create a session, watch it
+   * and close it, and not use it — a browser a customer could look at and not
+   * drive.
+   *
+   * The tool name is NOT free-form. The server holds an allowlist
+   * (`webrain_interact`, `webrain_observe`, `webrain_navigate`) and refuses
+   * anything else with `tool_not_allowed`, naming the set it does allow, so the
+   * refusal is actionable rather than mysterious. Passing one outside it is a
+   * 400, not a silent no-op.
+   *
+   * `result` is typed `unknown` on purpose: its shape is the CALLED tool's own
+   * schema, so any single static type here would be a lie for the other two. The
+   * caller narrows it per tool.
+   *
+   * @param {string} sessionId The session to drive.
+   * @param {string} tool One of the server's allowlisted tool names.
+   * @param {Record<string, unknown>} args The tool's arguments, passed through.
+   * @return {Observable<{tool: string, result: unknown}>} The machine's reply.
+   */
+  tool(
+    sessionId: string,
+    tool: string,
+    args: Record<string, unknown> = {},
+  ): Observable<{ tool: string; result: unknown }> {
+    return this.http.post<{ tool: string; result: unknown }>(
+      `${this.base}/${encodeURIComponent(sessionId)}/tool`,
+      { tool, args },
+      { headers: this.headers() },
+    )
+  }
+
+  /**
    * The sessions this caller still holds.
    *
    * `closed` is excluded by the server, so this is the live set and is what a

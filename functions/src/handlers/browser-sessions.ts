@@ -65,13 +65,23 @@ import {
   type BrowserTier,
 } from "../domain/browser-session.domain"
 import { resolveBillingPricingPolicy } from "../domain/billing-pricing.domain"
-import { webrainTierFor } from "../domain/webrain-tools.domain"
+import {
+  SESSION_TOOLS,
+  isSessionTool,
+  webrainTierFor,
+} from "../domain/webrain-tools.domain"
+import { withPlatformProxy } from "../domain/webrain-proxy.domain"
 import { decideCallerSpend } from "../infrastructure/billing-spend.store"
 import {
   chargeSessionMeter,
   meterWalletFor,
 } from "../infrastructure/browser-meter-charge"
-import { deployBrowserMachine, observeMachineFrame, suspendBrowserMachine } from "../infrastructure/browser-session.provisioner"
+import {
+  callMachineTool,
+  deployBrowserMachine,
+  observeMachineFrame,
+  suspendBrowserMachine,
+} from "../infrastructure/browser-session.provisioner"
 import {
   attachMachine,
   closeBrowserSession,
@@ -798,5 +808,143 @@ export const browserSessionFrame = async (
     res.status(200).type(frame.contentType).send(Buffer.from(frame.bytes))
   } catch (error) {
     internal(res, "frame", error)
+  }
+}
+
+/**
+ * `POST /api/browser/session/:id/tool` -- run one tool on the session's OWN machine.
+ *
+ * What this closes
+ * ---------------
+ * Before it, a session could be created, closed, kept alive and WATCHED, and not
+ * driven: the frame route is the only caller of the machine transport, and it
+ * hard-codes `webrain_observe(what=screenshot)`. So the platform sold a browser a
+ * customer could look at and not use.
+ *
+ * Why this is not `webrainTool`
+ * ---------------------------
+ * The pool path resolves to a SHARED worker, where `webrain_interact` and
+ * `webrain_observe` are refused on purpose (`EXCLUSIVE_PAID_TOOLS`) because one
+ * caller would otherwise act on a page another left. This route never touches the
+ * pool: it always asks the caller's OWN machine, where the lease -- not a tier
+ * allowlist -- is what makes the call attributable to one tenant. That is also why
+ * the three tools here need not be in `SHARED_POOL_TOOLS` to be legitimate.
+ *
+ * `SESSION_TOOLS` is a named set rather than a passthrough, because "the lease is
+ * the boundary" is a claim about a MACHINE and not a licence to forward whatever
+ * tool name a client invents. Anything outside the set is refused, with the set
+ * named in the response so the refusal is actionable rather than mysterious.
+ *
+ * No rate cap, unlike frames. A frame costs a capture the caller did not ask for
+ * one at a time; an action costs only the machine-minute they are already billed
+ * for, so capping it would meter their own clicking.
+ * @param {Request} req The request carrying `{tool, args}`.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const browserSessionTool = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    unauthorized(res)
+    return
+  }
+
+  try {
+    const id = sessionIdOf(req)
+    if (!id) {
+      notFound(res)
+      return
+    }
+
+    // Owner-scoped, and BEFORE anything is driven: a session that is not this
+    // caller's answers 404 without a machine ever being asked to act.
+    const record = await readBrowserSessionRecord(uid, id)
+    if (!record) {
+      notFound(res)
+      return
+    }
+
+    if (!record.machineId) {
+      // A pool-backed session has no machine of its own, and the pool refuses
+      // these tools. Saying so beats a confusing upstream refusal.
+      res.status(409).json({
+        error: "This session has no machine to drive",
+        code: "no_session_machine",
+      })
+      return
+    }
+
+    const token = req.authToken
+    if (!token) {
+      unauthorized(res)
+      return
+    }
+
+    // `bodyOf` answers `unknown` in THIS module (unlike the storage handler's,
+    // which hands back a record), so the shape is narrowed once here rather than
+    // asserted at every field.
+    const input = bodyOf(req)
+    const body: Record<string, unknown> =
+      input && typeof input === "object" ?
+        (input as Record<string, unknown>) :
+        {}
+
+    const tool = typeof body["tool"] === "string" ? body["tool"] : ""
+
+    if (!isSessionTool(tool)) {
+      res.status(400).json({
+        error: "That tool cannot be run on a session's own machine",
+        code: "tool_not_allowed",
+        allowed: [...SESSION_TOOLS],
+      })
+      return
+    }
+
+    const raw = body["args"]
+    if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) {
+      res.status(400).json({
+        error: "args must be an object",
+        code: "bad_args",
+      })
+      return
+    }
+
+    // Egress is platform-owned on every path, and this one is no exception.
+    // `withPlatformProxy` drops a caller-supplied `proxy` UNCONDITIONALLY and
+    // attaches none from an empty pool -- which is correct here rather than a
+    // shortcut: the machine's own address IS the egress the caller leased, and a
+    // proxy they chose would decide where their traffic appears to come from.
+    const args = withPlatformProxy(
+      tool,
+      req.accessMode,
+      (raw ?? {}) as Record<string, unknown>,
+      []
+    )
+
+    const call = await callMachineTool({
+      baseUrl: arachneflyBaseUrl(),
+      token: token,
+      machineId: record.machineId,
+      tool: tool,
+      args: args,
+    })
+
+    if (!call.ok) {
+      // Status only. `callMachineTool` already refuses to relay the upstream
+      // body, because this is the path a caller reaches by guessing a machine id.
+      console.error(`browser-session: tool ${tool} for ${id} failed: ${call.error}`)
+      res.status(502).json({
+        error: "The machine did not answer",
+        code: "machine_call_failed",
+      })
+      return
+    }
+
+    res.status(200).json({tool: tool, result: call.json})
+  } catch (error) {
+    internal(res, "session tool", error)
   }
 }

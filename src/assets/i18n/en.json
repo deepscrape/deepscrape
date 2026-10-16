@@ -768,7 +768,32 @@
     "SENDING": "Sending…",
     "ERROR": "The reply failed to load. Please try again.",
     "MODEL_LABEL": "Choose your model",
-    "MODELS_UNAVAILABLE": "Models unavailable from:"
+    "MODELS_UNAVAILABLE": "Models unavailable from:",
+    "APPROVE_TITLE": "This runs an action that changes your account. Check the details, then approve or cancel.",
+    "APPROVE_RUN": "Approve and run",
+    "APPROVE_CANCEL": "Cancel",
+    "STOP": "Stop",
+    "RETRY": "Try again",
+    "ERROR_AUTH": "Your key for this model was rejected. Check your API keys, then try again.",
+    "ERROR_PAYMENT": "This needs credits your plan does not cover. Add credits or change plan, then try again.",
+    "ERROR_RATE": "Too many requests right now. Wait a moment, then try again.",
+    "ERROR_NETWORK": "The request never reached the server. Check your connection, then try again.",
+    "NEW_CHAT": "New chat"
+  },
+  "SETTINGS_EGRESS": {
+    "TITLE": "Network egress",
+    "HINT": "Send this account's searches and page fetches out through your own proxies instead of the platform's. One per line, as scheme://user:pass@host:port.",
+    "LABEL": "Your proxies — one per line",
+    "REPLACES": "Saving replaces the whole list. Stored URLs are never shown, so re-enter them all.",
+    "SAVE": "Save",
+    "CLEAR": "Use the platform pool",
+    "ACTIVE_BYO": "Your own proxies are in use.",
+    "ACTIVE_PLATFORM": "The platform's proxies are in use.",
+    "UNUSABLE": "Your proxies are configured but could not be read, so requests are refused rather than sent through the platform's. Save them again, or switch back to the platform pool.",
+    "LOADING": "Loading…",
+    "LOAD_FAILED": "Could not load your egress settings.",
+    "SAVE_FAILED": "Could not save. Check the proxy URLs and try again.",
+    "EMPTY": "Enter at least one proxy URL, or use the platform pool."
   },
   "PAYMENT": {
     "CARD_TITLE": "Payment Card",
@@ -876,6 +901,23 @@
     "FRAME_FAILED": "Live view stopped updating. It will keep trying.",
     "FRAME_PAUSE": "Pause",
     "FRAME_RESUME": "Resume",
+    "DRIVE_HINT": "Click the picture to click the page, then send a key.",
+    "KEY_ENTER": "Enter",
+    "KEY_TAB": "Tab",
+    "KEY_ESCAPE": "Esc",
+    "KEY_BACKSPACE": "Backspace",
+    "SCROLL_UP": "Scroll up",
+    "SCROLL_DOWN": "Scroll down",
+    "RELOAD": "Reload",
+    "ACTION_SENT": "Sent.",
+    "ACTION_FAILED": "The action was refused.",
+    "LOAD_FIELDS": "Load fields",
+    "LOADING_FIELDS": "Loading…",
+    "FIELD_LABEL": "Element to type into",
+    "TYPE_PLACEHOLDER": "Text to type",
+    "TYPE_SEND": "Type",
+    "NO_FIELDS": "This page reports no interactive elements.",
+    "TYPE_NEEDS_BOTH": "Pick an element and enter text first.",
     "FRAME_SHOW": "Show live view",
     "FRAME_HIDE": "Hide live view",
     "FRAME_UNSUPPORTED": "This engine has no live view. It returns the page as text, so there are no pixels to show.",
@@ -1123,7 +1165,15 @@
     "CLEAR": "clear",
     "ABORT": "abort",
     "ERR_PROCESSING_DATA": "Error processing data. Please check console for details.",
-    "ERR_PARSE_RESULT": "Error parsing crawl result data."
+    "ERR_PARSE_RESULT": "Error parsing crawl result data.",
+    "RUN_MODE": "Run mode",
+    "RUN_SCRAPE": "Scrape URLs",
+    "RUN_WALK": "Walk a site",
+    "RUN_BATCH": "Batch operation",
+    "WALK_NO_CONTENT": "Discover URLs only (no page content)",
+    "FIELD_MAX_DEPTH": "Max depth",
+    "TITLE_WALK": "Site walk",
+    "TITLE_BATCH": "Batch operation"
   },
   "DOCKER_STEPPER": {
     "STEP_SELECT_IMAGE": "Select Image",
@@ -2853,11 +2903,66 @@
     "FIELD_ADAPTIVE": "Adaptive",
     "FIELD_OP": "Operation",
     "TAB_VISION": "Vision",
+
+    "TAB_BATCH": "Batch",
+
+    "TAB_SPIDER": "Crawl",
+
+    "TAB_WATCH": "Watch",
     "NOTE_VISION": "Vision reads the CURRENT page: op=ask screenshots the worker's viewport and asks the local model, op=index embeds its tiles into a named index. This is a PAID tool, and on the shared pool it answers 502, Needs a private worker.",
+
+    "NOTE_BATCH": "Runs one operation across many URLs in a single call to a private worker. Every URL is vetted, and `dir` is refused: the worker filesystem belongs to the platform.",
+
+    "NOTE_SPIDER": "Walks a site from one seed, in the mode you choose. Seeds are vetted and `crawldir` is refused like `dir`. A crawl takes minutes, so expect a long call.",
+
+    "NOTE_WATCH": "Watches one video and answers your prompt about it, using the worker's own speech and vision models. Video is large, so this is slow and bandwidth-heavy.",
     "FIELD_PROMPT": "Prompt",
     "FIELD_TAG": "Index tag",
     "FIELD_SCALE": "Capture scale",
+
+    "FIELD_URLS": "URLs",
+
+    "FIELD_CONCURRENCY": "Concurrency",
+
+    "FIELD_OUTPUT": "Output file",
+
+    "FIELD_FIELDS": "Fields",
+
+    "FIELD_URL": "URL",
+
+    "FIELD_STRATEGY": "Strategy",
+
+    "FIELD_MAX_PAGES": "Max pages",
+    "FIELD_MAX_DEPTH": "Max depth",
+    "FIELD_RESPECT_ROBOTS": "Respect robots.txt",
+    "FIELD_NO_CONTENT": "Links only (no content)",
+
+    "FIELD_SAME_DOMAIN": "Same domain only",
     "HINT_SCALE": "Use 3 for small captcha tiles so the model reads them accurately",
+
+    "HINT_OP_BATCH": "fetch returns each page's text, extract pulls fields, screenshot captures each page.",
+
+    "HINT_URLS_BATCH": "A JSON array of absolute http(s) URLs, e.g. [\"https://a.com\",\"https://b.com\"].",
+
+    "HINT_CONCURRENCY": "How many URLs to work on at once.",
+
+    "HINT_OUTPUT_BATCH": "A bare filename for the result, not a path.",
+
+    "HINT_FIELDS_BATCH": "Field objects describing what op=extract should pull out.",
+
+    "HINT_MODE_SPIDER": "spider follows links, sitemap reads the sitemap, scan probes a site, validate checks it.",
+
+    "HINT_URL_SPIDER": "The seed page the walk starts from.",
+
+    "HINT_STRATEGY": "bfs is breadth-first, dfs is depth-first, bestfirst prioritises likely pages.",
+
+    "HINT_MAX_PAGES": "Stop after this many pages.",
+
+    "HINT_SAME_DOMAIN": "Stay on the seed's domain and ignore links out.",
+
+    "HINT_URL_WATCH": "The video's absolute URL.",
+
+    "HINT_PROMPT_WATCH": "What to ask about the video, in a sentence.",
     "FIELD_PATH": "Path",
     "FIELD_PATHS": "Paths (JSON)",
     "FIELD_PAGES": "Pages (JSON)",

@@ -768,7 +768,32 @@
     "SENDING": "Envoi…",
     "ERROR": "La réponse n'a pas pu être chargée. Veuillez réessayer.",
     "MODEL_LABEL": "Choisissez votre modèle",
-    "MODELS_UNAVAILABLE": "Modèles indisponibles pour :"
+    "MODELS_UNAVAILABLE": "Modèles indisponibles pour :",
+    "APPROVE_TITLE": "Cela exécute une action qui modifie votre compte. Vérifiez les détails, puis approuvez ou annulez.",
+    "APPROVE_RUN": "Approuver et exécuter",
+    "APPROVE_CANCEL": "Annuler",
+    "STOP": "Arrêter",
+    "RETRY": "Réessayer",
+    "ERROR_AUTH": "Votre clé pour ce modèle a été refusée. Vérifiez vos clés API, puis réessayez.",
+    "ERROR_PAYMENT": "Cela nécessite des crédits que votre forfait ne couvre pas. Ajoutez des crédits ou changez de forfait.",
+    "ERROR_RATE": "Trop de requêtes pour le moment. Attendez un instant, puis réessayez.",
+    "ERROR_NETWORK": "La requête n'a jamais atteint le serveur. Vérifiez votre connexion, puis réessayez.",
+    "NEW_CHAT": "Nouvelle conversation"
+  },
+  "SETTINGS_EGRESS": {
+    "TITLE": "Sortie réseau",
+    "HINT": "Envoyez les recherches et les récupérations de pages de ce compte via vos propres proxys plutôt que ceux de la plateforme. Un par ligne, sous la forme scheme://utilisateur:motdepasse@hote:port.",
+    "LABEL": "Vos proxys — un par ligne",
+    "REPLACES": "L'enregistrement remplace toute la liste. Les URL stockées ne sont jamais affichées, saisissez-les donc toutes à nouveau.",
+    "SAVE": "Enregistrer",
+    "CLEAR": "Utiliser le pool de la plateforme",
+    "ACTIVE_BYO": "Vos propres proxys sont utilisés.",
+    "ACTIVE_PLATFORM": "Les proxys de la plateforme sont utilisés.",
+    "UNUSABLE": "Vos proxys sont configurés mais n'ont pas pu être lus ; les requêtes sont donc refusées au lieu d'être envoyées via ceux de la plateforme. Enregistrez-les à nouveau ou revenez au pool de la plateforme.",
+    "LOADING": "Chargement…",
+    "LOAD_FAILED": "Impossible de charger vos paramètres de sortie.",
+    "SAVE_FAILED": "Échec de l'enregistrement. Vérifiez les URL des proxys et réessayez.",
+    "EMPTY": "Saisissez au moins une URL de proxy ou utilisez le pool de la plateforme."
   },
   "PAYMENT": {
     "CARD_TITLE": "Carte de paiement",
@@ -876,6 +901,23 @@
     "FRAME_FAILED": "La vue en direct ne se met plus à jour. Une nouvelle tentative sera faite.",
     "FRAME_PAUSE": "Mettre en pause",
     "FRAME_RESUME": "Reprendre",
+    "DRIVE_HINT": "Cliquez sur l'image pour cliquer sur la page, puis envoyez une touche.",
+    "KEY_ENTER": "Entrée",
+    "KEY_TAB": "Tab",
+    "KEY_ESCAPE": "Échap",
+    "KEY_BACKSPACE": "Retour arrière",
+    "SCROLL_UP": "Haut",
+    "SCROLL_DOWN": "Bas",
+    "RELOAD": "Recharger",
+    "ACTION_SENT": "Envoyé.",
+    "ACTION_FAILED": "L'action a été refusée.",
+    "LOAD_FIELDS": "Charger les champs",
+    "LOADING_FIELDS": "Chargement…",
+    "FIELD_LABEL": "Élément à remplir",
+    "TYPE_PLACEHOLDER": "Texte à saisir",
+    "TYPE_SEND": "Saisir",
+    "NO_FIELDS": "Cette page ne signale aucun élément interactif.",
+    "TYPE_NEEDS_BOTH": "Choisissez un élément et saisissez du texte d'abord.",
     "FRAME_SHOW": "Afficher la vue en direct",
     "FRAME_HIDE": "Masquer la vue en direct",
     "FRAME_UNSUPPORTED": "Ce moteur n'a pas de vue en direct. Il renvoie la page sous forme de texte, il n'y a donc aucun pixel à afficher.",
@@ -1123,7 +1165,15 @@
     "CLEAR": "effacer",
     "ABORT": "interrompre",
     "ERR_PROCESSING_DATA": "Erreur lors du traitement des données. Consultez la console pour plus de détails.",
-    "ERR_PARSE_RESULT": "Erreur lors de l'analyse des données du résultat d'extraction."
+    "ERR_PARSE_RESULT": "Erreur lors de l'analyse des données du résultat d'extraction.",
+    "RUN_MODE": "Mode d'exécution",
+    "RUN_SCRAPE": "Extraire les URL",
+    "RUN_WALK": "Parcourir un site",
+    "RUN_BATCH": "Opération par lots",
+    "WALK_NO_CONTENT": "Découvrir uniquement les URL (sans contenu de page)",
+    "FIELD_MAX_DEPTH": "Profondeur maximale",
+    "TITLE_WALK": "Parcours du site",
+    "TITLE_BATCH": "Opération par lots"
   },
   "DOCKER_STEPPER": {
     "STEP_SELECT_IMAGE": "Sélectionner l'image",
@@ -2853,11 +2903,66 @@
     "FIELD_ADAPTIVE": "Adaptatif",
     "FIELD_OP": "Opération",
     "TAB_VISION": "Vision",
+
+    "TAB_BATCH": "Lot",
+
+    "TAB_SPIDER": "Crawl",
+
+    "TAB_WATCH": "Regarder",
     "NOTE_VISION": "La vision lit la page COURANTE : op=ask capture la fenêtre et interroge le modèle local, op=index intègre ses tuiles dans un index nommé. C'est un outil PAYANT et, sur le pool partagé, il répond 502, Needs a private worker.",
+
+    "NOTE_BATCH": "Exécute une opération sur plusieurs URLs en un seul appel à un worker privé. Chaque URL est validée et `dir` est refusé : le système de fichiers du worker appartient à la plateforme.",
+
+    "NOTE_SPIDER": "Parcourt un site depuis une graine, dans le mode choisi. Les graines sont validées et `crawldir` est refusé comme `dir`. Un crawl prend des minutes, attendez-vous à un appel long.",
+
+    "NOTE_WATCH": "Regarde une vidéo et répond à votre prompt à son sujet, avec les modèles de parole et de vision du worker. La vidéo est volumineuse, donc c'est lent et gourmand en bande passante.",
     "FIELD_PROMPT": "Invite",
     "FIELD_TAG": "Étiquette d'index",
     "FIELD_SCALE": "Échelle de capture",
+
+    "FIELD_URLS": "URLs",
+
+    "FIELD_CONCURRENCY": "Parallélisme",
+
+    "FIELD_OUTPUT": "Fichier de sortie",
+
+    "FIELD_FIELDS": "Champs",
+
+    "FIELD_URL": "URL",
+
+    "FIELD_STRATEGY": "Stratégie",
+
+    "FIELD_MAX_PAGES": "Pages max.",
+    "FIELD_MAX_DEPTH": "Profondeur max.",
+    "FIELD_RESPECT_ROBOTS": "Respecter robots.txt",
+    "FIELD_NO_CONTENT": "Liens uniquement (sans contenu)",
+
+    "FIELD_SAME_DOMAIN": "Même domaine uniquement",
     "HINT_SCALE": "Utilisez 3 pour les petites tuiles de captcha afin que le modèle les lise correctement",
+
+    "HINT_OP_BATCH": "fetch renvoie le texte de chaque page, extract extrait des champs, screenshot capture chaque page.",
+
+    "HINT_URLS_BATCH": "Un tableau JSON d'URLs http(s) absolues, p. ex. [\"https://a.com\",\"https://b.com\"].",
+
+    "HINT_CONCURRENCY": "Combien d'URLs traiter à la fois.",
+
+    "HINT_OUTPUT_BATCH": "Un simple nom de fichier pour le résultat, pas un chemin.",
+
+    "HINT_FIELDS_BATCH": "Objets de champ décrivant ce que op=extract doit extraire.",
+
+    "HINT_MODE_SPIDER": "spider suit les liens, sitemap lit le sitemap, scan sonde, validate vérifie.",
+
+    "HINT_URL_SPIDER": "La page de départ du parcours.",
+
+    "HINT_STRATEGY": "bfs est en largeur, dfs en profondeur, bestfirst priorise les pages probables.",
+
+    "HINT_MAX_PAGES": "Arrêter après ce nombre de pages.",
+
+    "HINT_SAME_DOMAIN": "Reste sur le domaine de la graine et ignore les liens sortants.",
+
+    "HINT_URL_WATCH": "L'URL absolue de la vidéo.",
+
+    "HINT_PROMPT_WATCH": "Ce qu'il faut demander sur la vidéo, en une phrase.",
     "FIELD_PATH": "Chemin",
     "FIELD_PATHS": "Chemins (JSON)",
     "FIELD_PAGES": "Pages (JSON)",

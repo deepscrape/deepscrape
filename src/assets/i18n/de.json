@@ -768,7 +768,32 @@
     "SENDING": "Wird gesendet…",
     "ERROR": "Die Antwort konnte nicht geladen werden. Bitte erneut versuchen.",
     "MODEL_LABEL": "Modell auswählen",
-    "MODELS_UNAVAILABLE": "Modelle nicht verfügbar von:"
+    "MODELS_UNAVAILABLE": "Modelle nicht verfügbar von:",
+    "APPROVE_TITLE": "Dies führt eine Aktion aus, die Ihr Konto ändert. Prüfen Sie die Details und bestätigen oder brechen Sie ab.",
+    "APPROVE_RUN": "Bestätigen und ausführen",
+    "APPROVE_CANCEL": "Abbrechen",
+    "STOP": "Stoppen",
+    "RETRY": "Erneut versuchen",
+    "ERROR_AUTH": "Dein Schlüssel für dieses Modell wurde abgelehnt. Prüfe deine API-Schlüssel und versuche es erneut.",
+    "ERROR_PAYMENT": "Dafür fehlt Guthaben, das dein Tarif nicht abdeckt. Lade Guthaben auf oder wechsle den Tarif.",
+    "ERROR_RATE": "Zu viele Anfragen im Moment. Warte einen Moment und versuche es erneut.",
+    "ERROR_NETWORK": "Die Anfrage hat den Server nie erreicht. Prüfe deine Verbindung und versuche es erneut.",
+    "NEW_CHAT": "Neuer Chat"
+  },
+  "SETTINGS_EGRESS": {
+    "TITLE": "Netzwerk-Egress",
+    "HINT": "Sende die Suchen und Seitenabrufe dieses Kontos über deine eigenen Proxys statt über die der Plattform. Einer pro Zeile, als schema://benutzer:passwort@host:port.",
+    "LABEL": "Deine Proxys – einer pro Zeile",
+    "REPLACES": "Speichern ersetzt die gesamte Liste. Gespeicherte URLs werden nie angezeigt, gib sie daher alle erneut ein.",
+    "SAVE": "Speichern",
+    "CLEAR": "Plattform-Pool verwenden",
+    "ACTIVE_BYO": "Deine eigenen Proxys sind in Verwendung.",
+    "ACTIVE_PLATFORM": "Die Proxys der Plattform sind in Verwendung.",
+    "UNUSABLE": "Deine Proxys sind konfiguriert, konnten aber nicht gelesen werden. Anfragen werden daher abgelehnt statt über die der Plattform gesendet. Speichere sie erneut oder wechsle zurück zum Plattform-Pool.",
+    "LOADING": "Wird geladen…",
+    "LOAD_FAILED": "Deine Egress-Einstellungen konnten nicht geladen werden.",
+    "SAVE_FAILED": "Speichern fehlgeschlagen. Prüfe die Proxy-URLs und versuche es erneut.",
+    "EMPTY": "Gib mindestens eine Proxy-URL ein oder verwende den Plattform-Pool."
   },
   "PAYMENT": {
     "CARD_TITLE": "Zahlungskarte",
@@ -876,6 +901,23 @@
     "FRAME_FAILED": "Live-Ansicht wurde nicht mehr aktualisiert. Es wird weiter versucht.",
     "FRAME_PAUSE": "Pausieren",
     "FRAME_RESUME": "Fortsetzen",
+    "DRIVE_HINT": "Klicke auf das Bild, um auf die Seite zu klicken, und sende dann eine Taste.",
+    "KEY_ENTER": "Enter",
+    "KEY_TAB": "Tab",
+    "KEY_ESCAPE": "Esc",
+    "KEY_BACKSPACE": "Rücktaste",
+    "SCROLL_UP": "Nach oben",
+    "SCROLL_DOWN": "Nach unten",
+    "RELOAD": "Neu laden",
+    "ACTION_SENT": "Gesendet.",
+    "ACTION_FAILED": "Die Aktion wurde abgelehnt.",
+    "LOAD_FIELDS": "Felder laden",
+    "LOADING_FIELDS": "Lädt…",
+    "FIELD_LABEL": "Element zum Ausfüllen",
+    "TYPE_PLACEHOLDER": "Einzugebender Text",
+    "TYPE_SEND": "Tippen",
+    "NO_FIELDS": "Diese Seite meldet keine interaktiven Elemente.",
+    "TYPE_NEEDS_BOTH": "Bitte zuerst ein Element wählen und Text eingeben.",
     "FRAME_SHOW": "Live-Ansicht anzeigen",
     "FRAME_HIDE": "Live-Ansicht ausblenden",
     "FRAME_UNSUPPORTED": "Diese Engine hat keine Live-Ansicht. Sie liefert die Seite als Text, es gibt also keine Bildpunkte zu zeigen.",
@@ -1123,7 +1165,15 @@
     "CLEAR": "leeren",
     "ABORT": "abbrechen",
     "ERR_PARSE_RESULT": "Fehler beim Parsen der Crawl-Ergebnisdaten.",
-    "ERR_PROCESSING_DATA": "Fehler bei der Datenverarbeitung. Details finden Sie in der Konsole."
+    "ERR_PROCESSING_DATA": "Fehler bei der Datenverarbeitung. Details finden Sie in der Konsole.",
+    "RUN_MODE": "Ausführungsmodus",
+    "RUN_SCRAPE": "URLs scrapen",
+    "RUN_WALK": "Website durchlaufen",
+    "RUN_BATCH": "Stapelvorgang",
+    "WALK_NO_CONTENT": "Nur URLs ermitteln (ohne Seiteninhalt)",
+    "FIELD_MAX_DEPTH": "Maximale Tiefe",
+    "TITLE_WALK": "Website-Durchlauf",
+    "TITLE_BATCH": "Stapelvorgang"
   },
   "DOCKER_STEPPER": {
     "STEP_SELECT_IMAGE": "Image auswählen",
@@ -2853,11 +2903,66 @@
     "FIELD_ADAPTIVE": "Adaptiv",
     "FIELD_OP": "Operation",
     "TAB_VISION": "Vision",
+
+    "TAB_BATCH": "Stapel",
+
+    "TAB_SPIDER": "Crawl",
+
+    "TAB_WATCH": "Ansehen",
     "NOTE_VISION": "Vision liest die AKTUELLE Seite: op=ask macht einen Screenshot des Viewports und fragt das lokale Modell, op=index bettet dessen Kacheln in einen benannten Index ein. Dies ist ein KOSTENPFLICHTIGES Tool und antwortet im geteilten Pool mit 502, Needs a private worker.",
+
+    "NOTE_BATCH": "Führt eine Operation über viele URLs in einem einzigen Aufruf an einen privaten Worker aus. Jede URL wird geprüft, `dir` wird abgelehnt: Das Dateisystem des Workers gehört der Plattform.",
+
+    "NOTE_SPIDER": "Durchläuft eine Website von einem Seed aus im gewählten Modus. Seeds werden geprüft, `crawldir` wird wie `dir` abgelehnt. Ein Crawl dauert Minuten, erwarten Sie also einen langen Aufruf.",
+
+    "NOTE_WATCH": "Sieht ein Video an und beantwortet Ihren Prompt dazu mit den Sprach- und Vision-Modellen des Workers. Video ist groß, daher ist dies langsam und bandbreitenintensiv.",
     "FIELD_PROMPT": "Prompt",
     "FIELD_TAG": "Index-Tag",
     "FIELD_SCALE": "Aufnahmefaktor",
+
+    "FIELD_URLS": "URLs",
+
+    "FIELD_CONCURRENCY": "Parallelität",
+
+    "FIELD_OUTPUT": "Ausgabedatei",
+
+    "FIELD_FIELDS": "Felder",
+
+    "FIELD_URL": "URL",
+
+    "FIELD_STRATEGY": "Strategie",
+
+    "FIELD_MAX_PAGES": "Max. Seiten",
+    "FIELD_MAX_DEPTH": "Max. Tiefe",
+    "FIELD_RESPECT_ROBOTS": "robots.txt beachten",
+    "FIELD_NO_CONTENT": "Nur Links (kein Inhalt)",
+
+    "FIELD_SAME_DOMAIN": "Nur gleiche Domain",
     "HINT_SCALE": "Für kleine Captcha-Kacheln 3 verwenden, damit das Modell sie genau liest",
+
+    "HINT_OP_BATCH": "fetch liefert den Text jeder Seite, extract zieht Felder, screenshot erfasst jede Seite.",
+
+    "HINT_URLS_BATCH": "Ein JSON-Array absoluter http(s)-URLs, z. B. [\"https://a.com\",\"https://b.com\"].",
+
+    "HINT_CONCURRENCY": "Wie viele URLs gleichzeitig bearbeitet werden.",
+
+    "HINT_OUTPUT_BATCH": "Ein reiner Dateiname für das Ergebnis, kein Pfad.",
+
+    "HINT_FIELDS_BATCH": "Feldobjekte, die beschreiben, was op=extract herausziehen soll.",
+
+    "HINT_MODE_SPIDER": "spider folgt Links, sitemap liest die Sitemap, scan prüft, validate verifiziert.",
+
+    "HINT_URL_SPIDER": "Die Startseite, von der der Durchlauf beginnt.",
+
+    "HINT_STRATEGY": "bfs ist Breitensuche, dfs Tiefensuche, bestfirst priorisiert wahrscheinliche Seiten.",
+
+    "HINT_MAX_PAGES": "Nach so vielen Seiten stoppen.",
+
+    "HINT_SAME_DOMAIN": "Bleibt auf der Domain des Seeds und ignoriert ausgehende Links.",
+
+    "HINT_URL_WATCH": "Die absolute URL des Videos.",
+
+    "HINT_PROMPT_WATCH": "Was zum Video gefragt werden soll, in einem Satz.",
     "FIELD_PATH": "Pfad",
     "FIELD_PATHS": "Pfade (JSON)",
     "FIELD_PAGES": "Seiten (JSON)",

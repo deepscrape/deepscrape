@@ -4,6 +4,8 @@ import { Observable } from 'rxjs'
 import { API_BASE_URL } from '../variables'
 import { AuthService } from './auth.service'
 import {
+  StorageDeleteRequest,
+  StorageDeleteResponse,
   StorageListResponse,
   StoragePresignResponse,
   StorageSaveRequest,
@@ -67,6 +69,20 @@ export class BucketStorageService {
    */
   presign(key: string): Observable<StoragePresignResponse> {
     return this.http.post<StoragePresignResponse>(this.base + '/presign', { key }, { headers: this.headers() })
+  }
+
+  /**
+   * Remove one of the caller's own objects.
+   *
+   * Idempotent on purpose, and that is what makes it safe to retry: the route
+   * answers 200 for a key that is already gone rather than a 404, because the
+   * port documents absent-as-success and S3's `DeleteObject` is idempotent by
+   * specification. A shared cache object is refused -- it has no owner.
+   */
+  remove(key: string): Observable<StorageDeleteResponse> {
+    const body: StorageDeleteRequest = { key }
+
+    return this.http.post<StorageDeleteResponse>(this.base + '/delete', body, { headers: this.headers() })
   }
 
   /** The caller's mode and whether a credential is stored. Never the credential. */

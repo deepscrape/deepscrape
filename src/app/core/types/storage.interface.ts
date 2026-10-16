@@ -74,6 +74,24 @@ export interface StoragePresignResponse {
   url: string
 }
 
+/** `POST /api/storage/delete` request. */
+export interface StorageDeleteRequest {
+  key: string
+}
+
+/**
+ * `POST /api/storage/delete` reply.
+ *
+ * `deleted` is always true on a 200, because an ABSENT key is a success here:
+ * the port documents absent-as-success and S3's `DeleteObject` is idempotent by
+ * specification. The field exists so a caller does not have to infer that from
+ * an empty body.
+ */
+export interface StorageDeleteResponse {
+  key: string
+  deleted: boolean
+}
+
 /** `GET /api/storage/settings` reply. `bucket` is absent in platform mode. */
 export interface StorageSettings {
   mode: StorageMode

@@ -422,6 +422,64 @@ export const storagePresign = async (
 }
 
 /**
+ * `POST /api/storage/delete` -- remove one of the caller's own objects.
+ *
+ * Reuses `isReadableObjectKey`, so a key the caller may not read is a 404 here
+ * too rather than a 403: the answer must not reveal whether another caller's
+ * object exists.
+ *
+ * A SHARED key is refused outright. The shared tier is a URL-keyed cache that
+ * any authenticated caller can re-create, so evicting one is a cross-tenant
+ * write with no owner to answer to -- and `delete_file` exists to remove the
+ * caller's OWN saved files, which is a thing this can actually be right about.
+ *
+ * An absent key SUCCEEDS. `DeleteObject` is idempotent by specification and
+ * the port documents absent-as-success, which is what lets a model that calls
+ * this twice get a usable answer instead of an error.
+ * @param {Request} req The request carrying `{key}`.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const storageDelete = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    fail(res, 401, "unauthorized")
+    return
+  }
+
+  const body = bodyOf(req)
+  const key = typeof body["key"] === "string" ? body["key"].trim() : ""
+
+  if (!key || !isReadableObjectKey(uid, key)) {
+    fail(res, 404, "not_found")
+    return
+  }
+
+  if (isSharedObjectKey(key)) {
+    fail(res, 403, "shared_object")
+    return
+  }
+
+  try {
+    const store = await resolveBlobStore(uid, "user")
+    if (!store) {
+      fail(res, 501, "byob_unavailable")
+      return
+    }
+
+    await store.delete(key)
+
+    res.status(200).json({key, deleted: true})
+  } catch (error) {
+    console.error("storage: delete failed:", errorLabel(error))
+    fail(res, 500, "internal")
+  }
+}
+
+/**
  * `GET /api/storage/settings` -- the mode, and whether a credential is on
  * record. Never the credential itself, never the endpoint.
  * @param {Request} req The request.

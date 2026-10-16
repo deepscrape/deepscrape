@@ -253,7 +253,7 @@ export async function runCrawlTarget(
   url: string,
   accessMode: string | undefined
 ): Promise<void> {
-  const call = await webrainTool("webrain_scrape", accessMode, { url })
+  const call = await webrainTool("webrain_scrape", accessMode, { url }, uid)
 
   // Transient by definition: the worker was unreachable. Nothing is recorded,
   // because a retry produces the real outcome — writing "the worker was down"

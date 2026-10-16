@@ -115,7 +115,12 @@ export const webrainCrawl = async (
   const results: WebrainScrapeResult[] = []
 
   for (const url of safeUrls) {
-    const call = await webrainTool("webrain_scrape", req.accessMode, { url })
+    const call = await webrainTool(
+      "webrain_scrape",
+      req.accessMode,
+      { url },
+      req.user?.uid
+    )
     results.push({
       url,
       ok: call.ok,

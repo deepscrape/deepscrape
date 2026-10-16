@@ -261,14 +261,17 @@ const providerError = (json: unknown): string | undefined => {
  * transport failure a refused connection already produces.
  * @param {*} accessMode The entitlement resolved for the request.
  * @param {*} args The worker arguments.
+ * @param {string} [uid] The verified caller, so their OWN egress pool applies
+ *   when they have configured one.
  * @return {*} A normalised result, never a rejection.
  */
 const callSerp = async (
   accessMode: string | undefined,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  uid?: string
 ): Promise<WebrainToolResult> => {
   try {
-    return await webrainTool("webrain_serp", accessMode, args)
+    return await webrainTool("webrain_serp", accessMode, args, uid)
   } catch (error) {
     console.error("webrain serp call failed:", error)
     return {
@@ -300,7 +303,7 @@ export const webrainSerp = async (
     return
   }
 
-  const call = await callSerp(req.accessMode, mapped.args)
+  const call = await callSerp(req.accessMode, mapped.args, req.user?.uid)
   const failure = serpFailure(call)
 
   if (failure) {

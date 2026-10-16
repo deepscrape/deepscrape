@@ -6,17 +6,22 @@ import { AuthService } from './auth.service';
 import { ToolEnvelope, ToolRequestBody, SchemaCompileResult } from '../types';
 
 /**
- * The one writer of `POST /api/search`, `POST /api/extract`, `POST /api/pdf`
- * and `POST /api/vision`.
+ * The one writer of `POST /api/{search,extract,pdf,vision,guide,navigate,
+ * observe}`.
  *
- * Why one service for four routes
- * -------------------------------
- * The repository convention is one writer per route, and this keeps it: it is
- * one writer for these three, because they are one thing. All three are the
- * same `runRoute` tail behind the same guard (`access` plus `crawl.execute`),
- * carrying the same envelope back -- see `webrain-tools.interface.ts`. Three
- * files would be three copies of one `post` and three docstrings explaining a
- * distinction that does not exist.
+ * Why one service, not seven
+ * --------------------------
+ * The repository convention is one writer per route, and this keeps it: one
+ * writer for all of them, because they are one thing. Every one is the same
+ * `runRoute` tail behind the same `crawl.execute` permission, carrying the same
+ * envelope back -- see `webrain-tools.interface.ts`. Seven files would be seven
+ * copies of one `post` and seven docstrings explaining a distinction that does
+ * not exist.
+ *
+ * The guard is not uniform -- `vision`, `navigate`, `observe` and the three
+ * capacity tools (`batch`, `spider`, `watch`) are `paid` while the rest resolve
+ * `access` -- but that difference belongs to `bff/api.ts` where the routes are
+ * registered, not to the caller of this service.
  *
  * Why it is not `SearchService` or `AiFetchService`
  * -----------------------------------------------
@@ -74,6 +79,81 @@ export class WebrainToolsService {
    */
   vision(body: ToolRequestBody): Observable<ToolEnvelope> {
     return this.post('/vision', body);
+  }
+
+  /**
+   * `webrain_guide` — the worker's own decision guide.
+   *
+   * FREE, and the only route here that starts no browser: it answers from the
+   * binary's documentation, so it is the right first call when the correct tool
+   * is unclear. Takes no arguments on the worker.
+   */
+  guide(): Observable<ToolEnvelope> {
+    return this.post('/guide', {});
+  }
+
+  /**
+   * `webrain_navigate` — go to a URL in a real browser.
+   *
+   * The escalation for a page `/scrape` reported as a JavaScript shell: the
+   * reply carries the page's visible text, so one call is usually the whole
+   * remedy.
+   *
+   * PAID, and it CREATES the current page, so it needs a worker nobody else is
+   * in -- on the shared single worker the answer is
+   * `502 -- Needs a private worker`, which is the route's real behaviour rather
+   * than a fault in this call.
+   */
+  navigate(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.post('/navigate', body);
+  }
+
+  /**
+   * `webrain_observe` — a projection of the CURRENT page.
+   *
+   * The companion to `navigate`, which returns visible text: this adds what it
+   * does not (accessibility tree, semantic tree, console, a screenshot) for a
+   * page the caller is already on.
+   *
+   * PAID, and it READS the current page, so like `extract` it is refused on a
+   * worker nobody leased.
+   */
+  observe(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.post('/observe', body);
+  }
+
+  /**
+   * `webrain_batch` — one operation across many URLs, in a single call.
+   *
+   * PAID, and it holds a worker to one caller for the whole call: a batch runs
+   * for as long as its slowest page, so on a shared process it could not be
+   * attributed to anyone.
+   */
+  batch(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.post('/batch', body);
+  }
+
+  /**
+   * `webrain_crawl` — a site walked from one or more seeds.
+   *
+   * PAID and exclusive for the same reason as `batch`: a walk is minutes long.
+   * The path is `/spider` and not `/crawl` because `/api/crawl` is already the
+   * provider-abstracted scrape endpoint; see `webrainSpider` in
+   * `functions/src/handlers/webrain-tools.ts` for why the names must differ.
+   */
+  spider(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.post('/spider', body);
+  }
+
+  /**
+   * `webrain_watch` — one video watched and answered.
+   *
+   * PAID. The heaviest of the three: it pulls the media and runs the worker's own
+   * speech and vision models over it, so its cost is proportional to the video
+   * rather than to the prompt.
+   */
+  watch(body: ToolRequestBody): Observable<ToolEnvelope> {
+    return this.post('/watch', body);
   }
 
   /**

@@ -27,7 +27,17 @@
 -->
 <div class="flex min-h-0 grow flex-col p-3 sm:p-4">
 
-  <div class="mb-3 flex items-center justify-end">
+  <div class="mb-3 flex items-center justify-end gap-2">
+    <!-- Offered only when there is something to clear, so it never reads as a control that
+         does nothing. It is added BEFORE the picker rather than switching the row to
+         `justify-between`, which would have moved the picker left on every empty transcript. -->
+    @if (messages().length) {
+      <button
+        type="button"
+        class="rounded-lg px-2 py-1 text-xs font-medium text-gray5 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:text-gray3 dark:hover:bg-gray6"
+        [disabled]="streaming()"
+        (click)="newChat()">{{ 'CHAT.NEW_CHAT' | translate }}</button>
+    }
     <app-dropdown
       [options]="models()"
       [control]="modelAI | formControl"
@@ -67,7 +77,7 @@
     }
 
     <ul class="flex flex-col gap-4">
-      @for (message of messages(); track $index) {
+      @for (message of messages(); track message.id) {
         <li class="flex items-end gap-2" [class.flex-row-reverse]="message.role === 'user'">
           @if (message.role === 'user') {
             <p
@@ -92,18 +102,57 @@
               } @else {
                 <mat-spinner [diameter]="18"></mat-spinner>
               }
+
+              <!-- What the answer was built from. The tool name is an identifier and stays
+                   untranslated (the same rule the model id and the running-tool chip follow);
+                   the number beside it is how much that route returned. Without this the
+                   transcript showed only prose and the customer could not see that data was
+                   fetched at all, let alone which routes ran. -->
+              @if (message.tools?.length) {
+                <ul class="mt-2 flex flex-wrap gap-1.5 border-t border-gray2 pt-2 dark:border-gray5">
+                  @for (run of message.tools; track $index) {
+                    <li
+                      class="flex items-center gap-1 rounded-full bg-cyan-700/10 px-2 py-0.5 text-[11px] font-medium text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300">
+                      <code>{{ run.name }}</code>
+                      <span class="text-gray5 dark:text-gray3">{{ run.summary }}</span>
+                    </li>
+                  }
+                </ul>
+              }
             </div>
           }
         </li>
       }
     </ul>
 
-    @if (failed()) {
-      <p
-        class="mt-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300"
+    @if (failure(); as problem) {
+      <div
+        class="mt-4 flex flex-col items-start gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2"
         role="alert">
-        {{ 'CHAT.ERROR' | translate }}
-      </p>
+        <!-- One line per KIND, because the three actionable ones ("fix your key", "add
+             credits", "wait") are three different things to do next. -->
+        <p class="text-sm font-medium text-rose-700 dark:text-rose-300">
+          @switch (problem.kind) {
+            @case ('auth') { {{ 'CHAT.ERROR_AUTH' | translate }} }
+            @case ('payment') { {{ 'CHAT.ERROR_PAYMENT' | translate }} }
+            @case ('rate') { {{ 'CHAT.ERROR_RATE' | translate }} }
+            @case ('network') { {{ 'CHAT.ERROR_NETWORK' | translate }} }
+            @default { {{ 'CHAT.ERROR' | translate }} }
+          }
+        </p>
+        <!-- The transport's own words, untranslated on purpose: this is a diagnostic, and
+             paraphrasing a provider's refusal into copy is how the cause gets lost. -->
+        @if (problem.detail) {
+          <code
+            class="break-words text-xs text-rose-700/80 dark:text-rose-300/80">{{ problem.detail }}</code>
+        }
+        <button
+          type="button"
+          class="rounded-full border border-rose-500/40 px-3 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-500/10 dark:text-rose-300"
+          (click)="retry()">
+          {{ 'CHAT.RETRY' | translate }}
+        </button>
+      </div>
     }
   </div>
 
@@ -118,6 +167,42 @@
     </p>
   }
 
+  <!-- A parked batch: the loop is stopped until the user decides, and nothing is
+       in flight. The arguments are rendered IN FULL -- an approval that hides part
+       of what it approves is a rubber stamp, which is the failure mode this whole
+       path exists to prevent. -->
+  @if (pending(); as batch) {
+    <div
+      class="mt-3 flex flex-col gap-3 rounded-2xl border border-gray2 bg-white p-3 dark:border-gray5 dark:bg-gray6"
+      aria-live="assertive">
+      <p class="text-sm font-medium text-gray-800 dark:text-gray-100">
+        {{ 'CHAT.APPROVE_TITLE' | translate }}
+      </p>
+
+      @for (call of batch.calls; track call.id) {
+        <div class="flex flex-col gap-1">
+          <code class="text-xs font-semibold text-cyan-800 dark:text-cyan-300">{{ call.name }}</code>
+          <pre class="overflow-x-auto rounded-xl bg-gray-50 p-2 text-xs text-gray-800 dark:bg-gray-900 dark:text-gray-200">{{ argsText(call) }}</pre>
+        </div>
+      }
+
+      <div class="flex items-center gap-2 self-start">
+        <button
+          type="button"
+          class="rounded-full bg-cyan-700 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-cyan-800"
+          (click)="confirmPending()">
+          {{ 'CHAT.APPROVE_RUN' | translate }}
+        </button>
+        <button
+          type="button"
+          class="rounded-full border border-gray2 px-4 py-1.5 text-sm font-medium text-gray-700 dark:border-gray5 dark:text-gray-200"
+          (click)="cancelPending()">
+          {{ 'CHAT.APPROVE_CANCEL' | translate }}
+        </button>
+      </div>
+    </div>
+  }
+
   <form
     class="mt-3 flex items-end gap-2 rounded-2xl border border-gray2 bg-white p-2 transition focus-within:border-cyan-600 focus-within:ring-2 focus-within:ring-cyan-300/60 dark:border-gray5 dark:bg-gray6"
     (ngSubmit)="send()">    <textarea
@@ -129,11 +214,22 @@
       (ngModelChange)="draft.set($event)"
       (keydown)="onKeydown($event)"
       class="min-h-11 grow resize-none border-0 bg-transparent px-2 py-2 text-gray6 outline-none placeholder:text-gray5 dark:text-white dark:placeholder:text-gray3"></textarea>
-    <button
-      type="submit"
-      [disabled]="streaming() || !draft().trim()"
-      class="shrink-0 rounded-xl bg-cyan-700 px-4 py-2 font-medium text-white transition hover:bg-cyan-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
-      {{ (streaming() ? 'CHAT.SENDING' : 'CHAT.SEND') | translate }}
-    </button>
+    <!-- Stop REPLACES send rather than sitting beside it: the composer already refuses a
+         second prompt while a reply is in flight, so a send button here would be dead. -->
+    @if (streaming()) {
+      <button
+        type="button"
+        class="shrink-0 rounded-xl border border-gray2 px-4 py-2 font-medium text-gray6 transition hover:bg-gray-50 dark:border-gray5 dark:text-gray2 dark:hover:bg-gray-800"
+        (click)="stop()">
+        {{ 'CHAT.STOP' | translate }}
+      </button>
+    } @else {
+      <button
+        type="submit"
+        [disabled]="!draft().trim()"
+        class="shrink-0 rounded-xl bg-cyan-700 px-4 py-2 font-medium text-white transition hover:bg-cyan-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+        {{ 'CHAT.SEND' | translate }}
+      </button>
+    }
   </form>
 </div>

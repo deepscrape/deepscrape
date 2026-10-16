@@ -1,4 +1,4 @@
-import { buildHistory, buildRequest, refusalText, toolResultText } from './chatai.component';
+import { buildHistory, buildRequest, notOfferedText, refusalText, toolResultText } from './chatai.component';
 
 describe('buildHistory', () => {
     it('appends the prompt after the existing turns', () => {
@@ -77,6 +77,28 @@ describe('refusalText', () => {
             .toContain('not available');
         expect(refusalText({ ok: false, name: 'scrape', reason: 'bad-arguments' }))
             .toContain('valid JSON');
+    });
+
+    it('names WHICH remedy, because the four are not interchangeable', () => {
+        // "Not available here" is true in all four cases and useful in none: it either
+        // talks the user out of a capability they could have had, or promises an upgrade
+        // that would not have helped. Each line has to name the thing that would fix it.
+        expect(notOfferedText({ ok: false, name: 'vision', reason: 'not-offered', block: 'plan' }))
+            .toContain('paid plan');
+        expect(notOfferedText({ ok: false, name: 'extract', reason: 'not-offered', block: 'session' }))
+            .toContain('browser session');
+        expect(notOfferedText({ ok: false, name: 'extract_schema', reason: 'not-offered', block: 'spend' }))
+            .toContain('platform');
+        expect(notOfferedText({ ok: false, name: 'pdf', reason: 'not-offered', block: 'unbuilt' }))
+            .toContain('not available');
+    });
+
+    it('still answers for a refusal with no reason recorded', () => {
+        // Reachable because `block` is optional: an older resolution, or a tool switched
+        // off before a reason was required, must still produce a usable line rather than
+        // an empty string the model cannot act on.
+        expect(notOfferedText({ ok: false, name: 'pdf', reason: 'not-offered' }).length)
+            .toBeGreaterThan(0);
     });
 });
 

@@ -95,6 +95,7 @@ import {
   billingPolicyGet,
   billingPolicySet,
 } from '../functions/src/handlers/billing-policy'
+import { getCompute, setCompute } from '../functions/src/handlers/compute'
 import { getEgress, setEgress } from '../functions/src/handlers/egress'
 import { pricingEstimate, pricingRates } from '../functions/src/handlers/pricing'
 import { requirePermission } from '../functions/src/infrastructure/authz.middleware'
@@ -597,6 +598,22 @@ api.put('/api/billing/policy', h(guard([access, billingPolicySet])))
 // decision rather than a route change (roadmap 12 records it as open).
 api.get('/api/egress', h(guard([perm('crawl', 'read'), getEgress])))
 api.put('/api/egress', h(guard([perm('crawl', 'execute'), setEgress])))
+
+// ── the caller's OWN Fly organization ────────────────────────────────────────
+// A second BYO axis, independent of egress: a caller may bring their own exits
+// and still run on our machines, or the reverse, so this is its own document
+// rather than a field on that one.
+//
+// The write is `machine.update`, and NOT a new `machine.compute`: the authz
+// `machine` resource declares only read, deploy and update, and `execute-task`
+// above already mapped sideways to `update` rather than migrating the policy.
+// This chooses whose organization FUTURE machines are created in, which is
+// configuration ABOUT machines -- `deploy` stays reserved for deploying one.
+//
+// Neither route takes `paid`: reading or clearing your OWN configuration must
+// not 402, and the machine routes themselves already require the entitlement.
+api.get('/api/compute', h(guard([perm('machine', 'read'), getCompute])))
+api.put('/api/compute', h(guard([perm('machine', 'update'), setCompute])))
 
 // ── stored artifacts ─────────────────────────────────────────────────────────
 // Deliberately WITHOUT `paid` or `access`: this surface spends no credits and

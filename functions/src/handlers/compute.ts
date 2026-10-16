@@ -1,0 +1,133 @@
+/* eslint-disable object-curly-spacing */
+/**
+ * The caller's own Fly organization: read it, replace it, clear it.
+ *
+ * Two routes, and neither can reach another tenant
+ * ------------------------------------------------
+ * The document path is derived from the VERIFIED uid, so there is no id in the
+ * URL to guess or to tamper with -- the same isolation argument the egress and
+ * storage routes make, and the reason this is a caller-scoped setting. A member
+ * configuring it moves THEIR OWN machines; it does not move a colleague's.
+ *
+ * Why the guard is on `machine` and not a new action
+ * -------------------------------------------------
+ * The authz `machine` resource declares `read`, `deploy` and `update`, and
+ * `bff/api.ts` already records that inventing an action means a policy
+ * migration. None is needed here: this setting grants no authority over anybody
+ * else, and a caller who cannot act on machines has nothing to point at a
+ * compute source. So read takes `machine:read` and the write takes
+ * `machine:update` -- the action this resource uses for mutating machine
+ * configuration, while `deploy` stays reserved for actually deploying.
+ *
+ * `paid` is deliberately NOT in the guard, for the reason the egress route
+ * gives: it would 402 a caller reading or clearing their OWN configuration, and
+ * the machine routes themselves already require it. A caller who cannot deploy
+ * gains nothing from this route either way.
+ *
+ * What may leave this file
+ * ------------------------
+ * Never a Fly token. The GET projects through `toPublicCompute`, which has no
+ * field a token could occupy, and a validation failure names a REASON rather
+ * than the value -- a message that quoted it would put a deploy token in the
+ * response body and the log at once.
+ */
+import { Request, Response } from "express"
+import { validateComputeInput } from "../domain/byo-compute.domain"
+import {
+  readComputeSettings,
+  writeComputeSettings,
+} from "../infrastructure/compute-settings.store"
+
+/** The caller's uid, or undefined when the token carried none.
+ * @param {Request} req The request.
+ * @return {string|undefined} The uid.
+ */
+const uidOf = (req: Request): string | undefined => {
+  const uid = req.user?.uid
+  return typeof uid === "string" && uid.length > 0 ? uid : undefined
+}
+
+/** The error class name, never its message: a Secret Manager failure can quote
+ * the resource path, which is the one field a credential could ride in.
+ * @param {unknown} error The thrown value.
+ * @return {string} A safe label for the log.
+ */
+const errorLabel = (error: unknown): string =>
+  error instanceof Error ? error.name : typeof error
+
+/**
+ * `GET /api/compute` -- the caller's own Fly organization, credentialless.
+ *
+ * `mode` follows the POINTER rather than the parse, so a caller whose secret
+ * has gone unreadable reads as `byo` with no credential. That is the honest
+ * description of their state and it is the same condition the resolver refuses
+ * on, which is what lets the UI say "configured, but not usable" rather than
+ * "off".
+ * @param {Request} req The request.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const getCompute = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+
+  if (!uid) {
+    res.status(401).json({ error: "unauthorized", code: "unauthorized" })
+    return
+  }
+
+  try {
+    res.status(200).json(await readComputeSettings(uid))
+  } catch (error) {
+    console.error("compute: read failed:", errorLabel(error))
+    res.status(500).json({ error: "internal", code: "internal" })
+  }
+}
+
+/**
+ * `PUT /api/compute` -- replace the caller's Fly organization, or clear it.
+ *
+ * The body is `{mode: "byo", app, token, region}` or `{mode: "platform"}` to go
+ * back to our machines. `mode` is required rather than inferred, because either
+ * guess is wrong for somebody: reading an absent mode as "set" lets a typo
+ * overwrite a working config, and reading it as "clear" silently moves the
+ * caller's machines back onto our bill.
+ *
+ * A cleared config purges the secret, so "I removed my token" is true rather
+ * than merely unevaluated.
+ * @param {Request} req The request carrying the write.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const setCompute = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+
+  if (!uid) {
+    res.status(401).json({ error: "unauthorized", code: "unauthorized" })
+    return
+  }
+
+  const validation = validateComputeInput(req.body)
+
+  if (!validation.ok) {
+    // A reason only -- the body carries a deploy token.
+    res.status(400).json({
+      error: "bad_request",
+      code: "bad_request",
+      reason: validation.reason,
+    })
+    return
+  }
+
+  try {
+    res.status(200).json(await writeComputeSettings(uid, validation.write))
+  } catch (error) {
+    console.error("compute: write failed:", errorLabel(error))
+    res.status(500).json({ error: "internal", code: "internal" })
+  }
+}

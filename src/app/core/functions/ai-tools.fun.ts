@@ -26,6 +26,10 @@
  *  - `extract_schema` bills a model call on the platform key per invocation,
  *    which is a spend decision rather than a chat feature.
  *
+ * Each of those is a DIFFERENT remedy, which is why the refusal carries a
+ * `ToolBlock` rather than a bare `false`: the model has to be able to tell the user
+ * which one applies. See `ToolBlock`.
+ *
  * Flipping one to `available: true` is the whole change needed to offer it; the
  * refusal path below then stops rejecting it, because both read the same flag.
  *
@@ -36,6 +40,17 @@
  * offered, or invent arguments. `resolveToolCall` is the gate, and the dispatcher
  * calls it before anything runs. Nothing reaches a route because a model asked.
  */
+
+/**
+ * Why a tool is not offered to a chat caller.
+ *
+ * A reason rather than a bare `false` because the remedies differ and the user is
+ * owed the RIGHT one: `plan` is fixed by an upgrade, `session` by opening a browser
+ * session and driving it there, and nothing the user can do fixes `unbuilt` or
+ * `spend`. A model told only "unavailable" either gives up on a tool the user could
+ * have had, or promises an upgrade that would not have helped.
+ */
+export type ToolBlock = 'plan' | 'session' | 'unbuilt' | 'spend';
 
 /** One tool the model may be offered. */
 export interface AiToolSpec {
@@ -54,6 +69,37 @@ export interface AiToolSpec {
    * a chat caller. See the module comment for each reason.
    */
   readonly available: boolean;
+  /**
+   * Offered only to a caller whose access mode is paid.
+   *
+   * The route enforces the same thing, so this is the OFFER gate rather than the
+   * security boundary: `/api/vision` answers 402 for a free caller whether or not
+   * the model was offered the tool. It exists because a single static boolean could
+   * not express "a paying caller may, a free one may not" -- so a paid customer was
+   * denied a tool that would have worked for them, and nothing said why.
+   */
+  readonly paidOnly?: boolean;
+  /**
+   * Why this tool is not offered, REQUIRED whenever `available` is false.
+   *
+   * The pair is pinned by a spec rather than by the type, because a tool switched
+   * off with no recorded reason leaves the model with nothing to tell the user.
+   */
+  readonly blocked?: ToolBlock;
+  /**
+   * Whether the user must approve this tool before it runs.
+   *
+   * Set on anything that CHANGES something. The loop executes a model's call the
+   * instant it parses it, so without this a write tool would act on the model's
+   * say-so alone -- and the same context carries `scrape` and `navigate` output,
+   * which is text a third party wrote. A read tool is safe under that; a write
+   * tool is not.
+   *
+   * One flag rather than a `read | write | destroy` enum: the UI does the same
+   * thing for every one of them -- show the call, wait for a click -- and a
+   * distinction nothing branches on is a distinction that rots.
+   */
+  readonly requiresConfirm?: boolean;
 }
 
 /** A tool call the model asked for, normalised across both dialects. */
@@ -98,6 +144,20 @@ const enumOf = (
   description,
   enum: [...values],
 });
+
+/**
+ * The `path` of a tool the CHAT COMPONENT answers rather than a route.
+ *
+ * Exported so the one exception to "every path names a real route" is STATED rather
+ * than spelled. The spec asserts that every other tool's path begins with `/api/` and
+ * that exactly ONE tool uses this, so a second route-less tool fails the suite instead
+ * of quietly widening the rule.
+ *
+ * The value is deliberately not a URL. Writing `/api/...` here would satisfy that check
+ * while naming an endpoint nothing serves -- the plausible-wrong-answer failure this
+ * codebase treats as worse than an error.
+ */
+export const CLIENT_SIDE_PATH = 'client';
 
 /**
  * The tools, in the order a model sees them.
@@ -179,12 +239,16 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
     ),
     path: '/api/extract',
     available: false,
+    // Reads the CURRENT page of a browser session, so it needs one nobody else is
+    // in. Chat never has one; a session the user opened does.
+    blocked: 'session',
   },
   {
     name: 'pdf',
     description:
-      'Work on a PDF the WORKER can reach. The platform has no upload route, so ' +
-      'a caller cannot put a file where this tool reads, and it is not offered in chat.',
+      'Work on a PDF the worker can reach: the page it is on, or a file it ' +
+      'already holds. Needs a session whose page and files the caller ' +
+      'controls, so it is not offered in chat.',
     parameters: object(
       {
         op: enumOf('The PDF operation.', ['page', 'extract', 'render', 'images']),
@@ -195,12 +259,18 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
     ),
     path: '/api/pdf',
     available: false,
+    // An upload route is NOT what this needs, which an earlier version of this
+    // entry claimed. `op=page` renders the page the browser is ALREADY on, and
+    // the other three ops read a path that `download <url>` can fill, so a URL
+    // is enough to put a PDF where this reads. The real blocker is the one
+    // `extract` has: it reads a page and a filesystem a session owns.
+    blocked: 'session',
   },
   {
     name: 'vision',
     description:
-      'Local vision over screenshot pixels on the worker. A paid route, so a free ' +
-      'caller is refused before the tool is consulted.',
+      'Local vision over screenshot pixels on the worker. A paid route: offered to ' +
+      'a paid caller, and refused for a free one by both this gate and the route.',
     parameters: object(
       {
         op: enumOf('The vision operation.', ['index', 'retrieve', 'ask']),
@@ -209,7 +279,11 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
       ['op']
     ),
     path: '/api/vision',
-    available: false,
+    available: true,
+    // The one tool whose availability is per-CALLER rather than static. A single
+    // boolean used to deny this to a paying customer it would have worked for,
+    // with nothing on screen to say why.
+    paidOnly: true,
   },
   {
     name: 'extract_schema',
@@ -226,10 +300,87 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
     ),
     path: '/api/extract/schema',
     available: false,
+    // Bills the platform key per call, which is a spend decision rather than a chat
+    // feature. The caller's own credits do not enter into it.
+    blocked: 'spend',
   },
 
-  // ---- Platform read tools -------------------------------------------------
-  //
+    // ---- Browser escalation --------------------------------------------------
+    //
+    // These three close the ladder the tools above start. `/api/scrape` is plain
+    // HTTP and reports whether a page turned out to be a JavaScript shell;
+    // `navigate` is what turns that signal into an answer, `observe` reads a page
+    // the caller is already on, and `guide` costs nothing.
+    //
+    // The other seven webrain tools are deliberately ABSENT, and the reasons are
+    // different kinds. `interact`, `batch` and `crawl` are long-running or want a
+    // browser the caller is watching. `eval` and `eval_in_frame` run arbitrary
+    // JavaScript. `download` and `watch` cost bandwidth proportional to the
+    // payload. None belongs inside a chat turn -- and a tool the model is offered
+    // is a tool the model WILL call.
+    {
+      name: 'guide',
+      description:
+        'Read the browser engine decision guide: which engine or tool fits a job, ' +
+        'how to get past a challenge, the extraction matrix. Free, starts no ' +
+        'browser, takes no arguments. Call it FIRST when unsure which tool to use.',
+      parameters: object({}),
+      path: '/api/guide',
+      available: true,
+    },
+    {
+      name: 'navigate',
+      description:
+        'Open a URL in a real browser and return the page state: title, visible ' +
+        'text, interactive elements and same-origin links. Use when scrape reported ' +
+        'needs_js, or for a JavaScript app, cookie wall or challenge. Paid plan.',
+      parameters: object(
+        {
+          url: string('The absolute URL to open.'),
+          css_selector: string('Narrow the returned text to this element.'),
+          wait_selector: string('Wait for this CSS selector before reading.'),
+        },
+        ['url']
+      ),
+      path: '/api/navigate',
+      available: true,
+    },
+    {
+      name: 'observe',
+      description:
+        'Read the page the browser is CURRENTLY on, without navigating. Choose what ' +
+        'to read: state, a11y (accessibility tree), semantic, clean (boiled text), ' +
+        'html, console, screenshot, images, media and more. Use after navigate when ' +
+        'its visible text is not the shape you need. Paid plan.',
+      parameters: object(
+        {
+          what: enumOf('What to read from the page.', [
+            'state',
+            'a11y',
+            'semantic',
+            'html',
+            'images',
+            'console',
+            'flatten',
+            'fit',
+            'clean',
+            'screenshot',
+            'pixel',
+            'page_info',
+            'annotate',
+            'media',
+          ]),
+          selector: string('html: narrow to this CSS selector.'),
+          max_nodes: {
+            type: 'number',
+            description: 'a11y: node cap.',
+          },
+        },
+        ['what']
+      ),
+      path: '/api/observe',
+      available: true,
+    },
   // A second family, and the distinction is the guard rather than the vendor.
   // The webrain tools above reach a scraping worker; these two read this
   // platform's own records, through the SAME services the UI already uses
@@ -278,11 +429,193 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
     path: '/api/machines',
     available: true,
   },
-];
 
-/** The specs a model may be offered. */
-export const availableTools = (): readonly AiToolSpec[] =>
-  AI_TOOLS.filter(tool => tool.available);
+  // ---- Write tools ---------------------------------------------------------
+  //
+  // The first family here that CHANGES anything, and the reason
+  // `requiresConfirm` exists. What is deliberately absent, and why, is recorded
+  // in `docs/roadmap/15-chat-write-tools.md` -- read it before adding one,
+  // because the reasoning is per-tool and not a blanket rule.
+  //
+  // Every entry in this family sets `requiresConfirm`, and that is not optional:
+  // the chat parks a whole batch when ANY call in it asks for approval, and the
+  // flag is how a call asks. An entry here without it runs the moment the model
+  // names it.
+  //
+  // Session and machine lifecycle ONLY, and only in the STOPPING direction.
+  // Stopping reduces spend, so the blast radius of a wrong call is a smaller bill
+  // rather than a destroyed resource. `destroy` is deliberately not here: a
+  // session machine can be destroyed while its RECORD survives, and
+  // `chargeSessionMeter` bills from the record -- so a destroyed session machine
+  // leaves the customer paying to the ceiling with nothing left to connect to.
+  // That is exactly what `refuseSessionOwnedAction()` guards in the machines
+  // page, and these tools route through the same service the page uses rather
+  // than around it.
+  {
+    name: 'stop_session',
+    description:
+      'End a browser session that is open, and stop its meter. Use when asked to ' +
+      'stop a session, or to stop something that is still costing money. This ' +
+      'runs the final meter charge, so it is the action that STOPS billing. Call ' +
+      'list_sessions first to get the id. Cannot be undone.',
+    parameters: object(
+      {
+        session_id: string('The session id, from list_sessions.'),
+      },
+      ['session_id']
+    ),
+    path: '/api/browser/session',
+    available: true,
+    requiresConfirm: true,
+  },
+  {
+    name: 'stop_machine',
+    description:
+      'Stop a dedicated machine the caller owns, so it stops running. Use when asked ' +
+      'to stop a machine, or to stop something that is still costing money. Call ' +
+      'list_machines first to get the id. Refused for a machine that belongs to a ' +
+      'browser session: call stop_session for that one instead, because stopping the ' +
+      'machine leaves the session record billing with nothing left to connect to.',
+    parameters: object(
+      {
+        machine_id: string('The machine id, from list_machines.'),
+      },
+      ['machine_id']
+    ),
+    path: '/api/machines/machine/:machineId/stop',
+    available: true,
+    requiresConfirm: true,
+  },
+  {
+    name: 'suspend_machine',
+    description:
+      'Suspend a dedicated machine the caller owns: it stops running but is kept so it ' +
+      'can be started later. Use when asked to pause or shelve a machine. Call ' +
+      'list_machines first to get the id. Refused for a machine that belongs to a ' +
+      'browser session -- end the session instead.',
+    parameters: object(
+      {
+        machine_id: string('The machine id, from list_machines.'),
+      },
+      ['machine_id']
+    ),
+    path: '/api/machines/machine/:machineId/suspend',
+    available: true,
+    requiresConfirm: true,
+  },
+  {
+    name: 'delete_file',
+    description:
+      'Delete one file the caller has saved, by its key. Call list_storage first ' +
+      'to get the key. This cannot be undone. Refused for a shared cache object, ' +
+      'which the caller does not own, and a key that is already gone is a ' +
+      'success rather than an error.',
+    parameters: object(
+      {
+        key: string('The object key, from list_storage.'),
+      },
+      ['key']
+    ),
+    path: '/api/storage/delete',
+    available: true,
+    requiresConfirm: true,
+  },
+  {
+    name: 'save_file',
+    description:
+      'Fetch a URL once and keep the result as a file the caller can open or ' +
+      'download later. Use when asked to save, archive or keep a page. Returns the ' +
+      'key that list_storage shows. Keeps the caller\'s own copy; it does not make ' +
+      'the file public or shared.',
+    parameters: object(
+      {
+        url: string('The absolute URL to fetch and keep.'),
+        filename: string('A display name for the saved file.'),
+      },
+      ['url']
+    ),
+    path: '/api/storage/save',
+    available: true,
+    requiresConfirm: true,
+  },
+  {
+    name: 'set_spend_cap',
+    description:
+      'Set the caller\'s own spend cap for the current billing period. The unit is ' +
+      'CREDITS, not money, and 0 means no cap at all. Use when asked to cap, limit ' +
+      'or budget spend; if the user spoke in currency, ask what that is in credits ' +
+      'rather than converting. This is a limit on FUTURE spend, so lowering it can ' +
+      'stop work that is already running.',
+    parameters: object(
+      {
+        spend_cap_credits: {
+          type: 'number',
+          description: 'The cap in credits. 0 removes the cap. Whole numbers only.',
+        },
+      },
+      ['spend_cap_credits']
+    ),
+    path: '/api/billing/policy',
+    available: true,
+    requiresConfirm: true,
+  },
+  {
+    /**
+     * The only tool here with no route.
+     *
+     * It is answered by the chat component itself, because the model selection is a
+     * FORM CONTROL in that component rather than anything the platform stores. That
+     * also makes it the one write whose effect the user watches land -- the picker
+     * moves as the call runs -- and that visibility is the whole reason a model
+     * choosing a model is tolerable at all.
+     *
+     * `path` is still required by the spec's type; nothing reads it to dispatch,
+     * because the switch is on the NAME. `client` says where the change lands rather
+     * than pretending to be a URL no request will ever reach.
+     */
+    name: 'set_model',
+    description:
+      'Change which model answers the next turns of this conversation. Use when the ' +
+      'user asks to switch models, or for a cheaper or stronger one. The value is a ' +
+      'model ID exactly as the model picker shows it. If it is not one that is ' +
+      'offered, this tool returns the IDs that are, so call it again with one of ' +
+      'those instead of guessing. It does not re-answer anything already asked, and ' +
+      'it cannot select a model the account holds no key for.',
+    parameters: object(
+      {
+        model: string('The model ID, exactly as the picker shows it.'),
+      },
+      ['model']
+    ),
+    path: CLIENT_SIDE_PATH,
+    available: true,
+    requiresConfirm: true,
+  },
+];
+export const availableTools = (paid = false): readonly AiToolSpec[] =>
+  AI_TOOLS.filter(tool => offeredTo(tool, paid));
+
+/**
+ * Whether this caller may be offered this tool.
+ *
+ * A caller with no recorded access mode is treated as free, which is the
+ * conservative direction: the offer list shrinks, and the route behind the tool
+ * still enforces, so the worst case is a capability withheld rather than granted.
+ * @param {AiToolSpec} tool The tool to test.
+ * @param {boolean} paid Whether the caller's access mode is a paid one.
+ * @return {boolean} True when the model may be offered it.
+ */
+export const offeredTo = (tool: AiToolSpec, paid: boolean): boolean =>
+  tool.available && (!tool.paidOnly || paid);
+
+/**
+ * Why a tool cannot be offered to this caller. Never called for one that can.
+ * @param {AiToolSpec} tool The refused tool.
+ * @param {boolean} paid Whether the caller's access mode is a paid one.
+ * @return {ToolBlock | undefined} The remedy, or undefined when none is recorded.
+ */
+export const blockFor = (tool: AiToolSpec, paid: boolean): ToolBlock | undefined =>
+  tool.paidOnly === true && !paid ? 'plan' : tool.blocked;
 
 /** The spec for a name, or null when no such tool exists at all. */
 export const toolByName = (name: unknown): AiToolSpec | null =>
@@ -296,7 +629,13 @@ export type ToolCallRefusal = 'unknown-tool' | 'not-offered' | 'bad-arguments';
 /** What resolving one call produced. */
 export type ToolCallResolution =
   | { ok: true; tool: AiToolSpec; call: AiToolCall }
-  | { ok: false; name: string; reason: ToolCallRefusal };
+  | {
+      ok: false;
+      name: string;
+      reason: ToolCallRefusal;
+      /** Why it was never offered, so the model can name the RIGHT remedy. */
+      block?: ToolBlock;
+    };
 
 /**
  * Whether a call may run, and against which tool.
@@ -305,17 +644,28 @@ export type ToolCallResolution =
  * is a different problem from a real tool that was never offered, and a caller
  * that conflates them cannot tell a hallucinated name from a deliberate refusal.
  * @param {AiToolCall} call The call as the model emitted it.
+ * @param {boolean} paid Whether the caller's access mode is a paid one.
  * @return {ToolCallResolution} The tool to run, or why not.
  */
-export const resolveToolCall = (call: AiToolCall): ToolCallResolution => {
+export const resolveToolCall = (
+  call: AiToolCall,
+  paid = false,
+): ToolCallResolution => {
   const tool = toolByName(call.name);
 
   if (!tool) {
     return { ok: false, name: call.name, reason: 'unknown-tool' };
   }
 
-  if (!tool.available) {
-    return { ok: false, name: call.name, reason: 'not-offered' };
+  if (!offeredTo(tool, paid)) {
+    // The reason rides WITH the refusal. A bare "not available" fits none of the
+    // four remedies, and the model has no other way to learn which applies.
+    return {
+      ok: false,
+      name: call.name,
+      reason: 'not-offered',
+      block: blockFor(tool, paid),
+    };
   }
 
   // Two ways the arguments can be unusable, and both are refused rather than

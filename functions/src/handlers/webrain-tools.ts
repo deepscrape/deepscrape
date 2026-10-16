@@ -1195,6 +1195,17 @@ const positiveInteger = (value: unknown): number | undefined => {
 /** The `webrain_batch` ops this gateway forwards, from its inputSchema. */
 const BATCH_OPS: readonly string[] = ["fetch", "extract", "screenshot"]
 
+/**
+ * The most tabs one call may run in flight, whatever `concurrency` asks for.
+ *
+ * A bound, not a preference. Every tab is a browser context on a machine that
+ * must also hold the engine, so the number is set by what ONE session machine
+ * sustains rather than by what a caller would like. It is also what makes the
+ * flat per-call price honest: uncapped, `concurrency: 50` is fifty parallel
+ * tabs for the price of one.
+ */
+const MAX_BATCH_CONCURRENCY = 8
+
 /** `webrain_crawl`'s required `mode`, from its inputSchema. */
 const CRAWL_MODES: readonly string[] = ["spider", "sitemap", "scan", "validate"]
 
@@ -1256,6 +1267,17 @@ export const batchArguments = (body: unknown): ToolArguments => {
       ok: false,
       error:
         "op=eval runs arbitrary JavaScript and needs a container of its own",
+    }
+  }
+  // Named, rather than left to the catch-all below. `interact` IS a real op, so
+  // "Unknown batch op" was a false statement about it -- it sends a caller
+  // hunting for a typo when the op is refused on purpose.
+  if (op === "interact") {
+    return {
+      ok: false,
+      error:
+        "op=interact drives a page an open session holds; use " +
+        "webrain_interact, which routes through the caller's own machine",
     }
   }
   if (!BATCH_OPS.includes(op)) {
@@ -1321,7 +1343,7 @@ export const batchArguments = (body: unknown): ToolArguments => {
 
   const concurrency = positiveInteger(source?.["concurrency"])
   if (concurrency !== undefined) {
-    args["concurrency"] = concurrency
+    args["concurrency"] = Math.min(concurrency, MAX_BATCH_CONCURRENCY)
   }
 
   return { ok: true, args, echo: op }
@@ -1425,11 +1447,17 @@ export const crawlArguments = (body: unknown): ToolArguments => {
     args["strategy"] = strategy
   }
 
-  for (const field of ["max_pages", "max_depth", "concurrency"]) {
+  for (const field of ["max_pages", "max_depth"]) {
     const value = positiveInteger(source?.[field])
     if (value !== undefined) {
       args[field] = value
     }
+  }
+  // Capped rather than forwarded as sent, for the reason the constant records:
+  // `concurrency` is tabs in flight at once, and the route charges a flat price.
+  const concurrency = positiveInteger(source?.["concurrency"])
+  if (concurrency !== undefined) {
+    args["concurrency"] = Math.min(concurrency, MAX_BATCH_CONCURRENCY)
   }
   for (const field of ["same_domain", "respect_robots", "no_content"]) {
     if (source?.[field] === true) {

@@ -148,9 +148,17 @@ export class GeneralTabComponent {
    * returns it, so saving REPLACES it and the field is re-entered every time.
    * The app control IS filled, because an app name is not a credential.
    */
-  readonly computeAppControl = new FormControl('', { nonNullable: true });
-  readonly computeRegionControl = new FormControl('', { nonNullable: true });
-  readonly computeTokenControl = new FormControl('', { nonNullable: true });
+  // Disabled at CONSTRUCTION, not in the template: `disabled` beside a
+  // `[formControl]` is the one combination Angular warns about, and a control
+  // disabled from birth is what "this setting cannot be written yet" means.
+  // `PUT /api/compute` refuses a `byo` write with 501 for the same reason --
+  // nothing consumes the tenant yet (`DecideFlyTenant` has no caller in
+  // arachnefly), so a stored config would create this account's machines in the
+  // PLATFORM's organization while the status line above called them theirs.
+  // Re-enable all three together with that refusal, in one commit.
+  readonly computeAppControl = new FormControl({ value: '', disabled: true }, { nonNullable: true });
+  readonly computeRegionControl = new FormControl({ value: '', disabled: true }, { nonNullable: true });
+  readonly computeTokenControl = new FormControl({ value: '', disabled: true }, { nonNullable: true });
 
   private readonly computeHasCredentials = signal(false);
   private readonly computeApp = signal('');

@@ -200,6 +200,15 @@
         <p class="mt-3 text-xs font-medium text-gray5 dark:text-gray3">{{ 'SETTINGS_COMPUTE.ACTIVE_PLATFORM' | translate }}</p>
       }
 
+      <!--
+        The BYO half is OFF until arachnefly consumes `DecideFlyTenant`. The
+        route answers a `byo` write with 501 for the same reason, so this line
+        and that refusal are ONE decision stated twice -- and `ACTIVE_BYO` above
+        is now unreachable rather than false, because the mode is only ever set
+        from a write that succeeded.
+      -->
+      <p class="mt-3 text-xs leading-relaxed text-gray4 dark:text-gray3">{{ 'SETTINGS_COMPUTE.UNAVAILABLE' | translate }}</p>
+
       <div class="mt-3 grid gap-3 sm:grid-cols-2">
         <label class="block">
           <span class="block text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_COMPUTE.LABEL_APP' | translate }}</span>
@@ -239,10 +248,16 @@
       <p class="mt-1 text-xs text-gray4 dark:text-gray3">{{ 'SETTINGS_COMPUTE.REPLACES' | translate }}</p>
 
       <div class="mt-3 flex flex-wrap items-center gap-2">
+        <!--
+          Disabled while the route refuses a `byo` write (501). Not merely
+          cosmetic: with the inputs disabled, a LIVE Save would post an empty app
+          and token, and the client's own guard would answer MISSING -- telling a
+          caller to fill in fields they cannot type into.
+        -->
         <button
           type="button"
           class="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60 dark:bg-cyan-500 dark:text-gray7"
-          [disabled]="computeSaving()"
+          disabled
           (click)="saveCompute()">
           {{ 'SETTINGS_COMPUTE.SAVE' | translate }}
         </button>

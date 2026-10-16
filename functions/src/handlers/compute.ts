@@ -24,6 +24,22 @@
  * the machine routes themselves already require it. A caller who cannot deploy
  * gains nothing from this route either way.
  *
+ * A BYO write is REFUSED today, and why that is the honest answer
+ * --------------------------------------------------------------
+ * The tenant axis EXISTS -- `resolveCompute` here, `DecideFlyTenant` beside it
+ * in arachnefly -- but nothing CONSUMES it yet: every Fly call still signs with
+ * the token the Go service read from its own environment at BOOT. A stored
+ * tenant config would therefore create the caller's machines in OUR
+ * organization while this page told them those machines were theirs. That is
+ * the double-bill this whole axis was built to prevent, wearing a success
+ * message.
+ *
+ * So storing the config is worse than refusing it: the caller gets a plausible
+ * "saved" and nothing afterwards can tell them it did nothing. `byo` writes
+ * answer 501 until the Go side consumes the decision -- the same fail-closed
+ * shape `resolveBlobStore` uses when it returns null instead of substituting
+ * the platform bucket. Reverse this the moment `DecideFlyTenant` has a caller.
+ *
  * What may leave this file
  * ------------------------
  * Never a Fly token. The GET projects through `toPublicCompute`, which has no
@@ -105,6 +121,17 @@ export const setCompute = async (
       error: "bad_request",
       code: "bad_request",
       reason: validation.reason,
+    })
+    return
+  }
+
+  // Refused AFTER validation so a malformed body still gets its specific
+  // reason first, and BEFORE any secret is written: `writeComputeSettings` is
+  // never reached, so no credential is stored for a config nothing consumes.
+  if (validation.write.mode === "byo") {
+    res.status(501).json({
+      error: "compute_byo_unavailable",
+      code: "compute_byo_unavailable",
     })
     return
   }

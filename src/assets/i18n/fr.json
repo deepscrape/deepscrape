@@ -811,7 +811,8 @@
     "LOADING": "Chargement…",
     "LOAD_FAILED": "Impossible de charger vos paramètres de calcul.",
     "SAVE_FAILED": "Échec de l'enregistrement. Vérifiez le nom de l'app et le jeton, puis réessayez.",
-    "MISSING": "Saisissez à la fois un nom d'app et un jeton de déploiement, ou utilisez les machines de la plateforme."
+    "MISSING": "Saisissez à la fois un nom d'app et un jeton de déploiement, ou utilisez les machines de la plateforme.",
+    "UNAVAILABLE": "Pas encore disponible. Les machines de ce compte s'exécutent dans l'organisation Fly de la plateforme jusqu'à son activation."
   },
   "PAYMENT": {
     "CARD_TITLE": "Carte de paiement",

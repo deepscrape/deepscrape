@@ -811,7 +811,8 @@
     "LOADING": "Cargando…",
     "LOAD_FAILED": "No se pudo cargar tu configuración de cómputo.",
     "SAVE_FAILED": "No se pudo guardar. Comprueba el nombre de la app y el token, e inténtalo de nuevo.",
-    "MISSING": "Introduce tanto un nombre de app como un token de despliegue, o usa las máquinas de la plataforma."
+    "MISSING": "Introduce tanto un nombre de app como un token de despliegue, o usa las máquinas de la plataforma.",
+    "UNAVAILABLE": "Aún no disponible. Las máquinas de esta cuenta se ejecutan en la organización de Fly de la plataforma hasta que se habilite."
   },
   "PAYMENT": {
     "CARD_TITLE": "Tarjeta de pago",

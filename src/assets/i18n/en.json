@@ -811,7 +811,8 @@
     "LOADING": "Loading…",
     "LOAD_FAILED": "Could not load your compute settings.",
     "SAVE_FAILED": "Could not save. Check the app name and token, then try again.",
-    "MISSING": "Enter both an app name and a deploy token, or use the platform's machines."
+    "MISSING": "Enter both an app name and a deploy token, or use the platform's machines.",
+    "UNAVAILABLE": "Not available yet. This account's machines run on the platform's Fly organization until it is enabled."
   },
   "PAYMENT": {
     "CARD_TITLE": "Payment Card",

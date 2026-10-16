@@ -39,13 +39,31 @@ Because `FlyRequest` in arachnefly still authenticates with the **boot-time**
 **undeployed**, so nothing is broken for a customer right now — this is a gap that
 closes cheaply, not an incident.
 
-**Close it one of two ways, and decide before the next deploy:**
+**Closed by gating the WRITE. What shipped, and how to reverse it:**
+
+`PUT /api/compute` answers `501 compute_byo_unavailable` for `mode: "byo"` and never reaches
+`writeComputeSettings`, so no credential is stored for a config nothing consumes. The box
+stays, but states the truth and cannot be submitted: the three inputs are disabled at
+construction, Save is disabled, and `SETTINGS_COMPUTE.UNAVAILABLE` says why. Pinned by
+`functions/src/handlers/compute.spec.ts`.
+
+**Why not "hide the box" (option 2 as first written):** the false claim was the defect, not
+the panel. With the write refused, `computeMode` can only come from a write that succeeded,
+so `ACTIVE_BYO` and the `CLEAR` button are unreachable and that sentence cannot render —
+while the domain, store, handler and screen all stay in place, one backend change away from
+correct. Hiding would have deleted a surface rather than correcting it. Hiding remains
+available and is one commit if this reading is wrong.
+
+**Reversal is three places, and each names the others in a comment:** the handler's refusal,
+the three disabled `FormControl`s, and B1 in arachnefly.
+
+The two options as first written, for the record:
 
 1. **Wire it** (preferred, and it is the feature people paid for): see B1.
 2. **Gate it**: hide the box until B1 lands. Cheaper, but ships a dead setting.
 
-Do not ship with the box visible and B1 unbuilt. A panel asserting a cost and privacy
-fact the platform does not deliver is worse than no panel.
+Do not ship with the box asserting a fact and B1 unbuilt. A panel asserting a cost and
+privacy fact the platform does not deliver is worse than no panel.
 
 ## Backend
 
@@ -131,9 +149,12 @@ neighbouring surface uses `translate.instant`. Highest value-per-line frontend f
 list: small, verifiable, and user-visible in four of five markets. New keys go in all five
 locale files — **no gate validates i18n JSON**, so parse each one explicitly.
 
-### F2 — the compute box becomes truthful once B1 lands
+### F2 — the compute box is truthful NOW, without B1
 
-No separate work: the copy is already correct, it is the backend that must catch up.
+Done by refusing the write (see P0), not by waiting for B1. `ACTIVE_BYO` is unreachable
+because `computeMode` is only ever set from a write that succeeded, and that write answers
+501. When B1 lands: remove the handler's refusal, re-enable the three `FormControl`s, enable
+Save, and drop the `UNAVAILABLE` line. The copy was always correct; the backend was not.
 
 ### F3 / F4 — admin actions need sign-off, and are correctly absent
 

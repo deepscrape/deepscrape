@@ -1,4 +1,34 @@
 <div class="flex flex-col max-w-3xl w-full gap-3 mt-8">
+  <!--
+    What this form runs, above everything it changes. Three things share the URL
+    box below: the stream job this mode already had, a site walk, and a batch
+    operation across many URLs. A walk is not a scrape with a flag -- a scrape
+    fetches the URLs you name and stops, a walk FOLLOWS the site from a seed.
+  -->
+  <div class="flex flex-wrap items-center gap-3">
+    <label
+      for="crawl-run-mode"
+      class="text-sm font-medium text-gray-600 dark:text-gray-300">
+      {{ 'CRAWL.RUN_MODE' | translate }}
+    </label>
+    <select
+      id="crawl-run-mode"
+      [value]="runMode()"
+      (change)="setRunMode($any($event.target).value)"
+      class="rounded-xl border border-gray-200/70 bg-white px-3 py-2 text-sm text-gray6 transition-colors hover:border-cyan-400/60 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 dark:border-gray-700/60 dark:bg-gray6 dark:text-gray1">
+      <option value="scrape">{{ 'CRAWL.RUN_SCRAPE' | translate }}</option>
+      <option value="walk">{{ 'CRAWL.RUN_WALK' | translate }}</option>
+      <option value="batch">{{ 'CRAWL.RUN_BATCH' | translate }}</option>
+    </select>
+  </div>
+
+  <!--
+    A pack configures the STREAM job the scrape mode enqueues. Walk and batch take
+    their arguments from this form instead, so the picker is hidden for them rather
+    than shown disabled: a required-looking control that nothing reads is worse
+    than no control at all.
+  -->
+  @if (runMode() === 'scrape') {
   <!-- select CrawlPack or press the link to create one -->
   <div class="relative flex flex-row flex-wrap items-center justify-end gap-4 mb-2">
     @if(!crawlConfigPack.length) {
@@ -34,6 +64,101 @@
       (select)="onDropDownSelected($event)"></app-dropdown>
     }
   </div>
+  }
+
+  <!--
+    Walk options. `same_domain` and `respect_robots` are deliberately absent: the
+    gateway forwards those flags only when they are true, so a checkbox could never
+    turn either one OFF.
+  -->
+  @if (runMode() === 'walk') {
+    <div
+      class="grid gap-3 rounded-2xl border border-gray-200/70 bg-white/60 p-4 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70 sm:grid-cols-2">
+      <label class="flex flex-col gap-1 text-sm text-gray-600 dark:text-gray-300">
+        {{ 'TOOLS.FIELD_MODE' | translate }}
+        <select
+          [value]="walkMode()"
+          [attr.title]="'TOOLS.HINT_MODE_SPIDER' | translate"
+          (change)="setWalkMode($any($event.target).value)"
+          class="w-full rounded-xl border border-gray-200/70 bg-white px-3 py-2 text-sm text-gray6 transition-colors hover:border-cyan-400/60 focus:border-cyan-500 focus:outline-none dark:border-gray-700/60 dark:bg-gray6 dark:text-gray1">
+          <option value="spider">spider</option>
+          <option value="sitemap">sitemap</option>
+          <option value="scan">scan</option>
+          <option value="validate">validate</option>
+        </select>
+      </label>
+
+      <label class="flex flex-col gap-1 text-sm text-gray-600 dark:text-gray-300">
+        {{ 'TOOLS.FIELD_STRATEGY' | translate }}
+        <select
+          [value]="walkStrategy()"
+          [attr.title]="'TOOLS.HINT_STRATEGY' | translate"
+          (change)="setWalkStrategy($any($event.target).value)"
+          class="w-full rounded-xl border border-gray-200/70 bg-white px-3 py-2 text-sm text-gray6 transition-colors hover:border-cyan-400/60 focus:border-cyan-500 focus:outline-none dark:border-gray-700/60 dark:bg-gray6 dark:text-gray1">
+          <option value="bfs">bfs</option>
+          <option value="dfs">dfs</option>
+          <option value="bestfirst">bestfirst</option>
+        </select>
+      </label>
+
+      <div class="self-end">
+        <app-ginput
+          [control]="walkMaxPages"
+          bgColor="dark:bg-gray6 bg-white"
+          [label]="'TOOLS.FIELD_MAX_PAGES' | translate"></app-ginput>
+      </div>
+
+      <div class="self-end">
+        <app-ginput
+          [control]="walkMaxDepth"
+          bgColor="dark:bg-gray6 bg-white"
+          [label]="'CRAWL.FIELD_MAX_DEPTH' | translate"></app-ginput>
+      </div>
+
+      <label
+        class="flex items-center gap-2 text-sm text-gray-600 sm:col-span-2 dark:text-gray-300">
+        <input
+          type="checkbox"
+          [checked]="walkNoContent()"
+          (change)="walkNoContent.set($any($event.target).checked)"
+          class="h-4 w-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500 dark:border-gray-600">
+        {{ 'CRAWL.WALK_NO_CONTENT' | translate }}
+      </label>
+    </div>
+  }
+
+  <!-- Batch options, applied across the URLs typed below. The route refuses `eval`. -->
+  @if (runMode() === 'batch') {
+    <div
+      class="grid gap-3 rounded-2xl border border-gray-200/70 bg-white/60 p-4 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70 sm:grid-cols-3">
+      <label class="flex flex-col gap-1 text-sm text-gray-600 dark:text-gray-300">
+        {{ 'TOOLS.FIELD_OP' | translate }}
+        <select
+          [value]="batchOp()"
+          [attr.title]="'TOOLS.HINT_OP_BATCH' | translate"
+          (change)="setBatchOp($any($event.target).value)"
+          class="w-full rounded-xl border border-gray-200/70 bg-white px-3 py-2 text-sm text-gray6 transition-colors hover:border-cyan-400/60 focus:border-cyan-500 focus:outline-none dark:border-gray-700/60 dark:bg-gray6 dark:text-gray1">
+          <option value="fetch">fetch</option>
+          <option value="extract">extract</option>
+          <option value="screenshot">screenshot</option>
+        </select>
+      </label>
+
+      <div class="self-end">
+        <app-ginput
+          [control]="batchConcurrency"
+          bgColor="dark:bg-gray6 bg-white"
+          [label]="'TOOLS.FIELD_CONCURRENCY' | translate"></app-ginput>
+      </div>
+
+      <div class="self-end">
+        <app-ginput
+          [control]="batchOutput"
+          bgColor="dark:bg-gray6 bg-white"
+          [label]="'TOOLS.FIELD_OUTPUT' | translate"></app-ginput>
+      </div>
+    </div>
+  }
   <!-- Show Json File -->
   @if(crawlpack && crawlConfigPack.length) {
     <div
@@ -159,12 +284,8 @@
       <button
         appRipple
         rippleColor="dark"
-        [disabled]="
-          urls.invalid ||
-          submitButton.value ||
-          crawlPackSelector.value?.code === 'default'
-        "
-        (click)="submitCrawlJob()"
+        [disabled]="runDisabled"
+        (click)="runMode() === 'scrape' ? submitCrawlJob() : runTool()"
         class="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-medium text-blue-600 ring-offset-2 transition-colors hover:bg-blue-300/[.18] focus-visible:outline-none focus-visible:ring-1 active:scale-95 disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none disabled:drop-shadow-none dark:text-blue-600">
         <span
           [ngClass]="{ 'text-transparent': submitButton.value }"
@@ -190,6 +311,24 @@
         {{ 'CRAWL.COST_MANY' | translate: { credits: estimate.effectiveCredits } }}
       }
     </p>
+  }
+  <!--
+    The tool routes answer ONE envelope rather than a stream, so they render through
+    the same shell every other playground mode uses instead of the per-result item
+    below it. `data` is the worker's own payload, which the gateway passes through
+    unmodified, so it is shown as JSON rather than re-modelled here.
+  -->
+  @if (runMode() !== 'scrape') {
+    <app-result-envelope
+      [state]="toolState()"
+      [title]="toolTitleKey | translate"
+      [meta]="toolMeta"
+      [errorMessage]="toolError() | translate"
+      [showRetry]="toolShowRetry"
+      (retry)="retryTool()">
+      <pre
+        class="max-h-96 overflow-auto rounded-lg bg-slate-100/60 p-3 text-xs leading-5 text-gray6 dark:bg-gray7/90 dark:text-gray-100">{{ toolPretty }}</pre>
+    </app-result-envelope>
   }
   <!-- Results Display Area -->
   <div class="flex flex-col w-full gap-3 mt-4">

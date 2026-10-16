@@ -107,6 +107,24 @@
           }
         }
       </div>
+
+      <!--
+        What has been sent to storage, on the page where the saving happens. Both
+        the crawl and the search modes carry a save button, and neither could show
+        what it produced -- the loop only closed by navigating to Settings › Storage.
+        Deliberately collapsible and outside the mode switch, so it is a record of
+        past work rather than a competitor to the mode running above it, and so it
+        is not re-created every time the mode changes.
+      -->
+      <details class="mt-6 w-full max-w-3xl">
+        <summary
+          class="cursor-pointer select-none text-sm font-medium text-gray-600 transition-colors hover:text-cyan-700 dark:text-gray-300 dark:hover:text-cyan-300">
+          {{ 'STORAGE.LIST_TITLE' | translate }}
+        </summary>
+        <div class="mt-3">
+          <app-saved-files-list></app-saved-files-list>
+        </div>
+      </details>
     }
   </div>
 </div>

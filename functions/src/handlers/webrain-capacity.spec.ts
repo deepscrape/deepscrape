@@ -136,12 +136,49 @@ describe("crawlArguments", () => {
       max_pages: 5,
     })
     assert.equal(mapped.ok, true)
+    // `seed_url`, NOT `url`. Measured against the real worker: `spider` answers
+    // "seed_url required" when given a `url`. This assertion previously pinned
+    // `url`, which is how a shape-only test passed while the route failed at 2 of
+    // the 4 modes.
     assert.deepEqual(mapped.ok ? mapped.args : {}, {
       mode: "spider",
-      url: "https://example.com",
+      seed_url: "https://example.com",
       max_pages: 5,
     })
     assert.equal(mapped.ok ? mapped.echo : undefined, "spider")
+  })
+
+  it("names the target field each mode actually requires", () => {
+    const pick = (x: ReturnType<typeof crawlArguments>) => (x.ok ? x.args : {})
+
+    // spider wants a scalar seed_url; `url` is refused by the worker.
+    const spider = pick(crawlArguments({mode: "spider", url: "https://e.com"}))
+    assert.equal(spider["seed_url"], "https://e.com")
+    assert.equal(spider["url"], undefined)
+
+    // validate wants an ARRAY named urls; a scalar `url` is refused.
+    const validate = pick(crawlArguments({mode: "validate", url: "https://e.com"}))
+    assert.deepEqual(validate["urls"], ["https://e.com"])
+    assert.equal(validate["url"], undefined)
+
+    // sitemap and scan take the scalar url, and accept seed_url too.
+    const sitemap = pick(crawlArguments({mode: "sitemap", url: "https://e.com"}))
+    assert.equal(sitemap["url"], "https://e.com")
+    assert.equal(sitemap["seed_url"], undefined)
+
+    const scan = pick(crawlArguments({mode: "scan", seed_url: "https://e.com"}))
+    assert.equal(scan["url"], "https://e.com")
+  })
+
+  it("keeps a multi-url list for validate rather than collapsing it", () => {
+    const mapped = crawlArguments({
+      mode: "validate",
+      urls: ["https://a.com", "https://b.com"],
+    })
+    assert.deepEqual(
+      mapped.ok ? mapped.args["urls"] : null,
+      ["https://a.com", "https://b.com"]
+    )
   })
 
   it("accepts every mode the worker advertises", () => {

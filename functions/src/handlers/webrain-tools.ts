@@ -1384,14 +1384,25 @@ export const crawlArguments = (body: unknown): ToolArguments => {
     return { ok: false, error: "seed_url must be a public http(s) address" }
   }
 
-  if (single) {
-    args["url"] = single
-  }
-  if (seeds) {
-    args["urls"] = seeds
-  }
-  if (seed) {
-    args["seed_url"] = seed
+  // The worker's target field is MODE-SPECIFIC, and that is MEASURED against the
+  // real binary rather than inferred from the parameter names:
+  //   spider   -> seed_url (a scalar; passing `url` answers "seed_url required")
+  //   validate -> urls     (an ARRAY; passing `url` answers "urls required")
+  //   scan     -> url      (accepts seed_url too)
+  //   sitemap  -> url
+  // Forwarding the caller's own spelling, as this did, broke `spider` and
+  // `validate` -- 2 of the 4 modes. It failed as `isError: true` inside a 200,
+  // so the route stayed "alive" while returning nothing, which is the version of
+  // this that never pages anyone.
+  // A caller may still send any of the three spellings; each is normalised to the
+  // one this mode needs.
+  const one = single ?? seed ?? seeds?.[0]
+  if (mode === "spider" && one) {
+    args["seed_url"] = one
+  } else if (mode === "validate") {
+    args["urls"] = seeds ?? (one ? [one] : [])
+  } else if (one) {
+    args["url"] = one
   }
 
   if (source?.["crawldir"] !== undefined) {

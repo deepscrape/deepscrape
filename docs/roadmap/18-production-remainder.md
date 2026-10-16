@@ -187,6 +187,59 @@ not a problem — do not open a task from raw size.
 | Repin `BROWSER_MACHINE_IMAGE` | A secret write; the agent is forbidden from touching it |
 | Any deploy | Out of scope by the skill's own rules |
 
+## Decision — HONEST first, then TRUE (2026-10-17)
+
+Chosen by the agent. The mission (skill: "ship a browser capability a customer can be
+billed for, without unbounded cost and without a cross-tenant leak") is served by B1+B2 and
+by nothing on the marketing list. But honesty goes FIRST, and not because it is cheaper:
+**one of the two directions cannot fully succeed.** Per-request proxy rotation is
+architecturally impossible — a browser's proxy is process-scoped and fixed at launch — so
+the wording has to change whatever else happens. Honesty is a prerequisite, not the
+budget option.
+
+### Step A — the marketing claims (first)
+
+The landing console is a scripted simulation whose only disclosure is an HTML comment
+(`landing-code-demo.component.html:34`); the visitor sees a dark terminal, a Run button,
+machine ids and region claims streaming as though observed. Three lines are not true, and
+each appears in more than one place:
+
+| Line | Key | Why it is false |
+|---|---|---|
+| "operation scheduled on nearest region" | `DEMO.LIVE_LOG_1` | No nearest-region selection exists in `functions/src` |
+| "proxy pool rotating across 3 regions" | `DEMO.LIVE_LOG_4` | Impossible per request; `PROXY_CAPABLE` is `webrain_serp`/`webrain_search` only |
+| "captcha + challenge solver on" | `DEMO.LIVE_LOG_5` | `entrypoint.sh` starts **obscura** and deliberately does not start the chromium/solver path with it. Detection is real; solving is not on |
+| "CAPTCHA Solving", "Proxy Rotation" | `HERO.PILL_CAPTCHA`, `PILL_PROXY_ROTATION` | The same claims in the most-read copy, plus `feature-captcha-solving.svg` |
+
+Two things that LOOK false and must NOT be "fixed":
+
+- **`DEMO.LIVE_LOG_2`'s "· chromium engine"** — wrong as a DEFAULT, since the session image
+  starts obscura. Change the word; the engine claim itself is sound.
+- **the `batch interact` preset** — CORRECTED 2026-10-17, and this file's own earlier
+  analysis was wrong. `SESSION_TOOLS` contains `webrain_interact` and
+  `POST /api/browser/session/:id/tool` is registered at `bff/api.ts:508`, so it IS
+  achievable given a leased session. The "no route exposes it yet" comment at
+  `webrain-tools.domain.ts:149` is STALE. Do not delete the preset; the gap, if any, is UI
+  reachability. **Lesson: read `bff/api.ts` — the only served table — never a domain comment.**
+
+### Step B — B1 + B2 together (one commit, one gate run)
+
+The last correctness defect and the only item the mission is served by: a BYO organization
+pays Fly directly, so charging them platform compute double-bills them.
+
+### Step C — per-session proxy rotation, WITH the pool
+
+Per-request is impossible; per-session is real and cheap, but the sourcing table places the
+pooled worker **later** and calls it "a cost optimisation, not a feature". Rotate at session
+launch when that lands; say "a rotating egress pool" until then.
+
+### Discrepancy to settle before Step C
+
+The skill's "Where we are" says `download`/`watch` stay OUT of `SESSION_TOOLS` (unbounded
+bytes, not metered by payload). The code has **eight** entries, including both. One of the
+two is behind. If the code is right, decide why unmetered payload on a leased machine is
+acceptable; if the skill is right, the allowlist is wider than the recorded decision.
+
 ## Order
 
 1. **B1 + B2 together** — one commit, one gate run. This is the only P0.

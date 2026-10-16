@@ -24,6 +24,8 @@ you can actually check.
 | `11-frontend-wiring-and-ui.md` | Phase 6 | the master list, **measured** — mostly already built; two orphaned surfaces closed |
 | `12-production-harmony.md` | Phase 7 | what exists across all four repos, the service harmony contract, the WebRTC decision, and what is genuinely left |
 | `13-runbook-and-storage-contract.md` | Phase 8 | dev/prod commands per service, the six storage defects fixed, and the one storage contract |
+| `15-chat-write-tools.md` | Phase 9 — **plan, not built** | the approval seam the chat needs before it may act, which tools to expose by blast radius, what breaks at a thousand users |
+| `17-mcp-capability-surface.md` | Phase 10 — **plan, not built** | publishing the platform's tools as an MCP server so the customer's own agent is the client — composability with no new execution surface, and why embedding the Copilot SDK is the wrong answer |
 | `12-service-orchestration-and-layer-inventory.md` | Phase 7 | **the answer sheet**: what exists in all four layers, which service owns what, and the four design pieces still missing |
 
 Companion decision record: `docs/ADR-2026-10-BROWSER-SESSIONS.md`.

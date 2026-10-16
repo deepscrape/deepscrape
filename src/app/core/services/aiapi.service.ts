@@ -6,7 +6,7 @@ import { catchError } from 'rxjs/internal/operators/catchError';
 import { map } from 'rxjs/internal/operators/map';
 import { tap } from 'rxjs/internal/operators/tap';
 import { anthropicTools, arrayBufferToString, customUrlEncoder, openaiTools, sanitizeJSON, vendorForModel, type AiToolSpec } from '../functions';
-import { API_ANTHROPIC, API_CUSTOM, API_DEEPSEEK, API_FIREWORKS, API_GEMINI, API_GROQAI, API_JINAAI, API_KIMI, API_MODELS, API_OPENAI, API_OPENROUTER, API_QWEN } from '../variables';
+import { API_ANTHROPIC, API_CUSTOM, API_DEEPSEEK, API_FIREWORKS, API_GEMINI, API_GROQAI, API_JINAAI, API_KIMI, API_MODELS, API_OPENAI, API_OPENROUTER, API_QWEN, DEFAULT_SYSTEM_PROMPT } from '../variables';
 import { scan } from 'rxjs/internal/operators/scan';
 import { ModelCatalogue, ModelFacts, OpenAiChatVendor, claudeAiApiStreamData, CrawlPack, CrawlTask, JinaOptions } from '../types';
 import { filter } from 'rxjs/internal/operators/filter';
@@ -276,12 +276,9 @@ export class AiAPIService {
       "anthropic-dangerous-direct-browser-access": "true",
     })
 
-    const system = sys || `You are a helpful assistant.Extract all recipe information from website content also clean unnecessary special characters
-    recipe details like image video link steps or any usage data and return in JSON format. If a field is missing, use null.
-    Do not say anything else.`/* `extract all product information from website content also clean unnecessary special characters
-                     products details as an array and return in JSON format with four keys:
-                     code: number, price (number), title (string), productLink (string), discount (number). If a field is missing, use null.
-                     Do not say anything else.` */
+    // No prompt from the caller means the platform default, not the recipe extractor this
+    // used to fall back to. `DEFAULT_SYSTEM_PROMPT` records why that was wrong.
+    const system = sys || DEFAULT_SYSTEM_PROMPT
 
 
 
@@ -448,12 +445,8 @@ export class AiAPIService {
       'content-type': 'application/json',
     })
 
-    const system = sys || `You are a helpful assistant.Extract all recipe information from website content also clean unnecessary special characters
-    recipe details like image video link steps or any usage data and return in JSON format. If a field is missing, use null.
-    Do not say anything else.` /* `extract all product information from website content also clean unnecessary special characters
-    products details as an array and return in JSON format with four keys:
-    code: number, price (number), title (string), productLink (string), discount (number). If a field is missing, use null.
-    Do not say anything else.` */
+    // Same default as the Claude path, from the one constant -- see `DEFAULT_SYSTEM_PROMPT`.
+    const system = sys || DEFAULT_SYSTEM_PROMPT
 
     const messages = Array.isArray(content) ? content : [
       { "role": "system", "content": system },

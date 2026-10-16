@@ -21,6 +21,20 @@ export const API_MODELS = '/api/models'
 export const API_JINAAI = '/api/jina'
 
 /**
+ * The system prompt a model gets when its caller supplies none.
+ *
+ * Both defaults in `AiAPIService` used to be a recipe-extraction template from the app this
+ * code grew out of, so a caller that scaffolded no prompt asked the model to "extract all
+ * recipe information from website content" -- an instruction that has nothing to do with
+ * scraping and reaches the customer's transcript when it fires. A neutral assistant prompt is
+ * the honest default for a service that cannot know its caller's job.
+ *
+ * ONE copy, deliberately: the chat passes its own prompt and the service falls back to this,
+ * and two literals would drift into two products.
+ */
+export const DEFAULT_SYSTEM_PROMPT = "You are deepscrape's assistant. Reply in concise markdown."
+
+/**
  * The platform's own API base, which is the Bun/Elysia BFF.
  *
  * It was called `API_CRAWL4AI_URL`, which named the platform after one of the

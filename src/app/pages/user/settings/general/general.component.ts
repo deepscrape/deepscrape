@@ -12,6 +12,8 @@ import { BillingPolicyService } from '../../../../core/services/billing-policy.s
 import { FirestoreService } from '../../../../core/services/firestore.service';
 import { NotificationService, type PushState } from '../../../../core/services/notification.service';
 import { AiKeysComponent } from '../../../../core/components/ai-keys/ai-keys.component';
+import { EgressService } from '../../../../core/services/egress.service';
+import type { EgressMode, EgressWrite } from '../../../../core/types/webrain-config.interface';
 
 @Component({
   selector: 'app-general-tab',
@@ -24,6 +26,8 @@ export class GeneralTabComponent {
   readonly icons = myIcons;
   readonly notification = inject(NotificationService);
   private readonly destroyRef = inject(DestroyRef);
+  /** The caller's own egress pool, so this page can move it the way it moves the cap. */
+  private readonly egress = inject(EgressService);
 
   /** Custom radio toggle doubles as the push enable/disable control. */
   readonly pushControl = new FormControl<boolean>(this.notification.isSubscribed(), { nonNullable: true });
@@ -94,6 +98,45 @@ export class GeneralTabComponent {
   readonly spendCapSaving = signal(false);
   readonly spendCapSaved = signal(false);
 
+  /**
+   * The egress proxies as TEXT, one per line.
+   *
+   * A textarea rather than a row-per-entry editor: the server stores a flat list
+   * of URLs and never returns them, so a row editor would have to invent an
+   * identity for entries that have none -- and a proxy URL's identity is the
+   * credential it carries.
+   */
+  readonly egressUrlsControl = new FormControl('', { nonNullable: true });
+
+  private readonly egressHasCredentials = signal(false);
+  private readonly egressExitCount = signal(0);
+
+  /** Which pool is in force, as the SERVER answered it. */
+  readonly egressMode = signal<EgressMode>('platform');
+
+  /** The read succeeded, so the rows may be rendered at all. */
+  readonly egressReady = signal(false);
+
+  readonly egressLoading = signal(true);
+  readonly egressSaving = signal(false);
+
+  /** An i18n KEY, never a sentence -- the template translates it at render time. */
+  readonly egressError = signal('');
+
+  /**
+   * Configured, but the server could not read the pool.
+   *
+   * `hasCredentials` with ZERO exits is the only shape that state can take: the
+   * pointer says a pool is stored, and an empty projection of it means it did
+   * not resolve. Those calls are REFUSED rather than quietly moved onto the
+   * platform pool, so this row is the only place a caller could find out.
+   */
+  readonly egressBroken = computed(() =>
+    this.egressMode() === 'byo'
+      && this.egressHasCredentials()
+      && this.egressExitCount() === 0,
+  );
+
   constructor() {
     // Mirror service state into the toggle (no event echo, so no feedback loop)
     // and lock it while an update is in flight or permission is unavailable.
@@ -128,6 +171,9 @@ export class GeneralTabComponent {
       .subscribe(() => this.spendCapSaved.set(false));
 
     void this.loadAlerts();
+    // A second, INDEPENDENT read. The two need no shared error channel: each has
+    // its own `ready` flag, so one failing cannot blank the other's rows.
+    void this.loadEgress();
   }
 
   async sendTestPush(): Promise<void> {
@@ -228,5 +274,114 @@ export class GeneralTabComponent {
       // it would show a preference that was never stored.
       this.spendCapEmailControl.setValue(!enabled, { emitEvent: false });
     }
+  }
+
+  /**
+   * Read the caller's own egress configuration.
+   *
+   * The textarea is deliberately NOT filled from the reply, and that is not an
+   * oversight: both routes mask the pool down to `host:port`, so there is no URL
+   * for the server to hand back. Leaving the box empty is the honest rendering of
+   * that -- pre-filling it with masked hosts would invite a save that silently
+   * replaces a working pool with unparseable hostnames.
+   * @return {Promise<void>} Nothing.
+   */
+  private async loadEgress(): Promise<void> {
+    this.egressError.set('');
+
+    try {
+      const settings = await firstValueFrom(this.egress.get());
+      this.applyEgress(settings.mode, settings.hasCredentials, settings.exits.length);
+    } catch {
+      // A failed READ is reported, never rendered as the platform default: that
+      // default is exactly what a caller with their own exits is trying to
+      // LEAVE, so showing it would state the opposite of their account's state.
+      this.egressError.set('SETTINGS_EGRESS.LOAD_FAILED');
+    } finally {
+      this.egressLoading.set(false);
+    }
+  }
+
+  /**
+   * Persist the typed proxies as the caller's own pool.
+   *
+   * NOT save-on-change, for the same reason the spend cap is not: a textarea
+   * emits on every keystroke, and the write REPLACES the pool -- so a save per
+   * input could retire a working exit in the middle of an edit.
+   * @return {Promise<void>} Nothing.
+   */
+  async saveEgress(): Promise<void> {
+    const urls = this.egressUrlsControl.value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    // Refused HERE rather than sent. The route rejects an empty list (for an
+    // OPERATOR that would silently move every caller onto a direct exit), and its
+    // refusal names an entry INDEX -- which for an empty box is meaningless to
+    // the person reading it.
+    if (urls.length === 0) {
+      this.egressError.set('SETTINGS_EGRESS.EMPTY');
+      return;
+    }
+
+    await this.writeEgress({ mode: 'byo', proxies: urls });
+  }
+
+  /**
+   * Go back to the platform's exits.
+   *
+   * A distinct action from saving an empty box, because the two mean different
+   * things: this STATES the intent, and the route purges the stored secret with
+   * it -- so "I removed my proxy" is true rather than merely unevaluated.
+   * @return {Promise<void>} Nothing.
+   */
+  async usePlatformPool(): Promise<void> {
+    await this.writeEgress({ mode: 'platform' });
+  }
+
+  /**
+   * One write, in one place.
+   *
+   * The reply IS the new state, so it is applied rather than re-read: a second
+   * GET would be a round trip to learn something the write already answered.
+   * @param {EgressWrite} write The request body.
+   * @return {Promise<void>} Nothing.
+   */
+  private async writeEgress(write: EgressWrite): Promise<void> {
+    this.egressError.set('');
+    this.egressSaving.set(true);
+
+    try {
+      const settings = await firstValueFrom(this.egress.set(write));
+      this.applyEgress(settings.mode, settings.hasCredentials, settings.exits.length);
+
+      // Emptied after EVERY successful write, not only after a clear: the box
+      // would otherwise be sitting on proxy passwords the user has stopped
+      // looking at, and the status line above already confirms the write landed.
+      this.egressUrlsControl.setValue('', { emitEvent: false });
+    } catch {
+      this.egressError.set('SETTINGS_EGRESS.SAVE_FAILED');
+    } finally {
+      this.egressSaving.set(false);
+    }
+  }
+
+  /**
+   * The four pieces of egress state, applied together.
+   *
+   * One place, because the read and the write must leave the view in the same
+   * shape -- and a partial application would render a mode beside a count from a
+   * different answer.
+   * @param {EgressMode} mode Which pool is in force.
+   * @param {boolean} hasCredentials Whether a pointer is stored.
+   * @param {number} exits How many exits the pool projected to.
+   * @return {void}
+   */
+  private applyEgress(mode: EgressMode, hasCredentials: boolean, exits: number): void {
+    this.egressMode.set(mode);
+    this.egressHasCredentials.set(hasCredentials);
+    this.egressExitCount.set(exits);
+    this.egressReady.set(true);
   }
 }

@@ -1,5 +1,6 @@
 import {
   AI_TOOLS,
+  CLIENT_SIDE_PATH,
   accumulateAnthropic,
   accumulateOpenAi,
   anthropicToolCalls,
@@ -74,15 +75,29 @@ describe('resolveToolCall', () => {
 
 describe('offered tools', () => {
   it('offers only the tools marked available', () => {
+    // An inventory rather than a filter check, deliberately: `availableTools()`
+    // already filters, so this pins WHICH tools a model is handed. Adding one
+    // above means editing this list, which is the moment to ask whether it
+    // belongs in a chat turn at all.
     const offered = availableTools().map(tool => tool.name);
 
     expect(offered).toEqual([
       'search',
       'scrape',
       'serp',
+      'guide',
+      'navigate',
+      'observe',
       'list_sessions',
       'list_storage',
       'list_machines',
+      'stop_session',
+      'stop_machine',
+      'suspend_machine',
+      'delete_file',
+      'save_file',
+      'set_spend_cap',
+      'set_model',
     ]);
   });
 
@@ -94,12 +109,75 @@ describe('offered tools', () => {
     }
   });
 
-  it('marks each unavailable tool with a route that exists', () => {
-    // `available: false` means the route cannot serve a chat caller, not that the
-    // route is absent. A typo in `path` would surface as a 404 instead.
+  it('offers a paid-only tool to a paid caller and not to a free one', () => {
+    // The defect this fixes: `vision` is a paid ROUTE, and one static boolean denied it
+    // to a paying customer it would have worked for -- with nothing on screen to say
+    // why. The route still enforces the plan, so this is the OFFER gate, not the
+    // boundary; the worst a bug here can do is withhold a capability.
+    const names = (paid: boolean): readonly string[] =>
+      availableTools(paid).map(tool => tool.name);
+
+    expect(names(true)).toContain('vision');
+    expect(names(false)).not.toContain('vision');
+  });
+
+  it('names a reason for every tool it does not offer', () => {
+    // The invariant the TYPE cannot express, which is why it is pinned here: a tool
+    // switched off with no recorded reason hands the model a bare "unavailable" that
+    // fits none of the four remedies.
     for (const tool of AI_TOOLS) {
-      expect(tool.path.startsWith('/api/')).toBeTrue();
+      if (tool.available) {
+        continue;
+      }
+
+      expect(tool.blocked).withContext(`${tool.name} is off with no reason`).toBeDefined();
+      // `plan` is DERIVED from `paidOnly`, so a statically-blocked tool must not claim
+      // it: that would tell the user to upgrade for something an upgrade cannot buy.
+      expect(tool.blocked).not.toBe('plan');
     }
+  });
+
+  it('carries the reason on the refusal, and resolves the plan one per caller', () => {
+    // `plan` is the only reason that depends on WHO is asking, so the same call
+    // resolves two ways -- which is the whole point of the union.
+    const call = (name: string) => ({ id: 'c1', name, args: {} });
+
+    // `pdf` is `session`, NOT `unbuilt`. The gate used to claim the platform
+    // needs an upload route for it, which it does not: `op=page` renders the page
+    // the browser is already on, and the other ops read a path that
+    // `download <url>` can fill, so a URL is enough to put a PDF where it reads.
+    // The real blocker is the one `extract` has -- a page and a filesystem a
+    // session owns.
+    expect(resolveToolCall(call('pdf'), false))
+      .toEqual(jasmine.objectContaining({ block: 'session' }));
+    expect(resolveToolCall(call('extract'), false))
+      .toEqual(jasmine.objectContaining({ block: 'session' }));
+    expect(resolveToolCall(call('extract_schema'), false))
+      .toEqual(jasmine.objectContaining({ block: 'spend' }));
+    expect(resolveToolCall(call('vision'), false))
+      .toEqual(jasmine.objectContaining({ block: 'plan' }));
+
+    // And the same call the same caller was refused a moment ago now runs.
+    expect(resolveToolCall(call('vision'), true).ok).toBeTrue();
+  });
+
+  it('gives every tool either a real route or the client-side sentinel', () => {
+    // `available: false` means the route cannot serve a chat caller, not that the
+    // route is absent -- so a typo in `path` would have surfaced as a 404. That check
+    // still holds for every tool that HAS a route. The single exception is the tool
+    // the component answers itself, which has no route to typo.
+    for (const tool of AI_TOOLS) {
+      if (tool.path !== CLIENT_SIDE_PATH) {
+        expect(tool.path.startsWith('/api/')).toBeTrue();
+      }
+    }
+
+    // Pinned to exactly ONE, so the exception cannot quietly become the norm: if a
+    // second route-less tool is ever added, this fails and forces the decision rather
+    // than letting the rule evaporate one entry at a time.
+    expect(
+      AI_TOOLS.filter(tool => tool.path === CLIENT_SIDE_PATH).map(tool => tool.name)
+    ).toEqual(['set_model']);
   });
 });
 

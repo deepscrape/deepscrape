@@ -77,3 +77,50 @@ export interface WebrainProxiesResponse {
   poolSize: number
   proxies: WebrainProxyEntry[]
 }
+
+/**
+ * One of a CALLER's own exits, as `GET /api/egress` reports it.
+ *
+ * The counterpart of `WebrainProxyEntry` for the per-caller pool: masked down to
+ * `host:port`, so no property here can hold the credential even though the row
+ * describes one.
+ */
+export interface EgressExit {
+  /** The masked `host:port`. Safe to display; never the full URL. */
+  label: string
+  host: string
+}
+
+/**
+ * Which pool a caller's requests leave from.
+ *
+ * Not a preference with a default. `platform` is the operator-maintained pool
+ * (what every caller used before BYO existed); `byo` is the caller's own. Which
+ * one applies is decided server-side by the PRESENCE of a stored pointer, so
+ * this reports the server's answer rather than choosing.
+ */
+export type EgressMode = 'platform' | 'byo'
+
+/** `GET /api/egress` reply. */
+export interface EgressSettings {
+  mode: EgressMode
+  /** A presence bit, never a prefix or a length. */
+  hasCredentials: boolean
+  /** Masked exits. Empty on the platform default. */
+  exits: EgressExit[]
+}
+
+/**
+ * `PUT /api/egress` request.
+ *
+ * `mode` is REQUIRED, and the union makes omitting it unrepresentable rather
+ * than merely discouraged: read as "set", a typo would clear a working pool, and
+ * read as "clear", a typo would quietly drop the caller back onto our exits.
+ *
+ * There is no field here for the stored URLs, because the server never returns
+ * them -- saving REPLACES the pool, so a caller editing one exit re-enters all
+ * of them. That is the cost of never echoing a password.
+ */
+export type EgressWrite =
+  | { mode: 'platform' }
+  | { mode: 'byo'; proxies: string[] }

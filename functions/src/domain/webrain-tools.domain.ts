@@ -150,6 +150,26 @@ export const SHARED_UNSAFE_TOOLS: readonly string[] = [
  * one line and makes the first `/api/interact` fail closed, where omitting it
  * would make that route a shared-process browser driver by default.
  *
+ * `webrain_download` and `webrain_watch` joined this list on 2026-10-16 for a
+ * DIFFERENT reason, and it is worth separating from the two above.
+ *
+ * Neither reads a page, so the disclosure the first five prevent does not
+ * apply. What they do is WRITE, to a path they share with every other tenant on
+ * the worker. `download_files` computes `{dir}/{index}_{name}` with `dir`
+ * defaulting to the relative `"downloads"`, and then returns that PATH as
+ * `BatchResult.title` with `data: None` -- so two tenants fetching
+ * `.../0/photo.jpg` mint the SAME `downloads/0_photo.jpg` and the second
+ * silently overwrites the first. The copy is also unbounded (`io::copy` has no
+ * cap), which is a disk-fill on a process everybody else is queued behind.
+ * `watch_from_args` takes an `out_dir` and can run for minutes.
+ *
+ * The read chain is NOT open, and this is why the fix is narrow: the only tool
+ * that reads a worker-side path is `webrain_pdf`, and it is in
+ * `SHARED_UNSAFE_TOOLS`, so it is already refused on the shared pool. A
+ * downloads, B cannot extract. So this is a data-loss and resource problem
+ * rather than a leak -- but it is still a reason a shared process must not
+ * serve either tool.
+ *
  * `webrain_guide` is in NEITHER list. It answers from the binary's own
  * documentation, touches no page, and holds no state, which is why the shared
  * pool serves it.
@@ -160,6 +180,8 @@ export const EXCLUSIVE_PAID_TOOLS: readonly string[] = [
   "webrain_interact",
   "webrain_batch",
   "webrain_crawl",
+  "webrain_download",
+  "webrain_watch",
 ]
 
 /**
@@ -183,15 +205,17 @@ export const needsExclusiveWorker = (name: unknown): boolean =>
  * A named set rather than "any MCP call the client sends", and the distinction is
  * the whole safety argument. The route behind this reaches a machine leased to
  * exactly one tenant, so exclusivity -- and therefore I2 -- is satisfied by the
- * LEASE rather than by a tier allowlist: that is why these three do not have to
- * be in `SHARED_POOL_TOOLS` to be legitimate here.
+ * LEASE rather than by a tier allowlist: that is why the members below do not
+ * have to be in `SHARED_POOL_TOOLS` to be legitimate here.
  *
  * But "the lease is the boundary" is a claim about a MACHINE, not a licence to
- * forward whatever tool name a client invents. These three are the ones that make
- * a session at once usable and inspectable -- open a page, read the page, act on
- * the page -- and every one is already in `EXCLUSIVE_PAID_TOOLS`, so a caller who
- * reached them through the POOL would have needed an exclusive worker anyway.
- * Adding a fourth is a decision, made here, in one place.
+ * forward whatever tool name a client invents. What every member has in common is
+ * `needsExclusiveWorker` returning true -- which is the property that matters: a
+ * caller who reached any of them through the POOL would have needed an exclusive
+ * worker anyway. The spec asserts it for every member, over the OR rather than
+ * over one list, because `webrain_pdf` arrives through `SHARED_UNSAFE_TOOLS` and
+ * the rest through `EXCLUSIVE_PAID_TOOLS`. Adding one is a decision, made here,
+ * in one place.
  *
  * Why `webrain_batch` and `webrain_crawl` ARE here (decided 2026-10-16)
  * --------------------------------------------------------------------
@@ -212,11 +236,25 @@ export const needsExclusiveWorker = (name: unknown): boolean =>
  * caller who reaches either through the POOL still needs an exclusive worker,
  * and the spec asserts that for every member of this list.
  *
+ * Why `webrain_download`, `webrain_watch` and `webrain_pdf` also belong
+ * --------------------------------------------------------------------
+ * `webrain_download` returns a PATH, not bytes: `download_files` writes to
+ * `{dir}/{index}_{name}` with `dir` defaulting to the relative `"downloads"`, and
+ * sets `BatchResult.title` to that path with `data: None`. On a machine of the
+ * caller's own the file lands in THEIR container, and the only way to get its
+ * CONTENT back is `webrain_pdf(op=extract, path=...)`. That is why `pdf` is
+ * listed here and not left where it was: without it, download would be a route
+ * handing back a path nobody can read, on any surface.
+ *
+ * `webrain_watch` takes an `out_dir` and shells out to yt-dlp/ffmpeg for frames,
+ * so it writes and can run for minutes. `pdf` likewise reads a caller-named
+ * path. All three are reads or writes against a PATH, which is what a lease
+ * makes safe and a shared process does not.
+ *
  * Deliberately absent, and not for tier reasons: `webrain_eval` and
- * `webrain_eval_in_frame` run arbitrary JavaScript, `webrain_download` and
- * `webrain_watch` move unbounded bytes and are not metered by payload, and
- * `webrain_profiles`, `webrain_login` and `webrain_launch` need state that
- * outlives a machine, which no machine has.
+ * `webrain_eval_in_frame` run arbitrary JavaScript, and `webrain_profiles`,
+ * `webrain_login` and `webrain_launch` need state that outlives a machine, which
+ * no machine has.
  *
  * What this list is NOT
  * ---------------------
@@ -232,6 +270,9 @@ export const SESSION_TOOLS: readonly string[] = [
   "webrain_interact",
   "webrain_batch",
   "webrain_crawl",
+  "webrain_download",
+  "webrain_watch",
+  "webrain_pdf",
 ]
 
 /**

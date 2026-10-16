@@ -239,20 +239,21 @@ describe("SESSION_TOOLS", () => {
   const REFUSED: readonly string[] = [
     "webrain_eval",
     "webrain_eval_in_frame",
-    "webrain_download",
-    "webrain_watch",
     "webrain_profiles",
     "webrain_login",
     "webrain_launch",
   ]
 
-  it("allows the page tools and the two capacity tools", () => {
+  it("allows the page, capacity and path tools", () => {
     assert.deepEqual([...SESSION_TOOLS], [
       "webrain_navigate",
       "webrain_observe",
       "webrain_interact",
       "webrain_batch",
       "webrain_crawl",
+      "webrain_download",
+      "webrain_watch",
+      "webrain_pdf",
     ])
   })
 
@@ -269,23 +270,42 @@ describe("SESSION_TOOLS", () => {
     }
   })
 
-  it("keeps the arbitrary-JS and payload-heavy tools out", () => {
+  it("admits the path tools, which only a lease makes safe", () => {
+    // `download` WRITES to `{dir}/{index}_{name}` with a shared `dir`
+    // default and hands back the PATH (`BatchResult.title`, `data: None`),
+    // so on a shared worker two tenants mint the SAME file and the second
+    // overwrites the first. `pdf` is the only tool that can READ a named
+    // path, which is what makes the pair a chain: download a file, then
+    // extract it. `watch` takes an `out_dir` and shells out to yt-dlp for
+    // frames. All three are reads or writes against a path, so the lease is
+    // what makes them safe -- and `pdf` arrives through `SHARED_UNSAFE_TOOLS`
+    // rather than `EXCLUSIVE_PAID_TOOLS`, which is why the assertion below is
+    // over the OR.
+    for (const tool of ["webrain_download", "webrain_watch", "webrain_pdf"]) {
+      assert.equal(isSessionTool(tool), true, tool)
+    }
+  })
+
+  it("keeps the arbitrary-JS and vault tools out", () => {
     // The route behind this list reaches a machine LEASED to one tenant, so the
-    // lease is the safety boundary rather than a tier allowlist. That says nothing
-    // about `eval`, which would run arbitrary JavaScript on that machine, nor
-    // about the tools that move unbounded bytes and are not metered by payload.
+    // lease is the safety boundary rather than a tier allowlist. That says
+    // nothing about `eval`, which would run arbitrary JavaScript there, nor
+    // about the vault tools, which need state outliving the machine.
     for (const tool of REFUSED) {
       assert.equal(isSessionTool(tool), false, tool)
     }
   })
 
   it("never exempts a tool the POOL would have refused", () => {
-    // Every session tool is also in `EXCLUSIVE_PAID_TOOLS`, which is what makes a
-    // caller who reached it through the pool require an exclusive worker. If one
-    // ever stopped being there, the machine-direct route would quietly become the
-    // only place it is safe -- a decision rather than a drift, so it fails here.
+    // The invariant is `needsExclusiveWorker`, not membership of one list: a
+    // caller who reached any of these through the pool must have needed an
+    // exclusive worker. Asserting the OR rather than `EXCLUSIVE_PAID_TOOLS` is
+    // what lets `webrain_pdf` sit here -- it is refused by the pool through
+    // `SHARED_UNSAFE_TOOLS`. If a member ever stopped being refused, the
+    // machine-direct route would quietly become the only place it is safe -- a
+    // decision rather than a drift, so it fails here.
     for (const tool of SESSION_TOOLS) {
-      assert.equal(EXCLUSIVE_PAID_TOOLS.includes(tool), true, tool)
+      assert.equal(needsExclusiveWorker(tool), true, tool)
     }
   })
 

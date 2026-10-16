@@ -3,11 +3,12 @@ import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { NgClass } from '@angular/common';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { MatIcon } from '@angular/material/icon';
-import { AppCrawlComponent, AppLLMScrapeComponent, AppMonitorComponent, AppSearchComponent, DomainSeederComponent, ToolsPanelComponent } from 'src/app/core/components';
+import { AppCrawlComponent, AppLLMScrapeComponent, AppMonitorComponent, AppSearchComponent, DomainSeederComponent, SavedFilesListComponent, ToolsPanelComponent } from 'src/app/core/components';
 import { FeatureGateComponent } from 'src/app/core/components/feature-gate/feature-gate.component';
 import { BrowserSessionPanelComponent } from 'src/app/core/components/browser-session/browser-session-panel.component';
 import {
   ORG_ROLE_LABEL_KEYS,
+  PLAYGROUND_MODES,
   playgroundGateStates,
   type GateState,
   type PlaygroundModeId,
@@ -22,7 +23,7 @@ import { map } from 'rxjs/internal/operators/map';
 
 @Component({
   selector: 'app-playground',
-  imports: [AppLLMScrapeComponent, AppCrawlComponent, RouterModule, NgClass, DomainSeederComponent, AppSearchComponent, AppMonitorComponent, ToolsPanelComponent, HiddenDragScrollDirective, FeatureGateComponent, BrowserSessionPanelComponent, MatIcon, TranslateModule],
+  imports: [AppLLMScrapeComponent, AppCrawlComponent, RouterModule, NgClass, DomainSeederComponent, AppSearchComponent, AppMonitorComponent, ToolsPanelComponent, HiddenDragScrollDirective, FeatureGateComponent, BrowserSessionPanelComponent, SavedFilesListComponent, MatIcon, TranslateModule],
   templateUrl: './playground.component.html',
   styleUrl: './playground.component.scss',
   animations: [
@@ -151,22 +152,18 @@ export class PlaygroundComponent implements OnInit, AfterViewInit {
   }
   ngOnInit(): void {
     this.route.queryParams.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(params => {
-      const newMode = params['mode'];
+      // Derived from `PLAYGROUND_MODES` rather than a second list. The `switch`
+      // this replaces was the ONE of the four places a mode id lives that no
+      // type checked: adding a mode to `PLAYGROUND_MODES` and
+      // `RUN_SURFACE_REQUIREMENTS` (both compile-enforced) left it unreachable
+      // from a query param, with no error anywhere. An unusable param still
+      // falls back to the default, matching the `default:` branch it replaces.
+      const requested = params['mode'];
+      const newMode =
+        PLAYGROUND_MODES.find((m) => m === requested) ?? 'llm-scrape';
       // Only update if the mode actually changed to trigger animation
       if (this.currentMode !== newMode) {
-        switch (newMode) {
-          case 'llm-scrape':
-          case 'crawl':
-          case 'seeder':
-          case 'search':
-          case 'monitor':
-          case 'tools':
-          case 'browser':
-            this.currentMode = newMode;
-            break;
-          default:
-            this.currentMode = 'llm-scrape';
-        }
+        this.currentMode = newMode;
         // OnPush: the query-param write is async, so the view needs telling.
         this.cdr.markForCheck()
       }

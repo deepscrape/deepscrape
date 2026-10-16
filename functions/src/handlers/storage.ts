@@ -31,6 +31,8 @@
  * not 403, so the response cannot be used to discover that the object exists.
  */
 import {Request, Response} from "express"
+
+import { errorLabel, uidOf } from "./request-helpers"
 import {
   LIST_LIMIT,
   PRESIGN_TTL_SECONDS,
@@ -75,15 +77,6 @@ const ARTIFACT_CACHE_SECONDS = 3600
 /** The redirect statuses that name a new location. */
 const REDIRECT_STATUS = [301, 302, 303, 307, 308]
 
-/** The caller's uid, or undefined when the token carried none.
- * @param {Request} req The request.
- * @return {string|undefined} The uid.
- */
-const uidOf = (req: Request): string | undefined => {
-  const uid = req.user?.uid
-  return typeof uid === "string" && uid.length > 0 ? uid : undefined
-}
-
 /** The parsed request body as a record, empty when absent.
  * @param {Request} req The request.
  * @return {Record<string, unknown>} The body.
@@ -104,15 +97,6 @@ const bodyOf = (req: Request): Record<string, unknown> => {
 const fail = (res: Response, status: number, code: string): void => {
   res.status(status).json({error: code, code})
 }
-
-/** The error class name, never its message: a message can quote a resource
- * path, and the path of a Secret Manager secret is the one field a credential
- * could ride in.
- * @param {unknown} error The thrown value.
- * @return {string} A safe label for the log.
- */
-const errorLabel = (error: unknown): string =>
-  error instanceof Error ? error.name : typeof error
 
 /** One object as the API reports it.
  * @param {StoredBlob} blob The stored record.

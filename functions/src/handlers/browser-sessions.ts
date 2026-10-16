@@ -48,6 +48,8 @@
  */
 import {randomUUID} from "node:crypto"
 import { Request, Response } from "express"
+
+import { uidOf } from "./request-helpers"
 import {
   consumeBillingCredits,
   releaseBillingCredits,
@@ -101,16 +103,6 @@ import {
  * @return {unknown} The body, as supplied.
  */
 const bodyOf = (req: Request): unknown => req.body
-
-/**
- * The caller's uid, or undefined when the token carried none.
- * @param {Request} req The request.
- * @return {string | undefined} The verified uid.
- */
-const uidOf = (req: Request): string | undefined => {
-  const uid = req.user?.uid
-  return typeof uid === "string" && uid.length ? uid : undefined
-}
 
 /**
  * The session id from the path, or an empty string.

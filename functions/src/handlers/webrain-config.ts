@@ -23,6 +23,8 @@
  * deploy.
  */
 import { Request, Response } from "express"
+
+import { errorLabel } from "./request-helpers"
 import {
   resolveTokenUpdate,
   toPublicConfig,
@@ -35,18 +37,6 @@ import {
   webrainMcpToken,
   webrainProxyPool,
 } from "../infrastructure/webrain-config.store"
-
-/**
- * The error class name, never its message.
- *
- * A Secret Manager failure can quote the resource path, and the message is the
- * one field a credential could ride in -- so the log line names the operation
- * and the class only.
- * @param {unknown} error The thrown value.
- * @return {string} A safe label for the log.
- */
-const errorLabel = (error: unknown): string =>
-  error instanceof Error ? error.name : typeof error
 
 /**
  * `GET /api/webrain/config` -- the state an operator may see.

@@ -28,28 +28,13 @@
  * a password in the response body and in the log at once.
  */
 import { Request, Response } from "express"
+
+import { errorLabel, uidOf } from "./request-helpers"
 import { validateEgressInput } from "../domain/byo-egress.domain"
 import {
   readEgressSettings,
   writeEgressSettings,
 } from "../infrastructure/egress-settings.store"
-
-/** The caller's uid, or undefined when the token carried none.
- * @param {Request} req The request.
- * @return {string|undefined} The uid.
- */
-const uidOf = (req: Request): string | undefined => {
-  const uid = req.user?.uid
-  return typeof uid === "string" && uid.length > 0 ? uid : undefined
-}
-
-/** The error class name, never its message: a Secret Manager failure can quote
- * the resource path, which is the one field a credential could ride in.
- * @param {unknown} error The thrown value.
- * @return {string} A safe label for the log.
- */
-const errorLabel = (error: unknown): string =>
-  error instanceof Error ? error.name : typeof error
 
 /**
  * `GET /api/egress` -- the caller's own exits, masked.

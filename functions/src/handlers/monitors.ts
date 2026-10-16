@@ -24,6 +24,8 @@
  * exists. Nothing here trusts a uid from the body.
  */
 import { Request, Response } from "express"
+
+import { uidOf } from "./request-helpers"
 import {
   MONITOR_MAX_PER_USER,
   buildMonitorFields,
@@ -55,15 +57,6 @@ const bodyOf = (req: Request): Record<string, unknown> => {
   return body && typeof body === "object" ?
     (body as Record<string, unknown>) :
     {}
-}
-
-/** The caller's uid, or undefined when the token carried none.
- * @param {Request} req The request.
- * @return {string | undefined}
- */
-const uidOf = (req: Request): string | undefined => {
-  const uid = req.user?.uid
-  return typeof uid === "string" && uid.length ? uid : undefined
 }
 
 /** The single internal-error answer, so the five routes cannot disagree.

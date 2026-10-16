@@ -36,6 +36,8 @@
  * module only adds the envelope, so it cannot widen the projection by accident.
  */
 import { Request, Response } from "express"
+
+import { uidOf } from "./request-helpers"
 import {listFleetMachines, listMachinesForUser} from "../infrastructure/machine.store"
 
 /**
@@ -76,16 +78,6 @@ export const machineFleetList = async (
   } catch (error) {
     internal(res, "list", error)
   }
-}
-
-/**
- * The caller's own uid, or undefined when the token carried none.
- * @param {Request} req The request.
- * @return {string | undefined} The verified uid.
- */
-const uidOf = (req: Request): string | undefined => {
-  const uid = req.user?.uid
-  return typeof uid === "string" && uid.length ? uid : undefined
 }
 
 /**

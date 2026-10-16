@@ -30,6 +30,8 @@
  * the other way round hides a live credential with nothing left pointing at it.
  */
 import { Request, Response } from "express"
+
+import { uidOf } from "./request-helpers"
 import {
   VAULT_MAX_ENTRIES,
   isSafeVaultName,
@@ -160,15 +162,6 @@ export const vaultRequestFrom = (body: unknown): VaultRequest => {
   }
 
   return { ok: true, op, service, profile, payload }
-}
-
-/** The caller's uid, or undefined when the token carried none.
- * @param {Request} req The request.
- * @return {string | undefined} The uid.
- */
-const uidOf = (req: Request): string | undefined => {
-  const uid = req.user?.uid
-  return typeof uid === "string" && uid.length > 0 ? uid : undefined
 }
 
 /** The one error shape, so no op can answer with a bare status.

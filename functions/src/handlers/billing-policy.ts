@@ -29,6 +29,8 @@
  * delete a field.
  */
 import { Request, Response } from "express"
+
+import { uidOf } from "./request-helpers"
 import {
   readSpendPolicy,
   readSpendWindow,
@@ -45,16 +47,6 @@ const PERIODS: readonly SpendPeriod[] = ["day", "month"]
 
 /** What may happen once the cap is reached. */
 const EXHAUST_ACTIONS: readonly SpendExhaustAction[] = ["block", "degrade"]
-
-/**
- * The caller's uid, or undefined when the token carried none.
- * @param {Request} req The request.
- * @return {string | undefined} The verified uid.
- */
-const uidOf = (req: Request): string | undefined => {
-  const uid = req.user?.uid
-  return typeof uid === "string" && uid.length ? uid : undefined
-}
 
 /**
  * The 401 for a token that carried no uid.

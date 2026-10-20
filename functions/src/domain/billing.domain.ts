@@ -16,6 +16,16 @@ export type BillingCredits = {
 export type BillingSnapshot = {
   plan?: string | BillingPlanTier | null
   subscriptionId?: string | null
+  /**
+   * The interval the plan was bought on.
+   *
+   * `payAsYouGo` is the only value that grants access for a FIXED WINDOW rather
+   * than until a subscription lapses, because it is paid once and has no renewal
+   * to carry it forward.
+   */
+  planInterval?: BillingInterval | string | null
+  /** When the current period ends. Authoritative for a `payAsYouGo` window. */
+  currentPeriodEnd?: string | null
   graceUntil?: string | null
   credits?: BillingCredits | null
 }
@@ -37,6 +47,65 @@ export const normalizeBillingPlan = (plan: string | BillingPlanTier | null | und
 
 export const isPaidPlan = (plan: string | BillingPlanTier | null | undefined): boolean => {
   return paidPlans.has(normalizeBillingPlan(plan))
+}
+
+/**
+ * One `payAsYouGo` purchase, as a fraction of a monthly subscription.
+ *
+ * The price already is this fraction: starter EUR0.99 against EUR9.99, pro
+ * EUR1.99 against EUR19.99. The credit grant already is this fraction too
+ * (`getIncludedCreditsForPlanInterval`, `Math.round(monthly * 0.1)`). The third
+ * thing that must be this fraction is the DURATION, and it was the missing one.
+ */
+export const PAYG_PRICE_FRACTION = 0.1
+
+/** How long one `payAsYouGo` purchase grants access: 10% of a 30-day month. */
+export const PAYG_ACCESS_DAYS = Math.round(30 * PAYG_PRICE_FRACTION)
+
+/**
+ * The instant a `payAsYouGo` purchase stops granting access.
+ *
+ * Ten such purchases for 30 days cost EUR19.90 against the EUR19.99 monthly, so
+ * the two are the same product at the same rate -- one with no commitment and no
+ * renewal. Derived from the same fraction as the credit grant so the money, the
+ * credits and the window cannot drift apart.
+ * @param {number} startMs Epoch ms of the payment.
+ * @return {string} The ISO timestamp the window closes.
+ */
+export const paygAccessEndsAt = (startMs: number): string =>
+  new Date(startMs + PAYG_ACCESS_DAYS * 24 * 60 * 60 * 1000).toISOString()
+
+/**
+ * Whether a `payAsYouGo` window has closed.
+ *
+ * FAILS CLOSED, and that direction is deliberate rather than defensive. A
+ * `payAsYouGo` row with no `currentPeriodEnd` is precisely what the writer
+ * produced before this existed: it wrote `null` and relied on nothing checking.
+ * Reading a missing date as "still valid" would preserve the defect for exactly
+ * the rows it created, so a missing or unparseable date counts as closed.
+ *
+ * A subscription is untouched by this: Stripe sends its own `current_period_end`
+ * and its status is what lapses it, so `isPaidPlan` remains the whole test for
+ * every interval except `payAsYouGo`.
+ * @param {BillingSnapshot} billing The caller's billing snapshot.
+ * @param {number} now Epoch ms.
+ * @return {boolean} True when a payg window has closed.
+ */
+export const isPaygWindowClosed = (
+  billing: BillingSnapshot | undefined,
+  now = Date.now(),
+): boolean => {
+  if (billing?.planInterval !== "payAsYouGo") {
+    return false
+  }
+
+  const end = billing?.currentPeriodEnd
+  if (typeof end !== "string" || end.length === 0) {
+    return true
+  }
+
+  const endMs = new Date(end).getTime()
+  return !Number.isFinite(endMs) || now >= endMs
 }
 
 export const hasGraceAccess = (billing: BillingSnapshot | undefined, now = Date.now()): boolean => {
@@ -220,11 +289,18 @@ export const canPurchaseStandaloneCredits = (billing: BillingSnapshot | undefine
 }
 
 export const getBillingAccessMode = (billing: BillingSnapshot | undefined, now = Date.now()): BillingAccessMode => {
-  if (isPaidPlan(billing?.plan)) {
+  if (isPaidPlan(billing?.plan) && !isPaygWindowClosed(billing, now)) {
     return "plan"
   }
 
-  if (normalizeBillingPlan(billing?.plan) === "free" && getPurchasedCreditsAvailable(billing) > 0) {
+  // Purchased credits OUTLIVE the plan they were bought beside.
+  //
+  // This used to require `plan === "free"`, which stranded credits the moment a
+  // plan stopped being valid without changing its name -- exactly what an expired
+  // `payAsYouGo` window does, since the stored plan still reads "pro". A
+  // subscription never reaches here (the branch above returns first), so
+  // dropping that condition widens nothing except the case it was wrong for.
+  if (getPurchasedCreditsAvailable(billing) > 0) {
     return "credits"
   }
 

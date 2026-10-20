@@ -50,6 +50,41 @@ const defaultPricingRules: BillingPricingRule[] = [
   {method: "PUT", pattern: "^/machines/machine/[^/]+/suspend$", policy: {action: "machines.suspend", credits: 1}},
   {method: "PUT", pattern: "^/machines/machine/[^/]+/stop$", policy: {action: "machines.stop", credits: 1}},
   {method: "DELETE", pattern: "^/machines/machine/[^/]+$", policy: {action: "machines.destroy", credits: 2}},
+  // Listing the caller's OWN machines reads one Firestore document and starts no
+  // browser, and the machines panel lists on every open. Charging per page load
+  // taxes navigating the product rather than using it, so this is 0 rather than
+  // the fallback's 1. A zero-credit rule is the mechanism for "free", not an
+  // omission: see the note on the stream-status rows above.
+  {method: "GET", pattern: "^/machines$", policy: {action: "machines.list", credits: 0}},
+  //
+  // The webrain CAPACITY tools. Every route below sits behind the `paid` guard in
+  // `bff/api.ts`, and not one of them was in this table -- so all of them were
+  // priced by the fallback at 1 credit. That included a site-wide spider and an
+  // unbounded download, which made a full site crawl a THIRD of the price of a
+  // single `/crawl` request. The fallback is a net for an unlisted route, not a
+  // price list; these were the routes that proved it.
+  //
+  // The numbers follow the one unit the table already uses -- `crawl.execute` at
+  // 3 for one browser job -- rather than inventing a scale:
+  //
+  //   1  single browser step (navigate, observe)
+  //   2  image work, CPU-bound on the worker (vision)
+  //   3  N urls in one call (batch), matching crawl at N=1
+  //   5  unbounded payload (download) or a long-running watch
+  //  10  a site walk (spider): discovery plus N page fetches, ~3x a crawl request
+  //
+  // `observe` stays paid even though `GET /api/browser/session/:id/frame` is not.
+  // They are different products rather than two doors to one: a frame is a live
+  // view of the caller's OWN leased machine and is paid for by the session meter,
+  // while observe takes an ad-hoc screenshot on a pool worker and spends CDP CPU
+  // the meter never sees.
+  {method: "POST", pattern: "^/navigate$", policy: {action: "webrain.navigate", credits: 1}},
+  {method: "POST", pattern: "^/observe$", policy: {action: "webrain.observe", credits: 1}},
+  {method: "POST", pattern: "^/vision$", policy: {action: "webrain.vision", credits: 2}},
+  {method: "POST", pattern: "^/batch$", policy: {action: "webrain.batch", credits: 3}},
+  {method: "POST", pattern: "^/spider$", policy: {action: "webrain.spider", credits: 10}},
+  {method: "POST", pattern: "^/download$", policy: {action: "webrain.download", credits: 5}},
+  {method: "POST", pattern: "^/watch$", policy: {action: "webrain.watch", credits: 5}},
 ]
 
 const defaultPricingPolicy: BillingPricingPolicy = {

@@ -13,6 +13,7 @@ import {
   getStripeWebhookSecret,
 } from "./config"
 import { applyBillingCreditMutation, grantBillingCredits } from "./billing-credits"
+import { paygAccessEndsAt } from "../domain/billing.domain"
 import type { UserInfo } from "firebase-admin/auth"
 import { FieldValue } from "firebase-admin/firestore"
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
@@ -2405,6 +2406,11 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
         planInterval: selectedInterval,
         ...subscriptionMeta,
         ...trialMeta,
+        // A `payAsYouGo` payment is one-off, so Stripe sends no period for it and
+        // no subscription will ever lapse it. Writing the window HERE is what
+        // makes `isPaygWindowClosed` able to answer; without it the plan was
+        // granted permanently for a tenth of the monthly price, repeatably.
+        ...(checkoutType === "plan_payg" ? {currentPeriodEnd: paygAccessEndsAt(Date.now())} : {}),
         updatedAt: FieldValue.serverTimestamp(),
       }
 
@@ -2662,7 +2668,10 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       cancelAtPeriodEnd: false,
       cancelAt: null,
       currentPeriodStart: null,
-      currentPeriodEnd: null,
+      // The same window the checkout path writes. This legacy branch (a payment
+      // carrying no `checkoutType`) previously wrote `null` and left the plan
+      // permanent, which is the defect the field exists to close.
+      currentPeriodEnd: paygAccessEndsAt(Date.now()),
       updatedAt: FieldValue.serverTimestamp(),
     }
 

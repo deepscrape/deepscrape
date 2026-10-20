@@ -85,15 +85,60 @@ Work:
 2. On `Refuse` → fail the request. **Never** fall back to the platform identity.
 3. Thread the resolved token into `FlyRequest`.
 
-**The decision layer is the reason this is safe to do at all**: `DecideFlyTenant` already
+**BUILT 2026-10-20 on the `header path` — the arachnefly side is complete and INERT.**
+Three commits: `1df9220` (identity resolution + Locals), `d9d1193` (create-machine and
+wait-for-state), `02422be` (every machine read). Nothing sends the headers yet, so every
+path still resolves to the platform identity and production behaviour is unchanged.
+
+**The decision layer is the reason this is safe to do at all**: `DecideFlyTenant`
 separates "nothing configured → platform" from "configured but unusable → refuse", and a
 refusal carries no tenant, so a caller cannot read the zero value by accident.
+
+Two corrections to the seam above, both found by doing it:
+
+- **`FlyRequest` needed no change at all**, which is the third of the original estimate
+  gone. It applies its `headers` argument *after* setting `Authorization`, so a
+  caller-supplied `Authorization` already overrode it. The token is threaded from a
+  middleware (`interfaces/controller/fly_tenant.go`) that publishes Locals, and handlers
+  read `flyAppFor(c)` / `tenantAuthFor(c)`.
+- **`GetMachineDetails` DID need a change** — it hard-passed `nil` headers, so a read
+  against a tenant's app was impossible. It now takes `headers`, and all **ten** call
+  sites go through one `machineDetails(c, id)` helper that pairs app with token. The
+  pairing is the point: a read is scoped to an APP, so the platform's name against a
+  tenant's machine answers 404, which reads as "no such machine". Verified structurally
+  in the graph rather than by review — `IGlobal.GetMachineDetails` now has **one** caller.
+
+Decisions inside the diff that are not obvious from it:
+
+- **`ListFlyMachines` is untouched, on purpose.** The synchronizer is its only caller, and
+  a background job must act as the platform. Its `GetMachineDetails` sibling had no
+  background caller, which is exactly why that one could move.
+- **`execute-task` MERGES** the tenant `Authorization` into `{"fly-replay": …}` instead of
+  replacing it. Overwriting that map would drop the instance pin and send the task to an
+  arbitrary machine in the app.
+- **`HandleContainerMCP`** built its 6PN target from `h.flyApp`, so it would have read one
+  app and dialled another. App, host and five log lines use the resolved app now.
+- **`CheckOrCreateApp` only CHECKS for a tenant** (409 otherwise): its create branch is
+  hard-coded to `org_slug: "softmind"`, so "create it for them" would provision an app
+  inside OUR organization under a name the customer chose.
+- **`isTenantRequest` reads the Locals and never compares app names** — a tenant may name
+  their app whatever the platform's is called.
+
+Specs: `interfaces/handlers/tenant_identity_test.go` pins both directions of the pairing,
+that a platform request passes `nil` headers, and that app-name equality does not make a
+request the platform's.
+
+**Remaining for B1 to be live:** the BFF must send `X-Fly-App` / `X-Fly-Token` /
+`X-Fly-Region` from `resolveCompute`, in the same commit as B2. **Invariant to keep:**
+arachnefly must never log request headers — one `log.Printf("%v", c.GetReqHeaders())`
+would leak every tenant's token into the logs.
 
 Must land in the **same commit** as B2, per the skill's pricing rule: a BYO organization
 pays Fly directly, and charging them platform compute on top double-bills them.
 
-Gates: `gofmt -l .` (empty), `go build ./...`, `go vet ./...`, `go test ./...` — print
-`EXIT=$LASTEXITCODE` immediately after each, never after a pipe.
+Gates (run at `02422be`): `gofmt -l .` empty, `go build ./...` 0, `go vet ./...` 0,
+`go test ./...` 0 — printed `EXIT=$LASTEXITCODE` immediately after each, never after a
+pipe.
 
 ### B2 — billing: `computeSource` in the meter
 

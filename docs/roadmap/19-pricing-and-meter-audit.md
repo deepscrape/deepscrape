@@ -1,0 +1,250 @@
+# Pricing table and meter audit — 2026-10-20
+
+Asked to: settle two open questions, then audit the pricing table and cost meters for
+defects and align the customer-facing tables with what the platform actually does.
+
+Every claim below was read from source or the live Stripe API in this session. Where a
+number is a **proposal**, it says so; nothing here has been applied to Stripe or to the
+credit table without sign-off.
+
+---
+
+## Part 1 — The two open questions
+
+### 1. Meter: snapshot `computeSource` at creation, or re-resolve at charge time?
+
+**Decision: snapshot. It is already implemented (`8c9022b3`) and should stay.**
+
+The cost argument is not the deciding one, and it is worth writing down so nobody
+re-opens the question on cost grounds:
+
+| Approach | Extra work per sweep | Cost per 105-min session |
+|---|---|---|
+| Snapshot (stored on the record) | 0 reads | €0 |
+| Re-resolve per sweep | 1 Firestore read + 1 Secret Manager access, per session, per 5 min | ≈ €0.00007 |
+
+At $0.03/100k document reads and $0.03/10k secret accesses, 21 sweeps come to well under
+a tenth of a cent. **Cost does not decide this.** Three things do:
+
+1. **The machine's app is fixed at provisioning.** Re-resolving describes settings that
+   may no longer describe where the running machine actually is, so the meter would price
+   a machine by a fact that has stopped being true.
+2. **A deleted config would invert the bill.** Re-resolve reads `undefined` → `platform`
+   → we start charging for a machine in the caller's own organization. Snapshot reads the
+   stored `byo` and bills nothing. Snapshot is strictly safer in the direction that
+   matters (never overcharge).
+3. Latency inside a scheduled sweep that already does 2 reads per caller.
+
+### 2. Should `computeSource: "byo"` also waive the `machines.deploy` charge?
+
+**Decision: yes, and it is implemented the same way.**
+
+`machines.deploy` is 5 credits ≈ €0.62–0.95 depending on pack. The rate was justified in
+`07` Part E.1 by **scarcity of Fly machine creation**, not by compute cost — the Machines
+API allows 1 create/second **per app**, and every platform tenant shares one app.
+
+A BYO deploy spends none of that: the machine is created in *their* app, against *their*
+rate limit, billed to *their* Fly account. The platform's residual cost is one config read
+and one secret access (~€0.000003), which the plan subscription covers.
+
+Charging 5 credits there would be pure margin on a customer who already pays Fly, and it
+contradicts the standing rule that compute the platform did not supply is not billable.
+
+---
+
+## Part 2 — The charge model as it actually is
+
+Two independent mechanisms, and they do not overlap:
+
+1. **Per-request credits** — `requirePaidAccess` in `infrastructure/syncaiapi.ts:287`
+   resolves `resolveBillingPricingPolicy(req.method, req.path)`, reserves, and consumes.
+   Routes that do **not** carry the `paid` guard are not charged at all.
+2. **The session meter** — `browser-meter.domain.ts` + `gfirestore` sweep, 1 credit per
+   started 5-minute block, 20-credit ceiling, first block included in `machines.deploy`.
+
+### What is charged, per request
+
+| Route | Action | Credits |
+|---|---|---|
+| `POST /api/crawl` | `crawl.execute` | **3**, regardless of URL count |
+| `POST /api/anthropic/messages` | `ai.anthropic.messages` | 2 |
+| `POST /api/openai/chat/completions` | `ai.openai.chat` | 2 |
+| `POST /api/groq/chat/completions` | `ai.groq.chat` | 1 |
+| `POST /api/machines/deploy` | `machines.deploy` | 5 |
+| machine lifecycle (start/suspend/stop/read/wait/check-image) | `machines.*` | 1 each |
+| `DELETE /api/machines/machine/:id` | `machines.destroy` | 2 |
+| `POST /api/navigate`, `/observe`, `/vision` | `api.paid.default` | **1 (fallback)** |
+| `POST /api/batch`, `/spider`, `/download`, `/watch` | `api.paid.default` | **1 (fallback)** |
+| `GET /api/machines` (list) | `api.paid.default` | **1 (fallback)** |
+| anything else behind `paid` | `api.paid.default` | **1** |
+
+### What is free (no `paid` guard, so never charged)
+
+`POST /api/scrape`, `/search`, `/extract`, `/pdf`, `/guide`, and the whole
+`/api/browser/session*` surface. The session surface is metered by the 5-minute block
+instead — deliberate, per `§1.2`/`§1.6`, and the reason a frame poll at 1 fps does not
+cost 1 credit per frame.
+
+---
+
+## Part 3 — Defects found, worst first
+
+### D1. A `payAsYouGo` purchase grants a PERMANENT plan, repeatably — revenue hole
+
+`payAsYouGo` is a one-time payment (`checkoutMode: "payment"`), priced at 10% of the
+monthly price: starter €0.99, pro €1.99. On completion, `checkout.session.completed`
+writes the plan and credits:
+
+- `plan: "starter" | "pro"`, `status: "active"`, `planInterval: "payAsYouGo"`,
+  `currentPeriodEnd: null` (`stripe.ts:2406`, `:2423`, and the legacy
+  `payment_intent.succeeded` path at `:2644`).
+
+And **nothing expires it**: `getBillingAccessMode` (`billing.domain.ts:222`) returns
+`"plan"` for any paid plan with no date check at all.
+
+So €1.99 buys Pro permanently, and can be bought again. The subscription is undercut by a
+factor of ~10 with no renewal.
+
+The pricing is internally consistent with a *duration that does not exist*: 10% of the
+price for 100% of the term. The missing piece is 10% of a month.
+
+**Proposal (needs sign-off — this changes what money buys):** give `payAsYouGo` an expiry
+of 10% of a month (≈3 days), which makes 10 × €1.99 for 30 days equivalent to €19.99/month.
+Implemented as a `currentPeriodEnd` written on payment plus an expiry check in
+`getBillingAccessMode` (or a scheduled downgrade, which is the safer of the two).
+
+**Not implemented.** Every candidate fix changes a customer-visible entitlement, and the
+choice between "3-day window" and "no plan at all, credits only" is a product decision.
+
+### D2. PAYG credits undercut credit packs by 19–25×
+
+Same purchase grants `getIncludedCreditsForPlanInterval(plan, "payAsYouGo")` = 10% of the
+plan's monthly allowance:
+
+| Purchase | Price | Credits | € per credit |
+|---|---|---|---|
+| starter PAYG | €0.99 | 100 | **€0.0099** |
+| pro PAYG | €1.99 | 500 | **€0.004** |
+| pack 100 | €19.00 | 100 | €0.19 |
+| pack 500 | €79.00 | 500 | €0.158 |
+| pack 2000 | €249.00 | 2000 | €0.1245 |
+
+A pack customer pays 19× more per credit than a PAYG customer, for the same credit. Packs
+are the top-up product and are priced 15–48× above the subscription rate; that may be
+intentional (no commitment), but combined with D1 it means the cheapest way to buy credits
+is a one-time €1.99 that also grants Pro permanently.
+
+### D3. The capacity tools are priced BELOW the cheapest tool — revenue leak
+
+Because they were never added to `defaultPricingRules`, they inherit
+`api.paid.default` = 1 credit:
+
+- `POST /api/spider` — crawl an entire site, unbounded page count: **1 credit**
+- `POST /api/batch` — N targets in one call: **1 credit**
+- `POST /api/watch` — a long-running watch: **1 credit**
+- `POST /api/download` — unbounded bytes: **1 credit**
+
+Meanwhile `POST /api/crawl` costs 3 for one request. **A full site crawl is a third of the
+price of a single crawl request.** The skill also records that `download`/`watch` are kept
+out of `SESSION_TOOLS` precisely because their payloads are unbounded — yet they are
+routed and sold at 1 credit.
+
+### D4. `observe` costs 1 credit per frame, while the frame route is free
+
+`POST /api/observe` is `paid` → 1 credit per screenshot. `GET
+/api/browser/session/:id/frame` is free (metered by the session). Two ways to obtain the
+same kind of image, priced 300× apart in effect. On a dedicated session the meter charges
+1 credit per 5 minutes; polling `observe` at 1 fps would cost 300 credits over the same
+window.
+
+### D5. Enterprise is advertised with a €0.00 pay-as-you-go option
+
+`billingPlanCatalog` gives `enterprise.prices.payAsYouGo` amount `0` with no
+`stripePriceId`, and no such price exists in either Stripe account. Checkout refuses it
+(`stripe.ts:2013` throws when the resolved id is missing), so it is not purchasable — but
+if the client renders every interval from the catalog it displays a €0.00 Enterprise
+option. `free`/`trial` have the same zero entries but are not offered for sale.
+
+### D6. Price fallbacks in code are archived TEST-mode ids
+
+`functions/src/app/stripe.ts:526-561` falls back to `price_1T7Z…` ids. The live catalog was
+re-priced on 2026-09-20 (`transfer_lookup_key`), so those ids are archived. Checkout
+resolves by `lookup_key` first and only falls back to the id, so this is degraded rather
+than broken — but the failure mode is "checkout fails" the moment a lookup_key drifts.
+
+### D7. `validateStripeCatalog` is a callable, never scheduled
+
+It is an `onCallv2` (`stripe.ts:~1380`), so a missing or mismatched live catalog is never
+detected automatically. It already fetches prices, so asserting lookup_keys inside it is
+small. **This is what would have caught the "production has no catalog" state.**
+
+### D8. Client publishable key: prod build ships a test key (unverified this session)
+
+Recorded 2026-09-20: `src/environments/prod.ts` and `staging.ts` held `pk_test_…` while
+`environment.ts` held `pk_live_…`, so a production build (fileReplacements) would ship the
+test publishable key. **Not re-verified this session** — it needs a read of the three env
+files, which are generated.
+
+---
+
+## Part 4 — Verified state of the Stripe catalog (read-only, this session)
+
+Both accounts are reachable and **the live catalog exists** — a correction to the earlier
+note that production had no DeepScrape objects.
+
+| | test `acct_1Qag9KFVGcR0rD8f` | live `acct_1OELbJFBBAUAyJFB` |
+|---|---|---|
+| active `ds_*` prices | 14 | 14 (+ "Funding", unrelated) |
+| lookup_keys | `ds_<plan>_<interval>`, `ds_credits_<n>` | identical |
+| currency / tax | EUR, `tax_behavior: inclusive` | EUR, `tax_behavior: inclusive` |
+
+Plan prices (EUR, inclusive, live):
+
+| plan | payg | monthly | quarterly | annual |
+|---|---|---|---|---|
+| starter | 0.99 | 9.99 | 27.99 | 99.99 |
+| pro | 1.99 | 19.99 | 55.99 | 199.99 |
+| enterprise | — | 49.99 | 149.99 | 499.99 |
+
+Credits: 100 = €19, 500 = €79, 2000 = €249.
+
+The code's amounts, caps and lookup keys agree with the accounts. **No Stripe change is
+needed to make the current table truthful** — which is why nothing was written to Stripe.
+
+---
+
+## Part 5 — Proposed pricing components (needs sign-off)
+
+The table should state, per capability, which instrument prices it. Proposal, deliberately
+reusing existing ratios rather than inventing a new scale:
+
+| Capability | Route | Instrument | Credits (proposed) | Basis |
+|---|---|---|---|---|
+| Crawl (one request, any URL count) | `POST /api/crawl` | credits | 3 | unchanged |
+| Site crawl / spider | `POST /api/spider` | credits | **10** | unbounded pages; must exceed crawl |
+| Batch | `POST /api/batch` | credits | **3 + 1 per extra target** | matches crawl at N=1 |
+| Watch (long-running) | `POST /api/watch` | plan only, not metered per call | **—** | unbounded duration |
+| Download | `POST /api/download` | plan only, not metered per call | **—** | unbounded bytes |
+| Navigate / interact | `/api/navigate` | credits | 1 | browser step |
+| Observe (screenshot) | `/api/observe` | credits | **0 when the caller has a session lease**, else 1 | matches the frame route |
+| Vision | `/api/vision` | credits | 2 | image work |
+| AI chat | `/api/anthropic/messages` | credits | 2 | unchanged |
+| Browser session time | `/api/browser/session*` | meter | 1 / 5 min, ceiling 20 | unchanged |
+| Machine deploy | `/api/machines/deploy` | credits | 5 platform, **0 BYO** | implemented |
+| Scrape / search / extract / pdf / guide | varies | free | 0 | unchanged |
+
+**Not applied.** Changing credit costs changes revenue, and D3/D4 need the numbers chosen
+by whoever owns the price list. What is safe to say today is that *the current table prices
+a site crawl below a crawl request*, which is almost certainly not intended.
+
+---
+
+## Part 6 — What this audit did NOT do
+
+- No Stripe object was created, updated, or archived.
+- No credit cost in `defaultPricingRules` was changed.
+- No customer-visible entitlement was changed (D1 remains live).
+- D8 was not re-verified.
+
+Everything in D1–D4 is **reachable in production today**. D1 and D3 are the two with money
+attached, in opposite directions: D1 gives revenue away, D3 sells work below cost basis.

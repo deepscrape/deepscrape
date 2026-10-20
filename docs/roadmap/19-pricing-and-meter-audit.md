@@ -267,10 +267,95 @@ its own decision.
 
 ## Part 6 — What this audit did NOT do
 
-- No Stripe object was created, updated, or archived.
-- No credit cost in `defaultPricingRules` was changed.
-- No customer-visible entitlement was changed (D1 remains live).
+- No Stripe object was created, updated, or archived. (Still true, and still correct:
+  the catalog already matches the code.)
 - D8 was not re-verified.
+- `batch` remains flat for an unbounded URL list.
 
-Everything in D1–D4 is **reachable in production today**. D1 and D3 are the two with money
-attached, in opposite directions: D1 gives revenue away, D3 sells work below cost basis.
+**Corrected 2026-10-20:** an earlier version of this section said no credit cost and no
+entitlement had changed. Both became false at `b00ea20` — D1's window and D3's prices are
+implemented. What DID change: `defaultPricingRules` gained nine rows, `getBillingAccessMode`
+now checks a payg window, and every payg payment writes `currentPeriodEnd`.
+
+---
+
+## Part 7 — Spider.cloud, and why its table looks so much cheaper
+
+Asked directly, with `spider.cloud`'s own published numbers (2026-10-20).
+
+### What Spider actually charges
+
+| line item | rate |
+|---|---|
+| bandwidth | **$1 per GB** |
+| compute | $0.0001 per CPU-minute |
+| failed / blocked / timed-out page | **$0** |
+| credits | 10,000 to the dollar |
+
+Their own worked example: a page bills
+`{compute 0.00001, file 0.00002, bytes 0.00002}` = **$0.00004**. Their crawl table:
+100 pages ≈ **$0.01**, 1,000 pages ≈ **$0.10**, a 2,000-page cap ≈ **$1.00**.
+
+Top-ups: $5 / $25 / $100 / $500 (+5%) / $2,000 (+12%), balance never expires.
+Unlimited: flat-rate concurrency **from $40/mo**; the published card is **$350/mo for 25
+concurrent**, with extra concurrency priced per unit (~$14). One key runs both plans.
+
+### Why it is that low — three structural reasons, none of them a discount
+
+1. **The unit is bytes, not requests.** A text page is ~100 KB, so the meter barely moves.
+   They are charging the marginal transfer cost and taking margin on compute.
+2. **No per-tenant machine.** Everything runs on a shared high-density pool. There is no
+   idle browser billed by the minute, so there is nothing to amortise into the page price.
+3. **Failed pages are free.** The meter only runs on work that produced something.
+
+None of that is a pricing trick. It follows from selling **stateless fetching**.
+
+### The comparison that matters
+
+Spider's 100-page example costs $0.01. Our crawl is 3 credits:
+
+| our bucket | €/credit | 3 credits | vs Spider's $0.01 |
+|---|---|---|---|
+| enterprise monthly | €0.0025 | €0.0075 | **~1.0×** — level |
+| pro monthly | €0.004 | €0.012 | **~1.3×** — level |
+| starter monthly | €0.01 | €0.030 | ~3× |
+| pack 2,000 | €0.1245 | €0.37 | **~40×** |
+| pack 100 | €0.19 | €0.57 | **~62×** |
+
+**Our subscription rate is already competitive with Spider. Our pack rate is not.**
+
+### The real defect this exposed, which has nothing to do with the competitor
+
+One credit costs **€0.0025** to an enterprise subscriber and **€0.19** to a pack buyer —
+a **76× spread on the same unit**. No table can look coherent while that is true, and no
+customer comparing "cost per page" will do anything but bounce off the pack page.
+
+The audit had already flagged the narrower version of this (D2: PAYG undercutting packs by
+19–25×). The correct reading is that **the packs are the outlier**, not PAYG. A pack is
+"no commitment", which justifies a modest premium over the subscription rate — not 40–76×.
+
+### Recommendation (needs sign-off; it is a revenue decision)
+
+Retier packs so the credit price sits **at or slightly above the starter rate**, not 19–48×
+above it. A defensible ladder, keeping the same pack sizes:
+
+| pack | now | proposed | €/credit | vs starter's €0.01 |
+|---|---|---|---|---|
+| 100 | €19.00 | **€1.50** | €0.015 | 1.5× |
+| 500 | €79.00 | **€6.00** | €0.012 | 1.2× |
+| 2,000 | €249.00 | **€20.00** | €0.010 | 1.0× |
+
+That is a large cut in list price, so it needs the owner's call. The case for it is not
+generosity: at today's pack rates a customer who compares on cost per page simply leaves,
+and the credits they do not buy are worth €0 to us.
+
+**Do NOT copy Spider's unit.** Pricing browser sessions by bytes would price the wrong
+cost driver — our real cost is machine-minutes, which is why `07` Part E.1 chose 5-minute
+blocks. The three things worth copying are cheap and honest:
+
+1. Publish a **cost per page** beside the per-request price (we can derive it from `crawl`).
+2. State that **failed requests are free** — `requirePaidAccess` already releases the
+   reservation on failure, so this is true today and unadvertised.
+3. Say plainly that packs cost a little more than a subscription, which is what makes the
+   premium legible instead of looking arbitrary.
+

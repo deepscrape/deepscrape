@@ -49,7 +49,7 @@
 import {randomUUID} from "node:crypto"
 import { Request, Response } from "express"
 
-import { uidOf } from "./request-helpers"
+import { bodyOf, uidOf } from "./request-helpers"
 import {
   consumeBillingCredits,
   releaseBillingCredits,
@@ -92,17 +92,6 @@ import {
   listBrowserSessions,
   readBrowserSessionRecord,
 } from "../infrastructure/browser-session.store"
-
-/**
- * The parsed request body, or an empty object.
- *
- * A request without a JSON body leaves `req.body` undefined, and every check
- * below already treats a missing field as missing, so normalising here keeps
- * the routes from each carrying their own guard.
- * @param {Request} req The request.
- * @return {unknown} The body, as supplied.
- */
-const bodyOf = (req: Request): unknown => req.body
 
 /**
  * The session id from the path, or an empty string.

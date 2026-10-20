@@ -32,7 +32,7 @@
  */
 import {Request, Response} from "express"
 
-import { errorLabel, uidOf } from "./request-helpers"
+import { bodyOf, errorLabel, uidOf } from "./request-helpers"
 import {
   LIST_LIMIT,
   PRESIGN_TTL_SECONDS,
@@ -76,17 +76,6 @@ const ARTIFACT_CACHE_SECONDS = 3600
 
 /** The redirect statuses that name a new location. */
 const REDIRECT_STATUS = [301, 302, 303, 307, 308]
-
-/** The parsed request body as a record, empty when absent.
- * @param {Request} req The request.
- * @return {Record<string, unknown>} The body.
- */
-const bodyOf = (req: Request): Record<string, unknown> => {
-  const body = req.body as unknown
-  return body && typeof body === "object" ?
-    (body as Record<string, unknown>) :
-    {}
-}
 
 /** The one error shape, so the five routes cannot disagree.
  * @param {Response} res The response.

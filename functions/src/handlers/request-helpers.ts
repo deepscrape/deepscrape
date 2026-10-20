@@ -77,3 +77,29 @@ export const uidOf = (req: Request): string | undefined => {
  */
 export const errorLabel = (error: unknown): string =>
   error instanceof Error ? error.name : typeof error
+
+/**
+ * The request body as a record, `{}` when absent.
+ *
+ * One definition rather than three. `monitors.ts` and `storage.ts` carried this
+ * function verbatim, and `browser-sessions.ts` carried a THIRD that returned raw
+ * `unknown` — so "the body" meant two different things depending on which route
+ * answered. Two identical copies is duplication; the third was drift, and it is
+ * the one that mattered: a route whose body is `undefined` and one whose body is
+ * `{}` take different branches in every validator.
+ *
+ * The NORMALISING contract wins, and it is not merely the majority vote.
+ * `parseCreateRequest(body: unknown)` already treats a missing field as missing,
+ * so `{}` reaches the same validation and answers the same class of 400 — while
+ * `undefined` forced each caller to carry its own guard. Normalising is also
+ * what stops a body of `null` becoming `null.foo` at a call site that assumed
+ * an object.
+ * @param {Request} req The request.
+ * @return {Record<string, unknown>} The body as a record, `{}` when absent.
+ */
+export const bodyOf = (req: Request): Record<string, unknown> => {
+  const body = req.body as unknown
+  return body && typeof body === "object" ?
+    (body as Record<string, unknown>) :
+    {}
+}

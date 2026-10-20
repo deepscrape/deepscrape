@@ -25,7 +25,7 @@
  */
 import { Request, Response } from "express"
 
-import { uidOf } from "./request-helpers"
+import { bodyOf, uidOf } from "./request-helpers"
 import {
   MONITOR_MAX_PER_USER,
   buildMonitorFields,
@@ -41,23 +41,6 @@ import {
   readMonitor,
   updateMonitor,
 } from "../infrastructure/monitor.store"
-
-/**
- * The parsed request body, or an empty object.
- *
- * A request with no JSON body leaves `req.body` undefined (or `{}` depending on
- * the parser), and every validator here already treats a missing field as
- * missing — so normalising to an object keeps the call sites from each carrying
- * their own guard.
- * @param {Request} req The request.
- * @return {Record<string, unknown>} The body as a record.
- */
-const bodyOf = (req: Request): Record<string, unknown> => {
-  const body = req.body as unknown
-  return body && typeof body === "object" ?
-    (body as Record<string, unknown>) :
-    {}
-}
 
 /** The single internal-error answer, so the five routes cannot disagree.
  * @param {Response} res The response.

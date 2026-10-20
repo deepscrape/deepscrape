@@ -233,19 +233,69 @@ Per-request is impossible; per-session is real and cheap, but the sourcing table
 pooled worker **later** and calls it "a cost optimisation, not a feature". Rotate at session
 launch when that lands; say "a rotating egress pool" until then.
 
-### Discrepancy to settle before Step C
+### Step B is BLOCKED, and its P0 label is stale (audited 2026-10-20)
 
-The skill's "Where we are" says `download`/`watch` stay OUT of `SESSION_TOOLS` (unbounded
-bytes, not metered by payload). The code has **eight** entries, including both. One of the
-two is behind. If the code is right, decide why unmetered payload on a leased machine is
-acceptable; if the skill is right, the allowlist is wider than the recorded decision.
+B1 cannot be a small diff. The obstacle is structural, not stylistic. Audited:
+
+- **arachnefly has no Secret Manager access.** Zero hits for `secretmanager` in its Go tree,
+  and `go.mod` carries `cloud.google.com/go/firestore` + `firebase.google.com/go/v4` but no
+  `cloud.google.com/go/secretmanager`. It cannot read `compute-byo-{uid}` itself.
+- **`FlyRequest` has exactly one token.** `infrastructure/routines/global.go:145` sets
+  `Authorization: Bearer <g.flyApiToken>`, a boot-time field, and `IGlobal.FlyRequest` takes
+  no identity parameter.
+- **The inbound bearer is already spent.** The BFF sends the caller's Firebase ID token as
+  `Authorization: Bearer <authToken>` (every method in `handlers/machines.ts`), consumed by
+  `FireAuthMiddleware`. A tenant Fly token cannot ride that header.
+
+So the tenant token must either travel BFF -> arachnefly in a NEW dedicated header, or
+arachnefly gains Secret Manager plus the IAM to read it. **The second breaks a documented
+invariant:** `compute-settings.store.ts` says `readFlyTenantConfig` is the ONLY function that
+reads the secret, so "who can read a caller's Fly deploy token?" stays answerable by one
+name. A header preserves that. **Recommended: the header path, staged** — arachnefly accepts
+and REFUSES an incomplete tenant first (inert, backward compatible), then the BFF sends.
+Never the reverse: a BFF sending headers arachnefly ignores is a config that looks wired and
+does nothing.
+
+**The P0 label is stale, and that changes the priority.** B1 was P0 because the Compute box
+asserted something false; that gate closed it. So B1 is now a FEATURE completion rather than
+a correctness fix — and B2 is PREMATURE without it, because the `machineId`-absence
+derivation it would replace is still correct for today's reality. B2 alone would change money
+behaviour with no consumer.
+
+**And before committing to the Fly-org axis at all:** the skill's own sourcing table does not
+prioritise it. `Dedicated machine -> first`, **`BYO CDP (cdp_url) -> early, nearly free`**,
+pooled -> later. If the customer promise is "run on your own browser", BYO CDP delivers it
+with no credential hop and no Secret Manager. The Fly-org axis is the heavier road to the
+same promise.
+
+### Decision: `download`/`watch` in `SESSION_TOOLS` (2026-10-20)
+
+The skill's "Where we are" says they stay OUT; the code has eight entries including both.
+**Decided: the code is right, and that skill line is stale.** On a leased machine I2 is
+satisfied by the lease, and the exposure is bounded in TIME by the 20-credit ceiling and the
+15-minute idle reaper. What is NOT bounded is BYTES — a long `watch` on a leased machine can
+pull far more egress than one credit buys — so the unmetered payload is a KNOWN, ACCEPTED
+exposure rather than an oversight, and neither tool may ever be reachable on a shared
+process. The skill's "Where we are" is a short pointer and should be corrected at its next
+edit; this document is the decision record.
 
 ## Order
 
-1. **B1 + B2 together** — one commit, one gate run. This is the only P0.
-2. **F1** — independent, safe, four markets improved.
-3. **Efficiency items 1–4** from the performance reference — no sign-off needed.
-4. **B3** — small, closes a documented-but-absent route.
-5. **B4** — the largest remaining feature; needs the storage decision first.
+1. **B1 + B2 together** — BLOCKED on the credential decision above, and not urgent now that
+   the false claim is gated. If taken: arachnefly first, staged, never the BFF first.
+2. ~~**F1**~~ — DONE (`6be9027`): `machines.component.ts` translated, MACHINES 22 -> 40 keys.
+3. ~~**Step A — the claims**~~ — DONE (`ab22bfe`): on-screen simulation badge, three false
+   lines and the CAPTCHA pill corrected in all five locales.
+4. **B3 — `GET /api/pricing/estimate`** — the next EXECUTABLE item: small, and it closes a
+   route this plan has cited three times as though it existed. Its response shape has to be
+   decided before it is written; it reads the existing rate table and changes no price.
+5. **Efficiency** — items 1–3 done. Item 4 (`showSnackbar` wrappers) deliberately declined as
+   churn with no defect behind it. Item 5 changes the shipped stylesheet; item 6 measured out
+   as chunk-count noise (112 browser chunks, 12 under 1 KB, one empty); item 8 changes
+   behaviour and needs a decision on which `bodyOf`/`fail` contract wins.
+6. **B4** — the largest remaining feature; needs the storage decision first.
+7. **BYO CDP (`cdp_url`)** — if the "own browser" promise matters more than the Fly-org axis:
+   sanctioned as "early, nearly free", no credential hop. Blocker: `isSafeTargetUrl` rejects
+   `ws://`/`wss://` outright, so the existing guard needs extending, never forking.
 
 Nothing above requires deployment, a pricing-shape change, or an engine fork.

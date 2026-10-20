@@ -143,15 +143,43 @@ pipe.
 ### B2 — billing: `computeSource` in the meter
 
 `computeSourceOf` exists and returns `null` for an unusable config, which is what makes
-"refuse before you bill" enforceable by the type. It is not yet **read** by the meter.
+"refuse before you bill" enforceable by the type.
 
-Note a live divergence to reconcile rather than ignore: the skill records that the meter
-**derives BYO from `machineId` absence**, i.e. "no `computeSource` field is needed". That
-was true when a BYO session was one with no platform machine. It stops being true once
-B1 lets a caller's work run on *their* machine — which B1 measures as `machineId`
-present. So the derivation must move to the resolved source, or the two will disagree
-while each looks correct alone. This is the specific drift the "same commit" rule exists
-to prevent.
+**BUILT 2026-10-20 (`8c9022b3`) and INERT**, because nothing sends the tenant headers
+yet so the resolved source is always `platform`.
+
+The divergence flagged below was real and is now resolved the way that note said it had
+to be, with one addition it did not anticipate: **`machineId` and `computeSource` are two
+different reasons a session is not ours to bill, and neither implies the other.**
+
+- `computeSource: "byo"` — a machine exists, in the caller's own organization.
+- no `machineId` — nothing was provisioned at all, which is what a BYO-CDP session looks
+  like. (The other BYO axis: `mode: "byo"` is a CDP URL, `computeSource: "byo"` is whose
+  Fly organization ran the machine we provisioned. A session can be `dedicated` on BYO
+  compute, and that is the case the old test could not see.)
+
+So `isMeterBillable` takes **both** facts rather than `machineId` standing in for the
+pair. `computeSource` is stored on the session at CREATION and never re-resolved: the
+machine's app is fixed when it is provisioned, so re-resolving at charge time could
+describe an organization the running machine is not in.
+
+Three things that were not in the original note:
+
+1. **The DEPLOY charge was the other half of the double-bill.** A `dedicated` session on
+   BYO compute still has `mode: "dedicated"`, so it would also have paid
+   `machines.deploy`. One `billable` flag now gates the deploy charge AND the meter, so
+   they cannot reach different conclusions about one machine.
+2. **An unusable config is refused with 409 `compute_unusable`**, before any record or
+   credential is written. Falling back to the platform would create the caller's machines
+   in our organization and bill us.
+3. **B2 had to land BEFORE the header send, not with it.** The skill's same-commit rule
+   is about divergence, but the ordering inside the pair matters: with the meter already
+   honouring `computeSource`, the header change cannot double-bill. Sending headers
+   first would open a window where a BYO session is billed as platform. B2 first is safe;
+   B1 first is not.
+
+**What is left of B2: nothing.** What is left of the pair is the BFF send above.
+
 
 ### B3 — CORRECTED 2026-10-20: `GET /api/pricing/estimate` IS built
 
@@ -283,10 +311,22 @@ Two things that LOOK false and must NOT be "fixed":
   `webrain-tools.domain.ts:149` is STALE. Do not delete the preset; the gap, if any, is UI
   reachability. **Lesson: read `bff/api.ts` — the only served table — never a domain comment.**
 
-### Step B — B1 + B2 together (one commit, one gate run)
+### Step B — B1 + B2 (split in two commits, and the order is what matters)
 
-The last correctness defect and the only item the mission is served by: a BYO organization
-pays Fly directly, so charging them platform compute double-bills them.
+The last correctness defect: a BYO organization pays Fly directly, so charging them
+platform compute double-bills them.
+
+**Landed 2026-10-20 as TWO commits, which corrects this heading.** "One commit" was the
+right instinct — the two halves must not diverge — but the wrong instruction, because it
+says nothing about ORDER, and the order is what makes it safe:
+
+- **B2 first** (`8c9022b3`, the meter honours `computeSource`) is inert alone: nothing
+  sends the tenant headers yet, so the resolved source is always `platform`.
+- **B1 second** (arachnefly `1df9220` + `d9d1193` + `02422be`; the BFF send still
+  outstanding) then cannot double-bill, because the meter already understands the field.
+
+Sending the headers first would open a window where a BYO session is billed as platform.
+So the rule is **"B2 before B1"**, not merely "together".
 
 ### Step C — per-session proxy rotation, WITH the pool
 
@@ -342,8 +382,12 @@ edit; this document is the decision record.
 
 ## Order
 
-1. **B1 + B2 together** — BLOCKED on the credential decision above, and not urgent now that
-   the false claim is gated. If taken: arachnefly first, staged, never the BFF first.
+1. **B1 + B2** — the credential decision is MADE (the header path), arachnefly is BUILT and
+   inert, and B2 has LANDED. What remains: the BFF sends `X-Fly-App` / `X-Fly-Token` /
+   `X-Fly-Region` from `resolveCompute`; then remove the `501` gate in
+   `handlers/compute.ts`, re-enable the three disabled `FormControl`s, enable Save, and drop
+   `SETTINGS_COMPUTE.UNAVAILABLE`. The gate removal is what makes BYO reachable, so it is
+   the LAST step and wants its own commit.
 2. ~~**F1**~~ — DONE (`6be9027`): `machines.component.ts` translated, MACHINES 22 -> 40 keys.
 3. ~~**Step A — the claims**~~ — DONE (`ab22bfe`): on-screen simulation badge, three false
    lines and the CAPTCHA pill corrected in all five locales.

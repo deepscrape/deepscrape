@@ -11,6 +11,7 @@
  */
 
 import {TARGET_URL_MAX_LENGTH, isBlockedHost} from "./url-guard.domain"
+import {type ComputeSource} from "./byo-compute.domain"
 
 /** The engines the platform can drive. */
 export type BrowserKind = "chrome" | "lightpanda" | "obscura"
@@ -233,6 +234,25 @@ export type BrowserSessionRecord = {
    * Present only for `dedicated`, and only once a machine has been attached.
    */
   machineId?: string
+  /**
+   * Whose Fly organization supplied the machine.
+   *
+   * Absent reads as `platform`, and that is correct rather than lax: a record
+   * written before this field existed WAS platform compute, because no path
+   * existed that could put a machine in a caller's own app.
+   *
+   * Stored at CREATION and never re-resolved. The machine's app is fixed when it
+   * is provisioned, so a later read of the caller's settings could describe an
+   * organization the running machine is not in — and the meter would then price
+   * a machine by a fact that has stopped being true.
+   *
+   * This is NOT the same axis as `mode`. `mode: "byo"` means the caller brought a
+   * CDP URL, which provisions no machine at all; `computeSource: "byo"` means
+   * their Fly organization ran the machine we provisioned. A session can be
+   * `dedicated` on BYO compute, and that is the case `machineId` alone cannot
+   * describe.
+   */
+  computeSource?: ComputeSource
   /** Present only for `byo`. A Secret Manager path, never the URL itself. */
   cdpSecretPath?: string
   createdAt: number

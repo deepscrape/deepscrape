@@ -158,6 +158,12 @@ export const parseSession = (
   if (cdpSecretPath) {
     record.cdpSecretPath = cdpSecretPath
   }
+  // Read explicitly rather than trusted: an unknown value is DROPPED, and an
+  // absent one stays absent, which the meter reads as platform. A typo in the
+  // document must not become "byo" (never bills) or a third state (throws).
+  if (data.computeSource === "byo" || data.computeSource === "platform") {
+    record.computeSource = data.computeSource
+  }
   const idleDeadline = asNumber(data.idleDeadline)
   if (idleDeadline !== undefined) {
     record.idleDeadline = idleDeadline
@@ -174,6 +180,15 @@ export type CreateBrowserSessionInput = {
   kind: BrowserKind
   /** Required for `byo`, ignored otherwise. Untrusted: vetted below. */
   cdpUrl?: unknown
+  /**
+   * Whose Fly organization supplies the machine, decided by the ROUTE.
+   *
+   * Passed in rather than resolved here for two reasons: this module owns no
+   * config reads, and the route has to refuse an unusable config BEFORE a record
+   * or a credential is written — resolving here would make the refusal a
+   * rollback. Omitted means `platform`.
+   */
+  computeSource?: BrowserSessionRecord["computeSource"]
   /** Epoch ms, passed in so this module owns no clock. */
   now: number
 }
@@ -242,6 +257,9 @@ export const createBrowserSession = async (
   }
   if (cdpSecretPath) {
     record.cdpSecretPath = cdpSecretPath
+  }
+  if (input.computeSource) {
+    record.computeSource = input.computeSource
   }
   const idleDeadline = idleDeadlineForTier(input.tier, input.now)
   if (idleDeadline !== undefined) {

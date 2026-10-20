@@ -106,9 +106,14 @@ export const chargeSessionMeter = async (
   now: number,
 ): Promise<number> => {
   // Nothing is charged for compute the platform did not supply: a BYO session
-  // has no machine id, the free tier never receives a machine, and admin is the
+  // either has no machine at all (their own CDP endpoint) or has one in their own
+  // Fly organization, the free tier never receives a machine, and admin is the
   // operator. Charging any of them would bill for a machine we never ran.
-  if (!isMeterBillable(record.machineId) || !isMeteredTier(record.tier)) {
+  //
+  // The whole record is passed, not `record.machineId`: those are two different
+  // facts, and handing in only one of them is how the other got forgotten when
+  // compute moved into the caller's organization.
+  if (!isMeterBillable(record) || !isMeteredTier(record.tier)) {
     return 0
   }
 

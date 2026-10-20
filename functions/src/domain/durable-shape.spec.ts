@@ -68,6 +68,39 @@ describe("durable shapes", () => {
   })
 
   /**
+   * reads the compute source it was written with
+   */
+  it("reads the compute source it was written with", () => {
+    // A field the WRITER stores and the READER drops is silent data loss, and
+    // here it would be expensive: an absent `computeSource` reads as platform, so
+    // a dropped `byo` turns into a bill for hardware the caller owns. Pinned in
+    // both directions for that reason.
+    assert.equal(
+      parseSession("s1", storedSession({computeSource: "byo"}))?.computeSource,
+      "byo",
+    )
+    assert.equal(
+      parseSession("s1", storedSession({computeSource: "platform"}))
+        ?.computeSource,
+      "platform",
+    )
+  })
+
+  /**
+   * drops a compute source it cannot act on instead of guessing one
+   */
+  it("drops a compute source it cannot act on instead of guessing one", () => {
+    // Absent, not "platform" and not a third state. Absent is the documented
+    // meaning of "recorded before this field existed", and every such record was
+    // platform compute -- while a typo must not become `byo` and quietly stop
+    // billing a running machine.
+    assert.equal(
+      parseSession("s1", storedSession({computeSource: "theirs"}))?.computeSource,
+      undefined,
+    )
+  })
+
+  /**
    * fails closed on a value it cannot act on
    */
   it("fails closed on a value it cannot act on", () => {

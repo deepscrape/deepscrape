@@ -40,7 +40,8 @@
  *
  * Not here: per-minute browser time. That needs a rate and a clock this route
  * does not own, and it belongs beside the reaper that measures the minutes
- * (§1.6). `computeSource` will decide whether it is billable at all.
+ * (§1.6). `computeSource` decides whether it is billable at all — and this route
+ * is where it is resolved, refused if unusable, and recorded on the session.
  *
  * The request parsing and refusal mapping live in the domain, not here: this
  * module imports the store, which builds the Admin SDK on load, so anything
@@ -67,6 +68,7 @@ import {
   type BrowserTier,
 } from "../domain/browser-session.domain"
 import { resolveBillingPricingPolicy } from "../domain/billing-pricing.domain"
+import { computeSourceOf } from "../domain/byo-compute.domain"
 import {
   SESSION_TOOLS,
   isSessionTool,
@@ -74,6 +76,7 @@ import {
 } from "../domain/webrain-tools.domain"
 import { withPlatformProxy } from "../domain/webrain-proxy.domain"
 import { decideCallerSpend } from "../infrastructure/billing-spend.store"
+import { resolveCompute } from "../infrastructure/compute-settings.store"
 import {
   chargeSessionMeter,
   meterWalletFor,
@@ -185,6 +188,33 @@ export const browserSessionCreate = async (
     // Read once. Resolving it twice would let the lease decision and the stored
     // record disagree about the tier if the two call sites ever drifted.
     const tier = webrainTierFor(req.accessMode)
+
+    // Whose Fly organization this session runs in: resolved ONCE, here, and
+    // recorded on the session. The machine's app is fixed when it is
+    // provisioned, so the bill has to be fixed with it — resolving again at
+    // charge time would price a machine by settings that may no longer describe
+    // the organization it is actually running in.
+    //
+    // `unusable` is REFUSED rather than treated as platform. A caller who
+    // configured their own compute did it to stop paying us for hardware, so
+    // falling back would create their machines in OUR organization and bill us,
+    // which is the exact opposite of what they configured. `computeSourceOf`
+    // answers null for that case and no other, so the null check is the rule.
+    //
+    // It costs one document read per create (plus a Secret Manager access only
+    // for a caller who configured their own), and it runs before anything is
+    // written so a refusal leaves no record and no credential behind.
+    const computeSource = computeSourceOf(await resolveCompute(uid))
+
+    if (computeSource === null) {
+      res.status(409).json({
+        status: "error",
+        code: "compute_unusable",
+        reason: "the Fly credentials on this account could not be read",
+      })
+      return
+    }
+
     const live = await listBrowserSessions(uid)
 
     // A PRE-FLIGHT, not the enforcement. The cap that actually holds is enforced
@@ -234,7 +264,14 @@ export const browserSessionCreate = async (
     //
     // Read once and reused below, so the cap and the charge cannot come to price
     // different actions.
-    const deploy = mode === "dedicated" ? machineChargeFor(
+    // A machine the CALLER's Fly organization runs is not ours to charge for:
+    // they already pay Fly for it directly, so billing `machines.deploy` here
+    // would double-charge them. `computeSource` is the fact that decides it, and
+    // it is recorded on the session, so this charge and the per-minute meter
+    // cannot reach different conclusions about the same machine.
+    const billable = mode === "dedicated" && computeSource === "platform"
+
+    const deploy = billable ? machineChargeFor(
       req.accessMode,
       resolveBillingPricingPolicy("POST", "/machines/deploy")
     ) : undefined
@@ -263,6 +300,7 @@ export const browserSessionCreate = async (
       mode: mode,
       kind: kind,
       cdpUrl: cdpUrl,
+      computeSource: computeSource,
       now: Date.now(),
     })
 
@@ -275,7 +313,8 @@ export const browserSessionCreate = async (
 
     // A BYO session already has an endpoint. Nothing is provisioned, so nothing
     // is charged: the caller brought the compute and this route only records the
-    // lease. This is the one path that answers 201 without a charge.
+    // lease. One of the two paths that answer 201 without a charge; the other is
+    // a `dedicated` session on the caller's own Fly, where they pay Fly instead.
     if (mode !== "dedicated") {
       res.status(201).json({status: "ok", session: session})
       return
@@ -284,11 +323,13 @@ export const browserSessionCreate = async (
     // Read, never restated. `machines.deploy` is the action the manual deploy
     // route is priced under, and the amount is whatever that row says — a second
     // number here is how the two paths come to charge different prices for the
-    // same Fly machine.
-    const charge = machineChargeFor(
+    // same Fly machine. Undefined on BYO compute for the reason `billable` above
+    // gives, which also makes every `if (charge)` below a no-op rather than
+    // needing a second condition each.
+    const charge = billable ? machineChargeFor(
       req.accessMode,
       resolveBillingPricingPolicy("POST", "/machines/deploy")
-    )
+    ) : undefined
     const idempotencyBase = `${uid}:browser:machine:${randomUUID()}`
 
     if (charge) {

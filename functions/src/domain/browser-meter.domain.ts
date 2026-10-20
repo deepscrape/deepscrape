@@ -38,6 +38,7 @@
  * make a missed run self-healing on the next one.
  */
 import type {BrowserTier} from "./browser-session.domain"
+import type {ComputeSource} from "./byo-compute.domain"
 
 /** Minutes per billed block. Pinned: the rate is "1 credit per started 5 min". */
 export const METER_BLOCK_MINUTES = 5
@@ -140,18 +141,36 @@ export const isMeterExhausted = (minutes: number): boolean =>
   meterBlocks(minutes) > METER_MAX_CREDITS_PER_SESSION + 1
 
 /**
- * A session is only metered when the platform provided the compute.
+ * A session is only metered when the PLATFORM provided the compute.
  *
- * A BYO session brings its own endpoint, so `§1.4` provisions nothing and
- * records no `machineId` — which makes the presence of that field the
- * compute-source test rather than a second field that could disagree with it.
- * Charging minutes on BYO would double-bill a customer who already pays their
- * own provider.
- * @param {string|undefined} machineId The platform machine, when there is one.
+ * There are two independent reasons it is not ours to bill, and they are not the
+ * same question:
+ *
+ *  - `computeSource: "byo"` — the machine exists, but in the CALLER's Fly
+ *    organization. They pay Fly directly, so charging here double-bills them.
+ *  - no `machineId` — nothing was provisioned at all, which is what a BYO CDP
+ *    session looks like. There is no machine we could have run.
+ *
+ * `machineId` alone used to answer both, because a BYO-CDP session was the only
+ * session with no machine. Moving compute into the caller's organization made
+ * the two diverge: a BYO-COMPUTE session HAS a machine id, so the presence test
+ * would have billed platform compute for a machine the platform never ran. Both
+ * tests therefore live here rather than one of them being left to a caller.
+ * @param {object} session The two facts the decision needs.
+ * @param {string} [session.machineId] The platform machine, when there is one.
+ * @param {ComputeSource} [session.computeSource] Whose organization ran it.
  * @return {boolean} True when browser time is billable.
  */
-export const isMeterBillable = (machineId?: string): boolean =>
-  typeof machineId === "string" && machineId.length > 0
+export const isMeterBillable = (session: {
+  machineId?: string
+  computeSource?: ComputeSource
+}): boolean => {
+  if (session.computeSource === "byo") {
+    return false
+  }
+
+  return typeof session.machineId === "string" && session.machineId.length > 0
+}
 
 /**
  * Which tiers are metered.

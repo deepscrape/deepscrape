@@ -217,15 +217,33 @@ describe("isMeterBillable", () => {
   it("is false for a BYO session, which was given no platform machine", () => {
     // Nothing was provisioned, so charging minutes would bill a customer for
     // compute the platform never supplied.
-    assert.equal(isMeterBillable(undefined), false)
+    assert.equal(isMeterBillable({}), false)
   })
 
   it("is false for an empty machine id, which is not a provisioned machine", () => {
-    assert.equal(isMeterBillable(""), false)
+    assert.equal(isMeterBillable({machineId: ""}), false)
   })
 
   it("is true when the platform provided a machine", () => {
-    assert.equal(isMeterBillable("d8912345"), true)
+    assert.equal(isMeterBillable({machineId: "d8912345"}), true)
+  })
+
+  it("is false for a machine in the CALLER's own Fly organization", () => {
+    // The case `machineId` alone could not see. This session HAS a machine, so
+    // the old presence test billed platform compute for hardware the platform
+    // never ran -- to a customer already paying Fly for it. This assertion is
+    // the whole reason the field exists.
+    assert.equal(
+      isMeterBillable({machineId: "d8912345", computeSource: "byo"}),
+      false,
+    )
+  })
+
+  it("stays billable when the source is explicitly platform", () => {
+    assert.equal(
+      isMeterBillable({machineId: "d8912345", computeSource: "platform"}),
+      true,
+    )
   })
 })
 

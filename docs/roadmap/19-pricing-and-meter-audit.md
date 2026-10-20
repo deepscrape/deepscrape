@@ -91,6 +91,11 @@ cost 1 credit per frame.
 
 ### D1. A `payAsYouGo` purchase grants a PERMANENT plan, repeatably — revenue hole
 
+**FIXED `b00ea20`.** The window is 3 days — 10% of a 30-day month, the same fraction
+as the price and as the credit grant — written to `currentPeriodEnd` by both payment
+paths and enforced by `isPaygWindowClosed`, which fails closed on a missing date.
+Ten purchases for 30 days cost €19.90 against €19.99 monthly.
+
 `payAsYouGo` is a one-time payment (`checkoutMode: "payment"`), priced at 10% of the
 monthly price: starter €0.99, pro €1.99. On completion, `checkout.session.completed`
 writes the plan and credits:
@@ -135,6 +140,9 @@ intentional (no commitment), but combined with D1 it means the cheapest way to b
 is a one-time €1.99 that also grants Pro permanently.
 
 ### D3. The capacity tools are priced BELOW the cheapest tool — revenue leak
+
+**FIXED `b00ea20`** — see Part 5 for the applied numbers. The table now names every one
+of them, and a spec asserts that none resolves to `api.paid.default`.
 
 Because they were never added to `defaultPricingRules`, they inherit
 `api.paid.default` = 1 credit:
@@ -223,19 +231,37 @@ reusing existing ratios rather than inventing a new scale:
 | Crawl (one request, any URL count) | `POST /api/crawl` | credits | 3 | unchanged |
 | Site crawl / spider | `POST /api/spider` | credits | **10** | unbounded pages; must exceed crawl |
 | Batch | `POST /api/batch` | credits | **3 + 1 per extra target** | matches crawl at N=1 |
-| Watch (long-running) | `POST /api/watch` | plan only, not metered per call | **—** | unbounded duration |
-| Download | `POST /api/download` | plan only, not metered per call | **—** | unbounded bytes |
+| Watch (long-running) | `POST /api/watch` | credits | **5** | unbounded duration; flat because the policy is per-path |
+| Download | `POST /api/download` | credits | **5** | unbounded bytes; egress is the cost driver |
 | Navigate / interact | `/api/navigate` | credits | 1 | browser step |
-| Observe (screenshot) | `/api/observe` | credits | **0 when the caller has a session lease**, else 1 | matches the frame route |
+| Observe (screenshot) | `/api/observe` | credits | **1** | ad-hoc shot on a pool worker; the frame route is the metered path |
 | Vision | `/api/vision` | credits | 2 | image work |
 | AI chat | `/api/anthropic/messages` | credits | 2 | unchanged |
 | Browser session time | `/api/browser/session*` | meter | 1 / 5 min, ceiling 20 | unchanged |
 | Machine deploy | `/api/machines/deploy` | credits | 5 platform, **0 BYO** | implemented |
 | Scrape / search / extract / pdf / guide | varies | free | 0 | unchanged |
 
-**Not applied.** Changing credit costs changes revenue, and D3/D4 need the numbers chosen
-by whoever owns the price list. What is safe to say today is that *the current table prices
-a site crawl below a crawl request*, which is almost certainly not intended.
+**APPLIED 2026-10-20 (`b00ea20`, rates page in `4b80db2`).** The numbers below are what
+the table now charges, and they follow the unit it already used — `crawl.execute` at 3
+for one browser job — rather than a new scale:
+
+| value | rationale |
+|---|---|
+| 1 | one browser step (`navigate`, `observe`) |
+| 2 | image work, CPU-bound on the worker (`vision`) |
+| 3 | N urls in one call (`batch`) — crawl's rate at N=1 |
+| 5 | unbounded payload (`download`, `watch`) |
+| 10 | a site walk (`spider`) — discovery plus N page fetches, > 3x a crawl |
+
+`GET /machines` is an explicit **0**: one Firestore read, no browser, and the panel lists
+on every open. `observe` stays paid while the frame route does not, because they are
+different products — a frame is a live view of your own leased machine paid for by the
+session meter; observe is an ad-hoc screenshot on a shared pool worker.
+
+**Still open from this part:** `batch` is flat for an unbounded URL list, because
+`BillingPricingPolicy` is per-path and cannot scale with a request body. Making it
+scale needs a per-unit dimension on the policy, which is a schema change and deserves
+its own decision.
 
 ---
 

@@ -108,11 +108,27 @@ present. So the derivation must move to the resolved source, or the two will dis
 while each looks correct alone. This is the specific drift the "same commit" rule exists
 to prevent.
 
-### B3 — `GET /api/pricing/estimate` still does not exist
+### B3 — CORRECTED 2026-10-20: `GET /api/pricing/estimate` IS built
 
-Roadmap `07` Part F. `GET /api/pricing/rates` exists and the rates page is built from it.
-The estimate route has never been written. Low risk, but it is cited in the plan as if it
-existed, which is how a gap survives.
+This section used to say the route "has never been written". It is written, and has been
+since 2026-10-11. Verified through the stack rather than from any document:
+
+| Layer | Where |
+|---|---|
+| Handler | `pricingEstimate` in `functions/src/handlers/pricing.ts` |
+| Route | `bff/api.ts:571` — `guard([access, pricingEstimate])` |
+| Client | `app-crawl.component.ts:696` calls `.estimate('POST', path)` |
+| UI | `app-crawl.component.html:311` renders `CRAWL.COST_MANY` with `effectiveCredits` |
+
+`07` Part F's own history is right: the handler, the domain function (`estimateBillingCost`)
+and the client existed for a while with **no route**, so every caller got a 404 and the cost
+line silently never appeared. The route was added 2026-10-11 and this document was not updated.
+
+**This is the fourth instance of the class the skill names** (`/api/vision`, the frame route,
+the estimate route, and now this line) — and the only one wrong in the OPPOSITE direction: a
+built thing documented as missing. Had it been trusted, it would have produced a rebuilt
+route, a duplicate handler and a second client. `bff/api.ts` is the only served table; a
+document is not evidence in either direction.
 
 ### B4 — profiles are not durable (feature gap, not a false claim anymore)
 
@@ -286,9 +302,8 @@ edit; this document is the decision record.
 2. ~~**F1**~~ — DONE (`6be9027`): `machines.component.ts` translated, MACHINES 22 -> 40 keys.
 3. ~~**Step A — the claims**~~ — DONE (`ab22bfe`): on-screen simulation badge, three false
    lines and the CAPTCHA pill corrected in all five locales.
-4. **B3 — `GET /api/pricing/estimate`** — the next EXECUTABLE item: small, and it closes a
-   route this plan has cited three times as though it existed. Its response shape has to be
-   decided before it is written; it reads the existing rate table and changes no price.
+4. ~~**B3 — `GET /api/pricing/estimate`**~~ — ALREADY BUILT since 2026-10-11; see the
+   correction above. Verified handler -> route -> client -> UI, so there is nothing to write.
 5. **Efficiency** — items 1–3 done. Item 4 (`showSnackbar` wrappers) deliberately declined as
    churn with no defect behind it. Item 5 changes the shipped stylesheet; item 6 measured out
    as chunk-count noise (112 browser chunks, 12 under 1 KB, one empty); item 8 changes

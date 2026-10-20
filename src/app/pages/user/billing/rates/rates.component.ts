@@ -18,10 +18,10 @@ import {
 } from '../../../../core/components/result-envelope/result-envelope.component'
 
 /** How a rate is grouped on the page. */
-type RateGroup = 'ai' | 'crawl' | 'machines' | 'other'
+type RateGroup = 'ai' | 'crawl' | 'machines' | 'webrain' | 'other'
 
 /** Display order. `other` is last because it is the least specific. */
-const GROUP_ORDER: readonly RateGroup[] = ['ai', 'crawl', 'machines', 'other']
+const GROUP_ORDER: readonly RateGroup[] = ['ai', 'crawl', 'machines', 'webrain', 'other']
 
 /**
  * A translation key for an action, when one exists.
@@ -46,6 +46,17 @@ const ACTION_LABELS: Record<string, string> = {
   'machines.suspend': 'MACHINE_SUSPEND',
   'machines.stop': 'MACHINE_STOP',
   'machines.destroy': 'MACHINE_DESTROY',
+  'machines.list': 'MACHINE_LIST',
+  // The webrain capacity tools. They carried the `paid` guard with no rule in the
+  // price table, so each one was charged the 1-credit fallback until 2026-10-20 --
+  // which is how a site-wide spider came to cost a third of one crawl request.
+  'webrain.navigate': 'WEBRAIN_NAVIGATE',
+  'webrain.observe': 'WEBRAIN_OBSERVE',
+  'webrain.vision': 'WEBRAIN_VISION',
+  'webrain.batch': 'WEBRAIN_BATCH',
+  'webrain.spider': 'WEBRAIN_SPIDER',
+  'webrain.download': 'WEBRAIN_DOWNLOAD',
+  'webrain.watch': 'WEBRAIN_WATCH',
 }
 
 /**
@@ -67,6 +78,9 @@ const groupFor = (action: string): RateGroup => {
   }
   if (action.startsWith('machines.')) {
     return 'machines'
+  }
+  if (action.startsWith('webrain.')) {
+    return 'webrain'
   }
   return 'other'
 }

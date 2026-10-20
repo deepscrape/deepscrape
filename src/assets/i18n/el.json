@@ -888,7 +888,16 @@
     "ACTION_MACHINE_START": "Εκκίνηση μηχανής",
     "ACTION_MACHINE_SUSPEND": "Αναστολή μηχανής",
     "ACTION_MACHINE_STOP": "Διακοπή μηχανής",
-    "ACTION_MACHINE_DESTROY": "Καταστροφή μηχανής"
+    "ACTION_MACHINE_DESTROY": "Καταστροφή μηχανής",
+    "ACTION_MACHINE_LIST": "Λίστα των μηχανών σας",
+    "GROUP_WEBRAIN": "Εργαλεία περιηγητή",
+    "ACTION_WEBRAIN_NAVIGATE": "Άνοιγμα σελίδας σε περιηγητή",
+    "ACTION_WEBRAIN_OBSERVE": "Στιγμιότυπο της ανοιχτής σελίδας",
+    "ACTION_WEBRAIN_VISION": "Ανάλυση εικόνας ή στιγμιότυπου",
+    "ACTION_WEBRAIN_BATCH": "Μία ενέργεια σε πολλά URL",
+    "ACTION_WEBRAIN_SPIDER": "Σάρωση ολόκληρου ιστότοπου",
+    "ACTION_WEBRAIN_DOWNLOAD": "Λήψη πολυμέσων από URL",
+    "ACTION_WEBRAIN_WATCH": "Παρακολούθηση και σύνοψη βίντεο"
   },
   "BROWSER_SESSION": {
     "TITLE": "Συνεδρίες φυλλομετρητή",

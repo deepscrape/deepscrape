@@ -888,7 +888,16 @@
     "ACTION_MACHINE_START": "Maschine starten",
     "ACTION_MACHINE_SUSPEND": "Maschine anhalten",
     "ACTION_MACHINE_STOP": "Maschine stoppen",
-    "ACTION_MACHINE_DESTROY": "Maschine zerstören"
+    "ACTION_MACHINE_DESTROY": "Maschine zerstören",
+    "ACTION_MACHINE_LIST": "Eigene Maschinen auflisten",
+    "GROUP_WEBRAIN": "Browser-Werkzeuge",
+    "ACTION_WEBRAIN_NAVIGATE": "Seite in einem Browser öffnen",
+    "ACTION_WEBRAIN_OBSERVE": "Geöffnete Seite als Screenshot",
+    "ACTION_WEBRAIN_VISION": "Bild oder Screenshot auswerten",
+    "ACTION_WEBRAIN_BATCH": "Eine Operation über viele URLs",
+    "ACTION_WEBRAIN_SPIDER": "Eine ganze Website durchlaufen",
+    "ACTION_WEBRAIN_DOWNLOAD": "Medien von einer URL laden",
+    "ACTION_WEBRAIN_WATCH": "Video ansehen und zusammenfassen"
   },
   "BROWSER_SESSION": {
     "TITLE": "Browser-Sitzungen",

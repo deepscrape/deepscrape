@@ -888,7 +888,16 @@
     "ACTION_MACHINE_START": "Démarrer une machine",
     "ACTION_MACHINE_SUSPEND": "Suspendre une machine",
     "ACTION_MACHINE_STOP": "Arrêter une machine",
-    "ACTION_MACHINE_DESTROY": "Détruire une machine"
+    "ACTION_MACHINE_DESTROY": "Détruire une machine",
+    "ACTION_MACHINE_LIST": "Lister vos machines",
+    "GROUP_WEBRAIN": "Outils de navigateur",
+    "ACTION_WEBRAIN_NAVIGATE": "Ouvrir une page dans un navigateur",
+    "ACTION_WEBRAIN_OBSERVE": "Capture de la page ouverte",
+    "ACTION_WEBRAIN_VISION": "Analyser une image ou une capture",
+    "ACTION_WEBRAIN_BATCH": "Une opération sur plusieurs URL",
+    "ACTION_WEBRAIN_SPIDER": "Parcourir un site entier",
+    "ACTION_WEBRAIN_DOWNLOAD": "Télécharger des médias depuis une URL",
+    "ACTION_WEBRAIN_WATCH": "Regarder et résumer une vidéo"
   },
   "BROWSER_SESSION": {
     "TITLE": "Sessions de navigateur",

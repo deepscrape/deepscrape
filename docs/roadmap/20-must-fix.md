@@ -48,7 +48,6 @@ Two things were removed, deliberately:
 
 | # | Status | What | Where |
 |---|---|---|---|
-| 81 | open | `isAuthenticated()` re-runs the whole login per subscriber (Firestore read, forced `getIdTokenResult(true)`, a callable) and writes `token`/`userSubject` as a side effect. `AppComponent` subscribes once and `authGuard` again, so a cold load of a protected page pays it twice and the two chains race on one `BehaviorSubject`. Its `catchError` also turns any transient failure into "signed out". | `core/services/auth.service.ts` (isAuthenticated) |
 | 87 | open | The full Firebase ID token is placed in the WebSocket URL: `?token=${jwtToken}`. Ends up in proxy/CDN/access logs and is replayable by anyone who can read them. `websocket.service.ts` documents this as the reason the old transport was removed. | `core/services/webrtc.service.ts:111`, `:163` |
 | 120 | open | `deepscrape-bff-*.run.app` is `--allow-unauthenticated` and serves the app directly with no CSP and no HSTS, because `security.ts` omits `helmet` on the stated assumption that only Hosting's CSP reaches a browser. Its own comment names the hole. | `bff/security.ts`, Cloud Run deploy flags |
 
@@ -120,7 +119,7 @@ Recorded so they are not re-attempted. Each was read in source.
 Numbers only; the paragraphs were stale and are in git history.
 
 §1 BFF `13 14 15 16 17 18 19 21` · §2 billing `22 23 24 25 26 27 28 29 30 31 34` ·
-§3 auth `36 37 38 39 40 41 42 44 45 46 51` · §4 sessions `55 57 63` ·
+§3 auth `36 37 38 39 40 41 42 44 45 46 51 81` · §4 sessions `55 57 63` ·
 §5 crawl/storage `70 71 72 73 76 78 79 80` · §6 Angular core `82 83 84 85 86 88 90 91 92 93 94 95(redaction)` ·
 §7 features `96 97 98 100 101 102 103 104 106 107 109 110 111 112` ·
 §8 deploy `114 115 117 118 121 122` ·

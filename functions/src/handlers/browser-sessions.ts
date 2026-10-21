@@ -62,13 +62,12 @@ import { arachneflyBaseUrl } from "../config/upstreams"
 import {
   countLiveForMode,
   decideLease,
-  frameTooSoon,
   machineChargeFor,
   parseCreateRequest,
   refusalFor,
   type BrowserRefusal,
-  type BrowserTier,
 } from "../domain/browser-session.domain"
+import { FrameThrottle } from "../infrastructure/frame-throttle"
 import { resolveBillingPricingPolicy } from "../domain/billing-pricing.domain"
 import { computeSourceOf } from "../domain/byo-compute.domain"
 import {
@@ -797,63 +796,17 @@ export const browserSessionClose = async (
 }
 
 /**
- * When each session last served a frame, so the tier's pace can be enforced.
+ * Frame pacing for the live view, per instance.
  *
- * ponytail: per-INSTANCE and in memory, so N warm instances permit up to N times
- * the tier's fps. That is a real ceiling on a billing control -- `SESSION_CAPS.fps`
- * exists to bound how many screenshots one session costs -- and it is accepted
- * because the alternatives are a Redis round trip or a Firestore write on every
- * poll, against a route whose entire job is to serve an image cheaply. Move it to
- * the credit lease if the cap must ever be exact.
+ * ponytail: in memory, so N warm instances permit up to N times the tier's fps. That is a
+ * real ceiling on a billing control -- `SESSION_CAPS.fps` exists to bound how many
+ * screenshots one session costs -- and it is accepted because the alternatives are a Redis
+ * round trip or a Firestore write on every poll, against a route whose entire job is to
+ * serve an image cheaply. Move it to the credit lease if the cap must ever be exact.
  *
- * Bounded, because a Map keyed by session id is otherwise a leak, and the OLDEST
- * entry is evicted rather than the map cleared: clearing forgets every pace at
- * once, which is the bug the heartbeat throttle in `home_handler.ts` had.
+ * The rules live in `FrameThrottle`, which a test can import; this module cannot be.
  */
-const lastFrameAtMs = new Map<string, number>()
-const LAST_FRAME_MAP_MAX_ENTRIES = 2000
-
-/**
- * Whether this caller may have a frame now, recording it when they may.
- *
- * The DECISION is `frameTooSoon` in the domain, unmodified, so the fps table
- * stays the single source of truth and the free tier's refusal of even a first
- * frame is not restated here. This supplies only the one input that predicate
- * cannot compute: how long it has been since the last frame this session served.
- * @param {string} key The uid and session id, so two callers cannot share a pace.
- * @param {BrowserTier} tier The caller's tier.
- * @param {number} nowMs The current time.
- * @return {boolean} True when the frame must be refused as too soon.
- */
-const frameRefused = (
-  key: string,
-  tier: BrowserTier,
-  nowMs: number,
-): boolean => {
-  const last = lastFrameAtMs.get(key)
-  const sinceLast = last === undefined ? null : nowMs - last
-
-  if (frameTooSoon(tier, sinceLast)) {
-    return true
-  }
-
-  // Stamped only when a frame will actually be attempted. Stamping a refused
-  // request would push the next allowed frame further out and compound it.
-  if (lastFrameAtMs.size >= LAST_FRAME_MAP_MAX_ENTRIES) {
-    const oldest = lastFrameAtMs.keys().next().value
-    if (oldest !== undefined) {
-      lastFrameAtMs.delete(oldest)
-    }
-  }
-
-  // Delete before setting so the key moves to the BACK of the insertion order:
-  // `set` on an existing key keeps its original position, which made the most
-  // frequently polled session the first one evicted -- and eviction forgets its
-  // pace, so the session that actually pays the fps cap got a free frame.
-  lastFrameAtMs.delete(key)
-  lastFrameAtMs.set(key, nowMs)
-  return false
-}
+const frameThrottle = new FrameThrottle()
 
 /**
  * `GET /api/browser/session/:id/frame` -- one screenshot of a session's machine.
@@ -926,7 +879,7 @@ export const browserSessionFrame = async (
       return
     }
 
-    if (frameRefused(`${uid}:${id}`, webrainTierFor(req.accessMode), Date.now())) {
+    if (frameThrottle.frameRefused(`${uid}:${id}`, webrainTierFor(req.accessMode), Date.now())) {
       res.status(429).json({
         error: "Frames are arriving faster than this plan allows",
         code: "frame_too_soon",

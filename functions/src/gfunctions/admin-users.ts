@@ -374,21 +374,24 @@ const notifyAccountNotice = async (params: {
 }
 
 /**
- * Cancel every Stripe subscription on the account and detach its saved cards.
+ * Cancel every Stripe subscription on the account.
  *
  * Runs **before** the lockout, and its failure aborts the deletion. That ordering is
  * the whole point: a locked-out account that is still being charged is a chargeback
  * with extra steps. An account with no subscription never touches Stripe, so
  * environments without Stripe configured are unaffected.
  *
+ * Saved cards are deliberately left alone: this phase is reversible, and detaching them
+ * here destroyed them for anyone who cancelled inside the grace window. `purgeOneAccount`
+ * deletes the whole Stripe customer once the deletion is final.
+ *
  * @param {string} uid Account being closed.
  */
 const cancelStripeBilling = async (uid: string): Promise<void> => {
   const secret: string | undefined = stripeSecrets.find((item) => item.name === "STRIPE_SECRET_KEY")?.value()
 
-  const [billingSnap, paymentMethodSnap, userSnap] = await Promise.all([
+  const [billingSnap, userSnap] = await Promise.all([
     db.collection(`users/${uid}/billing`).limit(10).get(),
-    db.collection(`users/${uid}/payment_methods`).limit(50).get(),
     db.collection("users").doc(uid).get(),
   ])
 
@@ -403,7 +406,7 @@ const cancelStripeBilling = async (uid: string): Promise<void> => {
   const docSubscriptionId = userSnap.get("subscriptionId")
   if (typeof docSubscriptionId === "string" && docSubscriptionId) subscriptionIds.add(docSubscriptionId)
 
-  if (subscriptionIds.size === 0 && paymentMethodSnap.empty) return
+  if (subscriptionIds.size === 0) return
 
   if (!secret) {
     throw new HttpsError(
@@ -428,17 +431,31 @@ const cancelStripeBilling = async (uid: string): Promise<void> => {
       )
     }
   }
+}
 
-  await Promise.all(paymentMethodSnap.docs.map(async (paymentMethodDoc) => {
-    const paymentMethodId = String(paymentMethodDoc.get("paymentMethodId") || paymentMethodDoc.id)
-    try {
-      await stripe.paymentMethods.detach(paymentMethodId)
-    } catch (error) {
-      // A detached or deleted card is not a reason to keep the account open: the
-      // subscription is already cancelled, so no further charge can occur.
-      console.warn(`Could not detach payment method ${paymentMethodId} for ${uid}:`, error)
-    }
-  }))
+/**
+ * Delete the Stripe customer once the deletion is final.
+ *
+ * Stripe keeps the name, email and phone captured at onboarding, and deleting the
+ * customer also cancels any subscription that survived the earlier cancel. Doing this at
+ * purge rather than at request time is what keeps the reversible phase reversible.
+ * @param {string} uid Account being erased.
+ * @param {string | undefined} customerId Stripe customer id from the user document.
+ * @return {Promise<boolean>} Whether Stripe now holds no customer for this account.
+ */
+async function deleteStripeCustomer(uid: string, customerId: string | undefined): Promise<boolean> {
+  const secret: string | undefined = stripeSecrets.find((item) => item.name === "STRIPE_SECRET_KEY")?.value()
+  if (!secret || !customerId) return false
+
+  try {
+    await getStripe(secret).customers.del(customerId)
+    return true
+  } catch (error) {
+    // A customer that is already gone is the state we wanted, and the purge is retry-safe.
+    if ((error as { code?: string })?.code === "resource_missing") return true
+    console.error(`CRITICAL: failed to delete Stripe customer for erased account ${uid}:`, error)
+    return false
+  }
 }
 
 /**
@@ -1543,6 +1560,11 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
     console.error(`CRITICAL: failed to purge blobs for deleted account ${uid}:`, error)
   }
 
+  // The customer id lives on the document this function rewrites, so Stripe goes first.
+  // Deleting the customer is also what removes the saved cards and the name, email and
+  // phone Stripe holds.
+  const stripeDeleted = await deleteStripeCustomer(uid, userData?.stripeId)
+
   // Hand the machines over before anything that points at them disappears, and keep the
   // session documents: they are the reaper's only route to the VM.
   const orphanedMachines = await expireSessionsForReaper(uid)
@@ -1656,8 +1678,9 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
       collectionsDeleted,
       secretsPurged,
       blobsDeleted,
+      stripeDeleted,
       // Durable, not just a log line: this is the only surviving record of machines
-      // whose last pointer was just destroyed.
+      // handed to the reaper instead of being released by the purge.
       machinesToRelease: orphanedMachines,
       retentionScrubbedAt: Timestamp.fromDate(now),
       originalEmail: null,

@@ -488,6 +488,12 @@ export class LoginComponent  {
       this.firestoreService.storeUserData(user, providerId, true)
     ]);
 
+    // The shared snapshot still holds the signed-out result, so `authGuard` and the
+    // verification page read it and bounce back to /login. Rebuild it for the new
+    // identity and wait for it before navigating.
+    this.authService.invalidateAuthSnapshot()
+    await firstValueFrom(this.authService.isAuthenticated())
+
     await this.authService.ensureBootstrapAdminAccess(providerId)
 
     const isVerified = await this.onLoginUpdate({ user }, providerId);

@@ -155,6 +155,22 @@ describe('AuthService', () => {
     expect(heartbeatMock.start).toHaveBeenCalledTimes(1);
   });
 
+  it('re-reads the login after invalidateAuthSnapshot instead of replaying the signed-out answer', async () => {
+    firestoreMock.authState.and.returnValue(of(null));
+    expect((await firstValueFrom(service.isAuthenticated())).isAuthenticated).toBe(false);
+
+    // Sign-in lands: authState yields a user, but the shared chain has not recomputed,
+    // so the guard that runs right after would still read `false` and bounce to /login.
+    firestoreMock.authState.and.returnValue(of(makeUser()));
+    firestoreMock.getUserData.and.resolveTo(profile());
+
+    service.invalidateAuthSnapshot();
+    const result = await firstValueFrom(service.isAuthenticated());
+
+    expect(result.isAuthenticated).toBe(true);
+    expect(result.user?.uid).toBe('uid-1');
+  });
+
   it('passes a transient failure to the caller instead of signing the user out', async () => {
     const user = makeUser();
     firestoreMock.authState.and.returnValue(of(user));

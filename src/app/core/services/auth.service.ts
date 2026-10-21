@@ -216,6 +216,16 @@ export class AuthService {
   }
 
   /**
+   * Drops the cached snapshot. The shared chain only recomputes when `authState`
+   * emits, so a reader that arrives *between* sign-in and that recompute replays the
+   * `isAuthenticated: false` computed while signed out — which is what sent a
+   * freshly signed-in user straight back to /login.
+   */
+  invalidateAuthSnapshot(): void {
+    this.authSnapshot$ = undefined
+  }
+
+  /**
    * The one login chain, shared by every caller.
    *
    * Unshared, each subscriber re-ran the whole login: a Firestore profile

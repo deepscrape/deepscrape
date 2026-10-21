@@ -244,11 +244,15 @@ export const ensureBootstrapAdminAccess = onCallv2({ secrets: [functionsEnvJson]
         const email = userRecord.email || null
         const granted = await syncBootstrapAdminRole(uid, email)
 
+        // Not an error. Every Google/GitHub sign-in calls this, and for a normal
+        // customer the answer is simply "not an admin". Throwing put a red
+        // PERMISSION_DENIED in the console on every first login.
         if (!granted) {
-            throw new HttpsError(
-                "permission-denied",
-                "Bootstrap admin access is only available for configured admin emails"
-            )
+            return {
+                success: false,
+                role: "user",
+                email,
+            }
         }
 
         return {

@@ -11,7 +11,41 @@ bff/node_modules
 functions/lib
 dist/test-out
 
+# Build inputs the image never reads. The build context is the repo ROOT and the
+# image copies four paths, so everything else here is hashed and uploaded on
+# every merge.
+docs
+output
+dist/deepscrape/server
+functions/databases
+
+# Test sources. `bun test` never runs inside the image, so these are bytes only.
+bff/*.spec.ts
+functions/src/**/*.spec.ts
+
+# A gitignored Firebase private key sitting in the working tree. `COPY
+# functions/src /functions/src` duplicated it into the image on any LOCAL build,
+# and CI stays green because a checkout never has the file.
+**/serviceAccount.json
+functions/src/serviceAccount.json
+
+# Docker matches these at the context ROOT only, which is how `bff/.env.dev`
+# ended up in the published image (`COPY bff/ ./` copied it to /app/.env.dev).
+# The `**/` prefix is what makes the rule reach into subdirectories.
 .env
 .env.*
 *.env
+**/.env
+**/.env.*
+**/*.env
+**/.deploy-secrets.json
 firebase-debug.log
+
+# Local CLI caches the image never reads. Neither path is COPYed by the
+# Dockerfile, but both are large in a working tree: `.angular` is the Angular
+# build cache (69 MB here) and `.firebase` is the Firebase CLI deploy cache
+# (70 MB, and it grows on every hosting deploy). The merge job runs
+# `bun run build` and then `docker build` in the same checkout, so the context
+# carries both on every merge.
+.angular
+.firebase

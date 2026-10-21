@@ -12,8 +12,7 @@
       "ignore": [
         "node_modules",
         ".git",
-        "firebase-debug.log",
-        "firebase-debug.*.log",
+        "*.log",
         "*.local",
         "*.env",
         "*.env.dev",
@@ -77,6 +76,22 @@
               "value": "DENY"
             }
           ]
+        },
+        {
+          "source": "/index.csr.html",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "**/*.html",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/ngsw.json",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/ngsw-worker.js",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
         }
       ]
     },
@@ -132,6 +147,22 @@
               "value": "noindex, nofollow"
             }
           ]
+        },
+        {
+          "source": "/index.csr.html",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "**/*.html",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/ngsw.json",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/ngsw-worker.js",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
         }
       ]
     },
@@ -189,6 +220,22 @@
               "value": "no-referrer"
             }
           ]
+        },
+        {
+          "source": "/index.csr.html",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "**/*.html",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/ngsw.json",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/ngsw-worker.js",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
         }
       ]
     }

@@ -11,10 +11,11 @@
           "/favicon.ico",
           "/index.html",
           "/manifest.webmanifest",
+          "/main-*.js",
+          "/scripts-*.js",
+          "/polyfills-*.js",
           "/*.css",
-          "/*.js",
           "/*.woff2",
-          "/*.html",
           "!/firebase-*.js",
           "!/__/firebase/*.js"
         ],
@@ -45,21 +46,5 @@
       }
     }
   ],
-  "navigationRequestStrategy": "freshness",
-  "dataGroups": [
-    {
-      "name": "api",
-      "urls": [
-        "/anthropic/messages",
-        "/groq/chat/completions",
-        "/openai/chat/completions"
-      ],
-      "cacheConfig": {
-        "strategy": "freshness",
-        "maxSize": 0,
-        "timeout": "0s",
-        "maxAge": "3600s"
-      }
-    }
-  ]
+  "navigationRequestStrategy": "freshness"
 }

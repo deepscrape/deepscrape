@@ -74,7 +74,11 @@ deploy-json:
 
 # The BFF is a Cloud Run service (firebase.json rewrites `**` -> run/deepscrape-bff),
 # so hosting depends on it: deploy the BFF before hosting, always.
-deploy-bff:
+#
+# `build` is a PREREQUISITE, not a courtesy: the Dockerfile COPYs
+# `dist/deepscrape/browser`, so on a clean clone that layer fails and on a dirty tree
+# it silently ships whatever is already there — a rollback to last week's frontend.
+deploy-bff: build
 	cd "$(BFF_DIR)" && bun run deploy:cloud
 
 deploy-hosting:
@@ -99,7 +103,10 @@ deploy-functions: deploy-json
 test-bff:
 	cd "$(BFF_DIR)" && bun test
 
-deploy-all: deploy-json deploy-bff deploy-hosting
+# `build` first and explicitly, so a clean clone cannot reach the hosting deploy with
+# no `dist/` and a dirty tree cannot publish a bundle older than the source it is
+# releasing. `deploy-bff` depends on it too; make resolves that once per invocation.
+deploy-all: build deploy-json deploy-bff deploy-hosting
 
 # --- web app + Bun/Elysia BFF (Cloud Run) -------------------------------------
 # The image is built from the repo ROOT (the Dockerfile COPYs bff/, functions/src,

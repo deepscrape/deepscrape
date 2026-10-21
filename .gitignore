@@ -58,6 +58,13 @@ Thumbs.db
 .qodo
 functions/databases/*.BIN
 .env.staging
+
+# Secret env files. The rules above are anchored to the repo root, so
+# `bff/.env.dev` was tracked and shipped inside the container image.
+**/.env
+**/.env.*
+!**/.env.example
+!**/*.example
 .env.dev
 .env.keys
 # Dev-only emulator wiring for the BFF: not a secret, and `bun run bff:dev`

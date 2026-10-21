@@ -122,6 +122,21 @@ const parseBoolean = (value: string | undefined, defaultValue = false): boolean 
   return ["1", "true", "yes", "on"].includes(normalized)
 }
 
+/**
+ * A positive whole number from the environment.
+ *
+ * `parseInt` alone is not enough for a value that is passed to a timer:
+ * `AbortSignal.timeout(NaN)` THROWS, so one mistyped secret would turn every
+ * webrain call into an uncaught 500 rather than a bounded failure.
+ * @param {string} value Raw configuration value.
+ * @param {number} defaultValue Used when the value is absent or unusable.
+ * @return {number} A finite, positive integer.
+ */
+const parsePositiveInt = (value: string, defaultValue: number): number => {
+  const parsed = parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue
+}
+
 const getSecretConfig = (): RuntimeConfigMap => {
   try {
     const value = functionsEnvJson.value()
@@ -227,6 +242,15 @@ const getEnv = () => {
     // surfaces as "search is broken".
     WEBRAIN_MCP_TOKEN: getConfigValue("WEBRAIN_HTTP_TOKEN") ||
       getConfigValue("WEBRAIN_MCP_TOKEN"),
+    // Bound for ONE MCP tool call. Default sits below the 120 s worker-lease
+    // TTL on purpose: the lease is released in a `finally` after the fetch, so
+    // an unbounded fetch holds a pooled worker until the engine answers or the
+    // TTL expires, and holds the caller until the platform timeout. A value
+    // above the TTL would restore exactly that bug.
+    WEBRAIN_CALL_TIMEOUT_MS: parsePositiveInt(
+      getConfigValue("WEBRAIN_CALL_TIMEOUT_MS", "90000"),
+      90000,
+    ),
 
     // The container image a dedicated browser session's machine runs.
     //

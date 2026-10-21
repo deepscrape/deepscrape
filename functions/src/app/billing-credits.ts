@@ -17,6 +17,13 @@ export type BillingCreditMetadata = {
   reason?: string | null
   grantedBy?: string | null
   sessionId?: string | null
+  /**
+   * The platform machine a charge was for. Written by the session meter, whose rows
+   * are otherwise indistinguishable from each other: every block of every session
+   * carries `reason: "meter:block"`, so without this the usage report can say how
+   * much browser time cost but not on how many machines it was spent.
+   */
+  machineId?: string | null
   paymentIntentId?: string | null
   invoiceId?: string | null
   subscriptionId?: string | null
@@ -43,7 +50,43 @@ export type BillingCreditMutationResult = {
   reserved: number
   available: number
   ledgerId: string
+  /**
+   * True when the ledger already held this `idempotencyKey`, so nothing was
+   * written and the returned balances are the ones already on disk.
+   *
+   * Callers that COUNT work must read this. The result is truthy either way, so
+   * a replay is indistinguishable from a fresh mutation unless it is stated —
+   * which made an overlapping sweep count a block twice as spend the customer
+   * never incurred, and pushed them past their own cap early.
+   */
+  replayed?: boolean
 }
+
+/**
+ * Message fragments produced when a mutation is refused for lack of credits.
+ *
+ * Both throw sites live in this file, immediately below, and
+ * `isInsufficientCreditsError` is the only reader. The refusal is PERMANENT for
+ * the current balance: retrying the same mutation without a top-up fails
+ * identically, so a caller must stop rather than come back next sweep.
+ */
+const INSUFFICIENT_CREDITS_PATTERN =
+  /would make .* balance negative|would reserve more .* than available/
+
+/**
+ * Whether a rejected credit mutation was refused for lack of credits.
+ *
+ * Distinguishes "the customer cannot pay" from "the write failed this once".
+ * The metered sweep reacts to the two differently — the first ends the session,
+ * the second retries — so the distinction has to survive as a value rather than
+ * be guessed from a truthy result.
+ * @param {unknown} error Whatever the mutation threw.
+ * @return {boolean} True when the balance, not the network, refused it.
+ */
+export const isInsufficientCreditsError = (error: unknown): boolean =>
+  INSUFFICIENT_CREDITS_PATTERN.test(
+    error instanceof Error ? error.message : String(error),
+  )
 
 const normalizeWholeNumber = (value: number | undefined): number => {
   const normalized = Math.floor(Number(value || 0))
@@ -107,6 +150,9 @@ export const applyBillingCreditMutation = async (
         reserved: current.reserved,
         available: Math.max(0, current.balance - current.reserved),
         ledgerId: ledgerRef.id,
+        // Stated, not implied. See the field's doc comment: a silent replay is
+        // how a re-derived key got counted as fresh spend.
+        replayed: true,
       }
     }
 
@@ -228,7 +274,11 @@ export const consumeBillingCredits = async (args: {
     return null
   }
 
-  return applyBillingCreditMutation({
+  // A replayed key collected nothing, so it must not read as a charge. Returning
+  // null is the contract every consumer already handles ("no mutation happened");
+  // returning the unchanged balances let the metered sweep count an overlapping
+  // run as fresh spend and trip the customer's cap early.
+  const applied = await applyBillingCreditMutation({
     uid: args.uid,
     bucket: args.bucket,
     balanceDelta: -amount,
@@ -238,6 +288,7 @@ export const consumeBillingCredits = async (args: {
       operation: "consume",
     },
   })
+  return applied.replayed ? null : applied
 }
 
 export const releaseBillingCredits = async (args: {

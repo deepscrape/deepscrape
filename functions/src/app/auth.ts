@@ -2,7 +2,7 @@
 /* eslint-disable indent */
 /* eslint-disable object-curly-spacing */
 import { FieldPath, FieldValue } from "firebase-admin/firestore"
-import { db, dbName, getSecretFromManager, purgeSecretAndAllRevisions, saveToSecretManager, auth as adminAuth } from "./config"
+import { db, dbName, getSecretFromManager, purgeSecretAndAllRevisions, saveToSecretManager, secretPathFor, auth as adminAuth } from "./config"
 import { auth, runWith } from "firebase-functions/v1"
 import { onDocumentWritten } from "firebase-functions/v2/firestore"
 import { HttpsError } from "firebase-functions/v2/https"
@@ -751,7 +751,12 @@ export const deleteMyApiKey = onCallv2(async (req) => {
         created_By?: string
     } | undefined
 
-    const secretPath = typeof apiKeyData?.secretPath === "string" ? apiKeyData.secretPath : ""
+    // Derived, never read from the document. `users/{uid}/apikeys/{id}` is
+    // client-writable (`firestore.rules`), so a stored path is a caller-supplied
+    // Secret Manager target — that turned this callable into an arbitrary-secret
+    // delete. `createMyApiKey` mints `users_<uid>_apikey_<docId>`, so deriving is
+    // identical for every legitimately minted key and closes the path entirely.
+    const secretPath = secretPathFor(`users_${userId}_apikey_${apiKeyId}`)
 
     let secretDeleted = false
     let versionsDestroyed = 0
@@ -871,7 +876,13 @@ export const getApiKeyDoVisible = onCallv2(async (req) => {
             throw new Error("API key not found")
         }
 
-        const secretValue = await getSecretFromManager(keyData.secretPath)
+        // Derived for the same reason the delete path derives it: the stored
+        // `secretPath` is a client-writable field, so trusting it made this
+        // callable a reader for ANY secret in the project once the caller had
+        // enrolled their own MFA.
+        const secretValue = await getSecretFromManager(
+            secretPathFor(`users_${userId}_apikey_${apiKey.id}`)
+        )
 
         if (!secretValue) {
             throw new Error("cannot retrieve the secret from secret Manager Client")

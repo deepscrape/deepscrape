@@ -53,7 +53,33 @@ type BillingPlanCatalog = {
   label: string
   description: string
   features: string[]
-  prices: Record<BillingInterval, BillingPriceConfig>
+  /**
+   * The intervals this plan can actually be BOUGHT on.
+   *
+   * Partial because "no self-serve price at this interval" is a real state rather than a
+   * missing field: Enterprise is arranged with sales, so it has no `payAsYouGo` price at
+   * all. The old shape forced a `buildBillingPriceConfig("enterprise", "payAsYouGo", 0)`
+   * entry to keep the type happy, and that placeholder is what the client rendered as a
+   * EUR0.00 Enterprise option a customer could click (D5).
+   */
+  prices: Partial<Record<BillingInterval, BillingPriceConfig>>
+  /**
+   * Sold by a person, not by a checkout button.
+   *
+   * The server refuses checkout for these and the client shows "Contact sales" instead of
+   * a price. It is a flag on the catalog rather than a check for `id === "enterprise"` in
+   * three places, so a second sales-led tier does not need the same condition copying.
+   */
+  salesLed?: boolean
+  /**
+   * The tier is provisioned with unmetered usage.
+   *
+   * Declared here for the catalog and the UI; the ENFORCEMENT is `getBillingAccessMode`
+   * returning an access mode that `isChargeableAccessMode` refuses to bill, which is the
+   * one place every charging path already asks. A flag that only the UI respected would
+   * be a promise, not a product.
+   */
+  unlimited?: boolean
 }
 
 type CreditPackCatalog = {
@@ -152,6 +178,42 @@ const buildBillingPriceConfig = (
   includedCredits: getIncludedCreditsForPlanInterval(plan, interval),
 })
 
+/**
+ * The ledger key for a credit grant.
+ *
+ * One rule per source of truth, ordered from most specific to least: an invoice
+ * identifies a billing event, a payment intent a checkout, a session a crawl. A
+ * promotional grant has NONE of them — which is why `requestId` exists. Without
+ * it the key was null, the ledger document id was random, and one double-click
+ * minted the credits twice with nothing to collapse the retry against.
+ * @param {object} args Every identifier available for this grant.
+ * @return {string | null} The key, or null when nothing at all identifies it.
+ */
+export const creditsIdempotencyKey = (args: {
+  bucket: string
+  source: string
+  reason?: string | null
+  invoiceId?: string | null
+  paymentIntentId?: string | null
+  sessionId?: string | null
+  requestId?: string | null
+}): string | null => {
+  const label = args.reason || args.source
+  if (args.invoiceId) {
+    return `invoice:${args.invoiceId}:${args.bucket}:${label}`
+  }
+  if (args.paymentIntentId) {
+    return `payment_intent:${args.paymentIntentId}:${args.bucket}:${label}`
+  }
+  if (args.sessionId) {
+    return `session:${args.sessionId}:${args.bucket}:${label}`
+  }
+  if (args.requestId) {
+    return `request:${args.requestId}:${args.bucket}`
+  }
+  return null
+}
+
 const addCreditsLedgerEntry = async (args: {
   uid: string
   delta: number
@@ -166,6 +228,8 @@ const addCreditsLedgerEntry = async (args: {
   plan?: BillingPlanTier
   interval?: BillingInterval
   createdAt?: FirebaseFirestore.FieldValue
+  /** Caller-supplied token, for a grant with no Stripe object behind it. */
+  requestId?: string
 }) => {
   const normalizedDelta = Math.floor(args.delta)
   if (!Number.isFinite(normalizedDelta) || normalizedDelta <= 0) {
@@ -173,10 +237,15 @@ const addCreditsLedgerEntry = async (args: {
   }
 
   const bucket = args.bucket || "purchased"
-  const idempotencyKey = args.invoiceId ? `invoice:${args.invoiceId}:${bucket}:${args.reason || args.source}` :
-    args.paymentIntentId ? `payment_intent:${args.paymentIntentId}:${bucket}:${args.reason || args.source}` :
-      args.sessionId ? `session:${args.sessionId}:${bucket}:${args.reason || args.source}` :
-        null
+  const idempotencyKey = creditsIdempotencyKey({
+    bucket,
+    source: args.source,
+    reason: args.reason,
+    invoiceId: args.invoiceId,
+    paymentIntentId: args.paymentIntentId,
+    sessionId: args.sessionId,
+    requestId: args.requestId,
+  })
 
   await grantBillingCredits({
     uid: args.uid,
@@ -232,6 +301,44 @@ export const getInvoiceRecurringPrice = (invoice: Stripe.Invoice): InvoicePriceR
   return null
 }
 
+/**
+ * The subscription an invoice belongs to, whichever API version delivered it.
+ *
+ * 2023-era versions put it at `invoice.subscription`; the 2025 versions moved it to
+ * `invoice.parent.subscription_details.subscription`. The live webhook endpoint pins no
+ * API version and so follows the account default, while the test endpoint is pinned to
+ * 2023-10-16 — reading a single location made renewal handling depend on which version
+ * the account happened to be on, and that divergence stays invisible until money moves.
+ *
+ * @param {*} invoice Invoice as a webhook event delivered it.
+ * @return {*} Subscription id, or null when the invoice carries none.
+ */
+export const getInvoiceSubscriptionId = (invoice: Stripe.Invoice): string | null => {
+  const asId = (value: unknown): string | null => {
+    if (typeof value === "string") {
+      return value
+    }
+
+    if (value && typeof value === "object" && "id" in value) {
+      const id = (value as {id?: unknown}).id
+      return typeof id === "string" ? id : null
+    }
+
+    return null
+  }
+
+  const legacyId = asId((invoice as {subscription?: unknown}).subscription)
+  if (legacyId) {
+    return legacyId
+  }
+
+  const parent = (invoice as {
+    parent?: {subscription_details?: {subscription?: unknown}} | null
+  }).parent
+
+  return asId(parent?.subscription_details?.subscription)
+}
+
 const toPositiveInteger = (value: string, fallback: number): number => {
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
@@ -242,7 +349,10 @@ const TRIAL_DEFAULT_CREDITS = toPositiveInteger(env.BILLING_TRIAL_DEFAULT_CREDIT
 const TRIAL_DEFAULT_CREDIT_CAP_EUR = toPositiveInteger(env.BILLING_TRIAL_DEFAULT_CREDIT_CAP_EUR, 160)
 const CUSTOM_CREDITS_MIN = toPositiveInteger(env.BILLING_CUSTOM_CREDITS_MIN, 50)
 const CUSTOM_CREDITS_MAX = toPositiveInteger(env.BILLING_CUSTOM_CREDITS_MAX, 5000)
-const CUSTOM_CREDIT_UNIT_AMOUNT_EUR = toPositiveInteger(env.BILLING_CUSTOM_CREDIT_UNIT_AMOUNT_EUR, 19)
+// Per-credit price for custom amounts, in EUR minor units. Held level with the
+// largest pack rather than at the old EUR0.19, so a custom amount cannot be the
+// most expensive way to buy the same credit.
+const CUSTOM_CREDIT_UNIT_AMOUNT_EUR = toPositiveInteger(env.BILLING_CUSTOM_CREDIT_UNIT_AMOUNT_EUR, 1)
 const BILLING_RESTRICTED_ROLE_KEYWORDS = ["manager", "editor"]
 const billingAllowedOrigins = env.IS_PRODUCTION ?
   [
@@ -256,10 +366,20 @@ const billingAllowedOrigins = env.IS_PRODUCTION ?
     "https://console.deepscrape.dev",
   ] :
   [
+    // The one value that already knows where the app is served. `ng serve` does not
+    // always pick 4200 — this repo's dev port is 8080 — and a missing origin makes
+    // `assertAllowedReturnUrl` reject checkout outright with "successUrl origin is not
+    // allowed", which reads as a permissions bug rather than a config one.
+    env.APP_ORIGIN,
     "http://localhost:5000",
     "http://127.0.0.1:5000",
     "http://localhost:4200",
     "http://127.0.0.1:4200",
+    // Both spellings of every dev port, so a browser that resolves one and a config that
+    // names the other cannot decide whether checkout works.
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:8081",
     "http://127.0.0.1:8081",
   ]
 
@@ -353,7 +473,7 @@ const hasTrialExpired = (billing: UserBilling | undefined): boolean => {
 const buildFreePlanFromExpiredTrial = (billing: UserBilling | undefined): Partial<UserBilling> => {
   const nowIso = new Date().toISOString()
   return {
-    ...getDefaultBillingForPlan("free"),
+    ...billingDefaultsForMerge("free"),
     plan: "free",
     status: "inactive",
     subscriptionId: null,
@@ -449,6 +569,12 @@ const recordBillingIncident = async (args: {
     source: args.source || null,
     message: args.message,
     metadata: args.metadata || {},
+    // Written explicitly because the admin panel's default query filters on it.
+    // A Firestore equality filter EXCLUDES documents that lack the field, so
+    // omitting it did not leave incidents "unacknowledged" -- it hid every one
+    // of them from the list that exists to surface them, and the ack action had
+    // nothing to match against either.
+    acknowledged: false,
     createdAt: FieldValue.serverTimestamp(),
   })
 }
@@ -498,7 +624,11 @@ export const billingPlanCatalog: BillingPlanCatalog[] = [
     id: "free",
     label: "Free",
     description: "Starter access for evaluation",
-    features: ["basic_markdown", "single_project", "community_support"],
+    // Free is not "crawl requests": `bff/api.ts` puts scrape, extract, pdf, serp, search and
+    // the schema compiler behind `access` rather than `paid`, and the five monitor routes
+    // too. Ten AI vendors are reachable with the caller's own key. Listing three items here
+    // undersold the tier and hid why anyone upgrades.
+    features: ["extraction_suite", "schema_compiler", "monitors", "ai_providers", "community_support"],
     prices: {
       payAsYouGo: buildBillingPriceConfig("free", "payAsYouGo", 0),
       monthly: buildBillingPriceConfig("free", "monthly", 0),
@@ -510,7 +640,7 @@ export const billingPlanCatalog: BillingPlanCatalog[] = [
     id: "trial",
     label: "Trial",
     description: `Time-limited Pro experience (${TRIAL_PERIOD_DAYS} days)`,
-    features: ["structured_extraction", "session_reuse", "anti_bot", "identity_crawling", "high_concurrency", "priority_support"],
+    features: ["crawl_api", "extraction_suite", "structured_extraction", "session_reuse", "schema_compiler", "monitors", "ai_providers", "capacity_tools", "browser_session_dedicated", "browser_session_byo", "live_view", "credential_vault", "machine_leasing", "anti_bot", "identity_crawling", "high_concurrency", "proxy_rotation", "priority_support"],
     prices: {
       payAsYouGo: buildBillingPriceConfig("trial", "payAsYouGo", 0),
       monthly: buildBillingPriceConfig("trial", "monthly", 0),
@@ -522,49 +652,91 @@ export const billingPlanCatalog: BillingPlanCatalog[] = [
     id: "starter",
     label: "Starter",
     description: "For solo operators and small teams",
-    features: ["structured_extraction", "session_reuse", "starter_limits"],
+    // Starter and Pro carry the SAME tools -- nothing gates a tool by plan, only by `paid`
+    // (`PAID_ONLY_TOOLS` in webrain-tools.domain.ts) and by `SESSION_CAPS`, which is per
+    // browser tier. So they differ in volume and support, and saying otherwise would invent
+    // a difference the platform does not enforce.
+    //
+    // The last five are engine capabilities, not plan tiers: stealth/anti-bot detection,
+    // identity + login automation, batch concurrency, and a rotating proxy pool with
+    // geolocation all live in webrain (`detect_antibot`, `stealth_js`, `webrain_login`,
+    // `ProxyPool.next_at`), and they reach a caller only through the paid capacity tools.
+    features: ["crawl_api", "extraction_suite", "structured_extraction", "session_reuse", "schema_compiler", "monitors", "ai_providers", "capacity_tools", "browser_session_dedicated", "browser_session_byo", "live_view", "credential_vault", "machine_leasing", "anti_bot", "identity_crawling", "high_concurrency", "proxy_rotation"],
     prices: {
-      payAsYouGo: buildBillingPriceConfig("starter", "payAsYouGo", 99, env.STRIPE_PRICE_STARTER_PAYG || "price_1T7ZdGFVGcR0rD8f5BmilH75"),
-      monthly: buildBillingPriceConfig("starter", "monthly", 999, env.STRIPE_PRICE_STARTER_MONTHLY || "price_1T7Zb1FVGcR0rD8fVTy5nza0"),
-      quarterly: buildBillingPriceConfig("starter", "quarterly", 2799, env.STRIPE_PRICE_STARTER_QUARTERLY || "price_1T7ZauFVGcR0rD8f0RpYopcQ"),
-      annually: buildBillingPriceConfig("starter", "annually", 9999, env.STRIPE_PRICE_STARTER_ANNUAL || "price_1T7Zb3FVGcR0rD8fJtlFvrct"),
+      payAsYouGo: buildBillingPriceConfig("starter", "payAsYouGo", 99, env.STRIPE_PRICE_STARTER_PAYG || "price_1UHrhAFVGcR0rD8fVnhA7zv9"),
+      monthly: buildBillingPriceConfig("starter", "monthly", 999, env.STRIPE_PRICE_STARTER_MONTHLY || "price_1UHrgtFVGcR0rD8fNsrFs6ul"),
+      quarterly: buildBillingPriceConfig("starter", "quarterly", 2799, env.STRIPE_PRICE_STARTER_QUARTERLY || "price_1UHrgtFVGcR0rD8fwmUPSdp2"),
+      annually: buildBillingPriceConfig("starter", "annually", 9999, env.STRIPE_PRICE_STARTER_ANNUAL || "price_1UHrgtFVGcR0rD8fhw3hWx5J"),
     },
   },
   {
     id: "pro",
     label: "Pro",
     description: "High-throughput crawling and anti-bot support",
-    features: ["anti_bot", "identity_crawling", "high_concurrency", "priority_support"],
+    // Same tools as Starter plus priority support; the real difference is 5x the credits.
+    features: ["crawl_api", "extraction_suite", "structured_extraction", "session_reuse", "schema_compiler", "monitors", "ai_providers", "capacity_tools", "browser_session_dedicated", "browser_session_byo", "live_view", "credential_vault", "machine_leasing", "anti_bot", "identity_crawling", "high_concurrency", "proxy_rotation", "priority_support"],
     prices: {
-      payAsYouGo: buildBillingPriceConfig("pro", "payAsYouGo", 199, env.STRIPE_PRICE_PRO_PAYG || "price_1T7ZdGFVGcR0rD8fuvNlSOok"),
-      monthly: buildBillingPriceConfig("pro", "monthly", 1999, env.STRIPE_PRICE_PRO_MONTHLY || "price_1T7Zb5FVGcR0rD8ffyGz9ctg"),
-      quarterly: buildBillingPriceConfig("pro", "quarterly", 5599, env.STRIPE_PRICE_PRO_QUARTERLY || "price_1T7ZbGFVGcR0rD8f26jtWDAB"),
-      annually: buildBillingPriceConfig("pro", "annually", 19999, env.STRIPE_PRICE_PRO_ANNUAL || "price_1T7ZbGFVGcR0rD8fFUWUNcsN"),
+      payAsYouGo: buildBillingPriceConfig("pro", "payAsYouGo", 199, env.STRIPE_PRICE_PRO_PAYG || "price_1UHrhAFVGcR0rD8fuuBT43Nd"),
+      monthly: buildBillingPriceConfig("pro", "monthly", 1999, env.STRIPE_PRICE_PRO_MONTHLY || "price_1UHrhAFVGcR0rD8fbNX7Tbdd"),
+      quarterly: buildBillingPriceConfig("pro", "quarterly", 5599, env.STRIPE_PRICE_PRO_QUARTERLY || "price_1UHrhAFVGcR0rD8fOntoFTWQ"),
+      annually: buildBillingPriceConfig("pro", "annually", 19999, env.STRIPE_PRICE_PRO_ANNUAL || "price_1UHrhAFVGcR0rD8fVC1B257x"),
     },
   },
   {
     id: "enterprise",
     label: "Enterprise",
-    description: "Custom limits, governance and dedicated support",
-    features: ["sso", "audit_logs", "dedicated_support", "custom_limits"],
+    description: "Unlimited usage under a custom agreement",
+    features: ["unlimited_usage", "crawl_api", "extraction_suite", "structured_extraction", "session_reuse", "capacity_tools", "browser_session_dedicated", "browser_session_byo", "live_view", "credential_vault", "machine_leasing", "anti_bot", "identity_crawling", "high_concurrency", "proxy_rotation", "priority_support", "dedicated_support", "sso", "audit_logs", "custom_limits"],
+    // No `payAsYouGo` entry, deliberately. Removing the key IS the fix: a zero-amount
+    // config with no price id was still a row the client rendered and a customer could
+    // click, and no such price exists in either Stripe account.
+    //
+    // Why no self-serve pay-as-you-go for this tier at all: enterprise is an annual
+    // commitment with support and an SLA, negotiated by a person. Offering a metered
+    // option next to it competes with our own sales team -- a procurement group that can
+    // buy usage one month at a time will never sign a term contract.
+    //
+    // The recurring intervals stay listed and priced, because they are the ANCHOR a
+    // conversation starts from ("from EUR49.99/month"). `salesLed` is what stops them
+    // being a button.
+    salesLed: true,
+    unlimited: true,
+    // The amounts are the published FLOOR of a negotiated deal, not a product: no contract
+    // is sold at these numbers, so there is no `stripePriceId` here. Every agreement gets a
+    // price created for it, which is also why the three standard Enterprise prices are
+    // archived -- an active one is a sellable product that bypasses this refusal entirely
+    // (a payment link, a Dashboard invoice, an old marketing URL).
+    //
+    // Why the floor is EUR99 and not the old EUR49.99: at 49.99 an unlimited account cost
+    // us more than it earned. A dedicated machine is ~EUR13/month always-on, and unlimited
+    // request-priced work has no ceiling, so the fee has to clear one machine plus a
+    // realistic fair-use volume. EUR99 is ~7x the machine cost and ~5x Pro, which is what a
+    // step-up tier is supposed to be; quarterly and annual are 6% and 16% off.
     prices: {
-      payAsYouGo: buildBillingPriceConfig("enterprise", "payAsYouGo", 0),
-      monthly: buildBillingPriceConfig("enterprise", "monthly", 4999, env.STRIPE_PRICE_ENTERPRISE_MONTHLY || "price_1T7ZbGFVGcR0rD8fAKK3YSEU"),
-      quarterly: buildBillingPriceConfig("enterprise", "quarterly", 14999, env.STRIPE_PRICE_ENTERPRISE_QUARTERLY || "price_1T7ZbGFVGcR0rD8f1XhK9Y0g"),
-      annually: buildBillingPriceConfig("enterprise", "annually", 49999, env.STRIPE_PRICE_ENTERPRISE_ANNUAL || "price_1T7ZbeFVGcR0rD8f5z7FBxNR"),
+      monthly: buildBillingPriceConfig("enterprise", "monthly", 9900),
+      quarterly: buildBillingPriceConfig("enterprise", "quarterly", 27900),
+      annually: buildBillingPriceConfig("enterprise", "annually", 99900),
     },
   },
 ]
 
-const creditPackCatalog: CreditPackCatalog[] = [
-  { id: "credits_100", label: "100 credits", credits: 100, amount: 1900, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_100 || "price_1T7ZbeFVGcR0rD8f0RRlAxOY" },
-  { id: "credits_500", label: "500 credits", credits: 500, amount: 7900, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_500 || "price_1T7ZbeFVGcR0rD8ffuQZ0XgM" },
-  { id: "credits_2000", label: "2000 credits", credits: 2000, amount: 24900, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_2000 || "price_1T7ZbeFVGcR0rD8fX73Nv2Cs" },
+// Packs are priced so one credit costs at least as much as it does on the
+// cheapest SUBSCRIPTION, and no more. Measured cost per credit is about
+// EUR0.001 (the worst case is a browser minute at USD0.00031; the average is
+// lower), so these are 10-15x cost -- a normal SaaS gross margin -- where the
+// previous EUR0.1245-0.19 was 40-190x and 19-48x above our own highest plan
+// price. A pack is "no commitment", which justifies a modest premium over a
+// plan, not a 76x spread on the same unit.
+// Exported for the price-ladder spec: the ratios are the contract, not the amounts.
+export const creditPackCatalog: CreditPackCatalog[] = [
+  { id: "credits_100", label: "100 credits", credits: 100, amount: 150, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_100 || "price_1USYnOFVGcR0rD8ftaVb1clf" },
+  { id: "credits_500", label: "500 credits", credits: 500, amount: 600, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_500 || "price_1USYnZFVGcR0rD8f6vkdtUkF" },
+  { id: "credits_2000", label: "2000 credits", credits: 2000, amount: 2000, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_2000 || "price_1USYnZFVGcR0rD8fvGPpkx01" },
 ]
 
 // Every price above carries a hardcoded TEST-mode price id (account
 // acct_1Qag9KFVGcR0rD8f, `livemode: false`, verified against the Stripe API on
-// 2026-09-20) when its env var is unset. Stripe ids do not cross modes, so these ids are
+// 2026-10-20) when its env var is unset. Stripe ids do not cross modes, so these ids are
 // now only a fallback: `createCheckoutSession` resolves the price by lookup_key first
 // (see ./stripe-price-resolution), which is mode- and environment-independent. The id is
 // what the resolver returns when the key is missing or Stripe is unreachable, so a
@@ -579,8 +751,9 @@ const PRICE_ENV_KEYS: Array<keyof typeof env> = [
   "STRIPE_PRICE_STARTER_QUARTERLY", "STRIPE_PRICE_STARTER_ANNUAL",
   "STRIPE_PRICE_PRO_PAYG", "STRIPE_PRICE_PRO_MONTHLY",
   "STRIPE_PRICE_PRO_QUARTERLY", "STRIPE_PRICE_PRO_ANNUAL",
-  "STRIPE_PRICE_ENTERPRISE_MONTHLY", "STRIPE_PRICE_ENTERPRISE_QUARTERLY",
-  "STRIPE_PRICE_ENTERPRISE_ANNUAL", "STRIPE_PRICE_CREDITS_100",
+  // No STRIPE_PRICE_ENTERPRISE_*: Enterprise has no self-serve price to fall back to, so a
+  // missing variable there is not a warning worth printing on every cold start.
+  "STRIPE_PRICE_CREDITS_100",
   "STRIPE_PRICE_CREDITS_500", "STRIPE_PRICE_CREDITS_2000",
 ]
 
@@ -595,19 +768,35 @@ if (missingPriceEnv.length) {
 }
 
 const getFeaturesFromPlan = (plan: BillingPlanTier): Record<string, boolean> => {
+  // Every token a plan may carry. These are the plan's COMPONENTS, and each one names a
+  // capability the code actually grants -- the pricing page renders this list, so a token
+  // without a matching rule is an advertisement, and a missing token is a feature the
+  // customer paid for and cannot see.
   const allFeatures = [
-    "basic_markdown",
-    "single_project",
+    "extraction_suite",
     "structured_extraction",
     "session_reuse",
+    "schema_compiler",
+    "monitors",
+    "ai_providers",
+    "community_support",
+    "crawl_api",
+    "capacity_tools",
+    "browser_session_dedicated",
+    "browser_session_byo",
+    "live_view",
+    "credential_vault",
+    "machine_leasing",
     "anti_bot",
     "identity_crawling",
     "high_concurrency",
+    "proxy_rotation",
     "priority_support",
+    "dedicated_support",
     "sso",
     "audit_logs",
-    "dedicated_support",
     "custom_limits",
+    "unlimited_usage",
   ]
 
   const selected = billingPlanCatalog.find((item) => item.id === plan)?.features || []
@@ -648,6 +837,26 @@ const getDefaultBillingForPlan = (plan: BillingPlanTier = "free"): UserBilling =
   }
 }
 
+/**
+ * The same plan defaults, minus the credit map — for every MERGE write.
+ *
+ * `set(..., { merge: true })` deep-merges nested maps, so spreading the full
+ * default into a partial update wrote `purchasedBalance: 0` and
+ * `includedBalance: 0` over a customer's real wallet. Every plan transition did
+ * that: subscribe, resume, cancel, trial start, trial expiry, and the admin
+ * downgrade sweep. A customer who bought 500 credits and then subscribed lost
+ * them, and no ledger could reconstruct it.
+ *
+ * A full default is correct only where the document does not exist yet.
+ * @param {BillingPlanTier} plan The plan whose defaults to build.
+ * @return {Partial<UserBilling>} Those defaults, without `credits`.
+ */
+const billingDefaultsForMerge = (plan: BillingPlanTier = "free"): Partial<UserBilling> => {
+  const defaults: Partial<UserBilling> = { ...getDefaultBillingForPlan(plan) }
+  delete defaults.credits
+  return defaults
+}
+
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export const submitEnterprisePlanRequest = onCallv2(
@@ -669,6 +878,10 @@ export const submitEnterprisePlanRequest = onCallv2(
 
     const workspaceName = typeof req.data?.workspaceName === "string" ? req.data.workspaceName.trim().slice(0, 120) : ""
     const selectedPlan = typeof req.data?.selectedPlan === "string" ? req.data.selectedPlan : null
+    // Which surface asked. Two entry points share this callable (onboarding and the billing
+    // plans page), and a sales queue that cannot tell them apart cannot measure either.
+    // An allowlist rather than a free string, so the field stays a small closed vocabulary.
+    const source = req.data?.source === "billing_plans" ? "billing_plans" : "service_onboarding"
     const adminRecipients = env.ADMIN_EMAILS.map((item) => item.toLowerCase())
 
     await db.collection("admin_email_requests").add({
@@ -680,7 +893,7 @@ export const submitEnterprisePlanRequest = onCallv2(
       selectedPlan: selectedPlan || null,
       notifyAdmins: adminRecipients,
       status: "pending",
-      source: "service_onboarding",
+      source,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     })
@@ -712,6 +925,12 @@ const inferPayAsYouGoPlanFromPayment = (args: {
     }
 
     const payg = plan.prices.payAsYouGo
+    // A sales-led tier has no pay-as-you-go price at all, and a one-off payment can never
+    // be for it rather than for the cheapest plan that happens to share an amount.
+    if (!payg) {
+      return false
+    }
+
     return payg.amount === args.amount && payg.currency.toLowerCase() === currency
   })
 
@@ -1108,12 +1327,69 @@ export async function createCustomer(firebaseUser: StripeCustomerInput): Promise
 }
 
 
+/**
+ * A subscription's current billing period, in seconds since the epoch.
+ *
+ * Stripe's 2025-03-31 API version ("basil") moved the billing period from the
+ * subscription onto its items -- "Adds subscription item-level billing periods and
+ * removes subscription-level periods". So on any subscription retrieved or delivered
+ * under that version, `subscription.current_period_start` and
+ * `subscription.current_period_end` are simply absent. This repo's typings are
+ * `stripe@17` (2024 acacia), which still declares both fields, so `tsc` cannot warn.
+ *
+ * Unfixed, this was not a cosmetic null. Four call sites built a date with
+ * `new Date(subscription.current_period_start * 1000).toISOString()`, and
+ * `new Date(undefined * 1000)` is an Invalid Date whose `toISOString()` THROWS a
+ * RangeError. A `trialing` subscription -- or any `customer.subscription.*` event for
+ * one -- would have failed inside the handler instead of recording a wrong date.
+ *
+ * The subscription-level fields are still read when present, because events queued
+ * before the endpoint version moved may still carry them. Item first, subscription
+ * second, `billing_cycle_anchor` last as the only start the object always has.
+ */
+type SubscriptionPeriod = {start: number | null; end: number | null}
+
+type SubscriptionPeriodSource = {
+  current_period_start?: number | null
+  current_period_end?: number | null
+  billing_cycle_anchor?: number | null
+  items?: {data?: Array<{current_period_start?: number | null; current_period_end?: number | null}>}
+}
+
+const asEpochSeconds = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null
+
+/**
+ * Epoch seconds to an ISO string, or null. Never throws on a missing value.
+ * @param {*} seconds Seconds since the epoch, or null.
+ * @return {*} The ISO-8601 string, or null.
+ */
+const toIsoOrNull = (seconds: number | null): string | null =>
+  seconds === null ? null : new Date(seconds * 1000).toISOString()
+
+/**
+ * Read the billing period from an item first, then the subscription, then the anchor.
+ * @param {unknown} subscription A Stripe subscription, whatever version shaped it.
+ * @return {SubscriptionPeriod} Start and end in epoch seconds, either may be null.
+ */
+export const getSubscriptionPeriod = (subscription: unknown): SubscriptionPeriod => {
+  const source = (subscription || null) as SubscriptionPeriodSource | null
+  const item = source?.items?.data?.[0]
+
+  return {
+    start: asEpochSeconds(item?.current_period_start) ?? asEpochSeconds(source?.current_period_start) ?? asEpochSeconds(source?.billing_cycle_anchor),
+    end: asEpochSeconds(item?.current_period_end) ?? asEpochSeconds(source?.current_period_end),
+  }
+}
+
   const getSubscriptionCycleFields = (subscription: Stripe.Subscription): Partial<UserBilling> => {
+    const period = getSubscriptionPeriod(subscription)
+
     return {
       cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
-      cancelAt: subscription.cancel_at ? new Date(subscription.cancel_at * 1000).toISOString() : null,
-      currentPeriodStart: subscription.current_period_start ? new Date(subscription.current_period_start * 1000).toISOString() : null,
-      currentPeriodEnd: subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null,
+      cancelAt: toIsoOrNull(asEpochSeconds(subscription.cancel_at)),
+      currentPeriodStart: toIsoOrNull(period.start),
+      currentPeriodEnd: toIsoOrNull(period.end),
     }
   }
 /* Firebase Functions for stripe Workflow */
@@ -1249,18 +1525,25 @@ export const validateStripeCatalog = onCallv2(
 
     const priceRefs = [
       ...billingPlanCatalog.flatMap((plan) =>
-        (Object.keys(plan.prices) as BillingInterval[])
-          .map((interval) => ({
-            id: plan.prices[interval].stripePriceId,
+        (Object.keys(plan.prices) as BillingInterval[]).flatMap((interval) => {
+          const price = plan.prices[interval]
+          // Only intervals the plan actually lists. A missing `payAsYouGo` is a tier that
+          // is not sold that way, not a price that lost its id.
+          if (!price?.stripePriceId) {
+            return []
+          }
+
+          return [{
+            id: price.stripePriceId,
             lookupKey: lookupKeyForPlan(plan.id, interval),
             type: "plan" as const,
             ref: `${plan.id}:${interval}`,
-            expectedAmount: plan.prices[interval].amount,
-            expectedCurrency: plan.prices[interval].currency,
+            expectedAmount: price.amount,
+            expectedCurrency: price.currency,
             expectedRecurring: interval !== "payAsYouGo",
             expectedMonths: interval === "payAsYouGo" ? null : expectedPlanMonths[interval],
-          }))
-          .filter((item) => Boolean(item.id)),
+          }]
+        }),
       ),
       ...creditPackCatalog
         .map((pack) => ({
@@ -1476,7 +1759,7 @@ export const getMyEntitlements = onCallv2(
 
     if (isBillingRestrictedUser(user, tokenRole)) {
       const restrictedBilling: Partial<UserBilling> = {
-        ...getDefaultBillingForPlan("free"),
+        ...billingDefaultsForMerge("free"),
         plan: "free",
         status: "inactive",
         subscriptionId: null,
@@ -1565,7 +1848,7 @@ export const getMyEntitlements = onCallv2(
             ...getSubscriptionCycleFields(latestActiveRecurring),
             ...(latestActiveRecurring.status === "trialing" ? {
               trialPlanTarget: recurringMatch.plan,
-              trialStartedAt: new Date(latestActiveRecurring.current_period_start * 1000).toISOString(),
+              trialStartedAt: toIsoOrNull(getSubscriptionPeriod(latestActiveRecurring).start),
               trialEndsAt: latestActiveRecurring.trial_end ? new Date(latestActiveRecurring.trial_end * 1000).toISOString() : null,
               trialUsedAt: new Date().toISOString(),
               trialCreditCapEur: TRIAL_DEFAULT_CREDIT_CAP_EUR,
@@ -1607,7 +1890,7 @@ export const getMyEntitlements = onCallv2(
 
         if (inferredPlan) {
           const paygBilling = {
-            ...getDefaultBillingForPlan(inferredPlan),
+            ...billingDefaultsForMerge(inferredPlan),
             plan: inferredPlan,
             planInterval: "payAsYouGo" as BillingInterval,
             status: "active",
@@ -1665,7 +1948,16 @@ export const startTrial = onCallv2(
     const endsAt = new Date(now.getTime() + TRIAL_PERIOD_DAYS * 24 * 60 * 60 * 1000)
 
     const trialBilling: Partial<UserBilling> = {
-      ...getDefaultBillingForPlan("trial"),
+      ...billingDefaultsForMerge("trial"),
+      // The 160 trial credits are granted HERE, explicitly. The merge no longer
+      // inherits the default credit map — that inheritance is what used to zero a
+      // customer's purchased balance — so the grant and the preservation are both
+      // stated. A free user holding bought credits keeps them through a trial.
+      credits: {
+        ...getDefaultBillingForPlan("trial").credits,
+        purchasedBalance: billing?.credits?.purchasedBalance || 0,
+        purchasedReserved: billing?.credits?.purchasedReserved || 0,
+      },
       plan: "trial",
       status: "active",
       subscriptionId: null,
@@ -1698,10 +1990,104 @@ export const startTrial = onCallv2(
   },
 )
 
-// ponytail: the consume rows are scanned flat and capped - the ledger subcollection has no
-// range index, and one user's ledger stays small. Add a createdAt range index if a heavy
-// user's ledger ever approaches this.
+// ponytail: the period's ledger rows are read newest-first and capped. Hitting the cap
+// still truncates a very heavy user's period, but it now drops the OLDEST rows of that
+// period instead of an arbitrary document-id slice of all time. Paginate if a ledger ever
+// approaches this.
 const USAGE_LEDGER_SCAN_LIMIT = 500
+
+/** One row from `users/{uid}/credits_ledger`, as the report reads it. */
+export type MeteredConsumeRow = {
+  operation?: string | null
+  delta?: number
+  reason?: string | null
+  source?: string | null
+  machineId?: string | null
+  createdAt?: { toMillis?: () => number }
+}
+
+/** A capability's share of the period, keyed by the action the pricing policy charged. */
+export type MeteredUsageTotal = {
+  key: string
+  credits: number
+  events: number
+  /**
+   * How many DISTINCT machines those events came from.
+   *
+   * Only the session meter writes `machineId`, so a capability charged per request
+   * reports 0 rather than a misleading 1. It exists because `meter:block` is the
+   * same reason on every block of every session: without a distinct count the
+   * report could say browser time cost 47 credits but not whether that was one
+   * long lease or six short ones. Rows written before the field existed also count
+   * 0, which is why it is reported rather than rendered as a hard number.
+   */
+  machines: number
+}
+
+/**
+ * Totals, and a per-capability breakdown, from one pass over the consume ledger.
+ *
+ * The ledger already records why a credit was taken — `reason` is the pricing policy's own
+ * action name, written at charge time — so "what did I actually pay for" needs no second
+ * collection and no second query. `source` is the fallback for rows written before `reason`
+ * existed, and a row with neither still contributes to the total under `unknown` rather than
+ * being dropped: a total that disagrees with the sum of its parts is worse than an unnamed
+ * bucket.
+ *
+ * Pure and exported so the spec can pin the window, the grouping and the ordering without a
+ * callable or a Firestore emulator.
+ *
+ * @param {*} rows Ledger rows for this user, in any order. Rows whose
+ *   `operation` is present and is not `consume` are skipped: the report's read
+ *   is bounded by `createdAt` alone, so a period's grants and reservations
+ *   arrive alongside its consumes, and a grant's positive delta would otherwise
+ *   be reported as spend. A row with no `operation` predates the field and is
+ *   still counted.
+ * @param {*} window Inclusive bounds of the reporting period.
+ * @return {*} Credits in range, plus the breakdown sorted by credits descending.
+ */
+export const summarizeMeteredConsumes = (
+  rows: MeteredConsumeRow[],
+  window: {startMs: number, endMs: number},
+): {creditsUsed: number, metered: MeteredUsageTotal[]} => {
+  const totals = new Map<string, MeteredUsageTotal>()
+  const machinesByKey = new Map<string, Set<string>>()
+  let creditsUsed = 0
+
+  for (const row of rows) {
+    if (row.operation && row.operation !== "consume") {
+      continue
+    }
+
+    const at = row.createdAt?.toMillis?.() || 0
+    if (at < window.startMs || at > window.endMs) {
+      continue
+    }
+
+    const credits = Math.abs(Number(row.delta || 0))
+    creditsUsed += credits
+    if (credits <= 0) {
+      continue
+    }
+
+    const key = (row.reason || row.source || "unknown").trim() || "unknown"
+    const current = totals.get(key) || {key, credits: 0, events: 0, machines: 0}
+    current.credits += credits
+    current.events += 1
+    totals.set(key, current)
+
+    const machineId = typeof row.machineId === "string" ? row.machineId.trim() : ""
+    if (machineId) {
+      const seen = machinesByKey.get(key) || new Set<string>()
+      seen.add(machineId)
+      machinesByKey.set(key, seen)
+      current.machines = seen.size
+    }
+  }
+
+  const metered = [...totals.values()].sort((a, b) => b.credits - a.credits)
+  return {creditsUsed, metered}
+}
 
 export const getBillingUsage = onCallv2(
   { secrets: stripeSecrets, enforceAppCheck: false },
@@ -1736,15 +2122,22 @@ export const getBillingUsage = onCallv2(
     // `projects/{projectId}` trigger increments and the credits ledger records what was
     // actually consumed; Stripe knows neither number, which is why the meter chart that used
     // to sit below could never fill itself.
+    //
+    // Bounded to the reporting window and read newest-first. Without an `orderBy`, `limit`
+    // returns an arbitrary document-id slice of the WHOLE ledger, so a heavy user's period
+    // could come back empty. `createdAt` is the only field this query filters, so its
+    // automatic single-field index serves it; adding the `operation` equality alongside the
+    // range would need a composite index this project does not declare, so
+    // `summarizeMeteredConsumes` drops the non-consume rows instead.
     const consumeLedger = await db.collection(`users/${userId}/credits_ledger`)
-      .where("operation", "==", "consume")
+      .where("createdAt", ">=", new Date(window.startMs))
+      .where("createdAt", "<=", new Date(window.endMs))
+      .orderBy("createdAt", "desc")
       .limit(USAGE_LEDGER_SCAN_LIMIT)
       .get()
-    const creditsUsedInRange = consumeLedger.docs.reduce((acc, entry) => {
-      const row = entry.data() as { delta?: number, createdAt?: { toMillis?: () => number } }
-      const at = row.createdAt?.toMillis?.() || 0
-      return at >= window.startMs && at <= window.endMs ? acc + Math.abs(Number(row.delta || 0)) : acc
-    }, 0)
+    const consumeRows = consumeLedger.docs.map((entry) => entry.data() as MeteredConsumeRow)
+    const {creditsUsed: creditsUsedInRange, metered} = summarizeMeteredConsumes(consumeRows, window)
+
     const creditsSnap = await db.doc(`users/${userId}/billing/current`).get()
     const credits = creditsSnap.data() as UserBilling | undefined
     const usage = {
@@ -1753,6 +2146,7 @@ export const getBillingUsage = onCallv2(
       includedCredits: getIncludedCreditsAvailable(credits),
       purchasedCredits: getPurchasedCreditsAvailable(credits),
       creditsUsedInRange,
+      metered,
     }
 
     const emptyResponse = {
@@ -1925,7 +2319,6 @@ export const createCheckoutSession = onCallv2(
       interval = "monthly",
       successUrl,
       cancelUrl,
-      quantity = 1,
       customCredits,
       checkoutRequestId,
     } = req.data as {
@@ -1933,7 +2326,6 @@ export const createCheckoutSession = onCallv2(
       interval?: BillingInterval
       successUrl: string
       cancelUrl: string
-      quantity?: number
       customCredits?: number
       checkoutRequestId?: string
     }
@@ -1994,6 +2386,26 @@ export const createCheckoutSession = onCallv2(
     }
 
     const selectedPlanPrice = selectedPlan ? selectedPlan.prices[interval] : undefined
+
+    // A sales-led tier is refused HERE, not merely hidden in the UI. The client cannot start
+    // this checkout and neither can a crafted call: hiding a button is not a policy.
+    if (selectedPlan?.salesLed) {
+      throw new HttpsError(
+        "failed-precondition",
+        `${selectedPlan.label} is arranged with our sales team. Contact sales to set it up.`,
+      )
+    }
+
+    // The interval the plan does not sell. Enterprise lost `payAsYouGo` in this change, and
+    // without this check the request would fall through to "Stripe price id is missing",
+    // which tells an operator nothing about what they actually asked for.
+    if (selectedPlan && !selectedPlanPrice) {
+      throw new HttpsError(
+        "failed-precondition",
+        `${selectedPlan.label} is not sold on the ${interval} interval`,
+      )
+    }
+
     const catalogPriceId = isCreditPack ? selectedPack?.stripePriceId : selectedPlanPrice?.stripePriceId
     // Resolve by lookup_key first so one deployment works in test and live, falling back
     // to the catalog id, which is what this did before the resolver existed.
@@ -2049,7 +2461,10 @@ export const createCheckoutSession = onCallv2(
       quantity: normalizedCustomCredits,
     }] : [{
       price: stripePriceId,
-      quantity: isCreditPack ? Math.max(1, quantity) : 1,
+      // Always one. The webhook credits `pack.credits` exactly once, and both the
+      // refund reversal and the metadata assume a single pack — so honouring a
+      // caller-supplied `quantity` charged 3x the price and still granted 1x.
+      quantity: 1,
     }]
 
     // What currency the customer is shown. Stripe Tax never reads this - it uses the
@@ -2116,7 +2531,7 @@ export const createCheckoutSession = onCallv2(
       client_reference_id: userId,
       allow_promotion_codes: true,
     }, {
-      idempotencyKey: `checkout_${userId}_${planId}_${interval}_${isCustomCredits ? normalizedCustomCredits : Math.max(1, quantity)}_${normalizedCheckoutRequestId}`,
+      idempotencyKey: `checkout_${userId}_${planId}_${interval}_${isCustomCredits ? normalizedCustomCredits : 1}_${normalizedCheckoutRequestId}`,
     })
 
     return {
@@ -2206,7 +2621,7 @@ export const resumeSubscriptionCancellation = onCallv2(
      "trial" : (recurringMatch?.plan || currentPlan)
 
     const updatedBilling = {
-      ...getDefaultBillingForPlan(effectivePlan),
+      ...billingDefaultsForMerge(effectivePlan),
       plan: effectivePlan,
       planInterval: recurringMatch?.interval || billing?.planInterval || null,
       status: updatedSubscription.status,
@@ -2215,7 +2630,7 @@ export const resumeSubscriptionCancellation = onCallv2(
       ...getSubscriptionCycleFields(updatedSubscription),
       ...(updatedSubscription.status === "trialing" ? {
         trialPlanTarget: recurringMatch?.plan || billing?.trialPlanTarget || "pro",
-        trialStartedAt: billing?.trialStartedAt || new Date(updatedSubscription.current_period_start * 1000).toISOString(),
+        trialStartedAt: billing?.trialStartedAt || toIsoOrNull(getSubscriptionPeriod(updatedSubscription).start),
         trialEndsAt: updatedSubscription.trial_end ? new Date(updatedSubscription.trial_end * 1000).toISOString() : null,
         trialUsedAt: billing?.trialUsedAt || new Date().toISOString(),
         trialCreditCapEur: billing?.trialCreditCapEur || TRIAL_DEFAULT_CREDIT_CAP_EUR,
@@ -2324,10 +2739,23 @@ export const computeRefundCreditReversal = (
 
 const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<void> => {
   switch (event.type) {
-  case "checkout.session.completed": {
+  case "checkout.session.completed":
+  // A delayed-notification method (SEPA/ACH/BNPL) completes first and pays days
+  // later, so the grant has to be reachable from BOTH events. It is idempotent on
+  // the session id, so an account charged by card at completion cannot be credited
+  // twice.
+  // falls through
+  case "checkout.session.async_payment_succeeded": {
     const session = event.data.object as Stripe.Checkout.Session
     const uid = session.metadata?.uid || session.client_reference_id
     if (!uid) {
+      break
+    }
+
+    // `completed` fires with `payment_status: "unpaid"` for those methods. Granting
+    // there minted credits before the money cleared, and `async_payment_failed`
+    // fell into `default:` and was ignored — free credits, repeatably.
+    if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") {
       break
     }
 
@@ -2335,7 +2763,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     const protectedUser = protectedUserSnap.data() as Users | undefined
     if (isBillingRestrictedUser(protectedUser)) {
       const restrictedSessionBilling = {
-        ...getDefaultBillingForPlan("free"),
+        ...billingDefaultsForMerge("free"),
         plan: "free" as BillingPlanTier,
         status: "inactive",
         subscriptionId: null,
@@ -2391,7 +2819,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
           effectivePlan = "trial"
           trialMeta = {
             trialPlanTarget: selectedPlan,
-            trialStartedAt: new Date(subscription.current_period_start * 1000).toISOString(),
+            trialStartedAt: toIsoOrNull(getSubscriptionPeriod(subscription).start),
             trialEndsAt: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
             trialUsedAt: new Date().toISOString(),
             trialCreditCapEur: TRIAL_DEFAULT_CREDIT_CAP_EUR,
@@ -2400,7 +2828,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       }
 
       const checkoutBilling = {
-        ...getDefaultBillingForPlan(effectivePlan),
+        ...billingDefaultsForMerge(effectivePlan),
         status: effectiveStatus,
         subscriptionId: effectiveSubscriptionId,
         planInterval: selectedInterval,
@@ -2544,7 +2972,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       }
     }
 
-    const subscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : billing?.subscriptionId || null
+    const subscriptionId = getInvoiceSubscriptionId(invoice) || billing?.subscriptionId || null
     const shouldGrantIncludedCredits = Boolean(
       subscriptionId &&
       plan &&
@@ -2661,7 +3089,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     }
 
     const paymentIntentBilling = {
-      ...getDefaultBillingForPlan(inferredPlan),
+      ...billingDefaultsForMerge(inferredPlan),
       plan: inferredPlan,
       planInterval: "payAsYouGo" as BillingInterval,
       status: "active",
@@ -2763,7 +3191,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       ...getSubscriptionCycleFields(subscription),
       ...(subscription.status === "trialing" ? {
         trialPlanTarget: recurringMatch.plan,
-        trialStartedAt: new Date(subscription.current_period_start * 1000).toISOString(),
+        trialStartedAt: toIsoOrNull(getSubscriptionPeriod(subscription).start),
         trialEndsAt: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
         trialUsedAt: new Date().toISOString(),
         trialCreditCapEur: TRIAL_DEFAULT_CREDIT_CAP_EUR,
@@ -2795,7 +3223,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     }
 
     const cancelledBilling = {
-      ...getDefaultBillingForPlan("free"),
+      ...billingDefaultsForMerge("free"),
       status: "inactive",
       cancelAtPeriodEnd: false,
       cancelAt: null,
@@ -2925,7 +3353,16 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
           source: "stripe_refund",
           operation: "adjust",
           reason: "refund_reversal",
-          idempotencyKey: `refund:${charge.id}:${refundedAmount}`,
+          // Keyed on the CHARGE, not the cumulative refunded amount. The amount
+          // version minted a new key for every partial refund while the arithmetic
+          // stayed cumulative (`floor(pack * refunded / amount)`), so a second €5
+          // refund on a €20 pack reversed 1000 credits where 500 was right — 1500
+          // clawed back for 1000. Never over-debiting is the platform's rule.
+          // shortcut: one reversal per charge, so a chain of partial refunds
+          // under-recovers. Upgrade to lot accounting (a state doc holding the
+          // reversed total, read and written in one transaction) if partial refunds
+          // of the same charge become common.
+          idempotencyKey: `refund:${charge.id}`,
           metadata: {chargeId: charge.id, amountRefunded: refundedAmount, credits: refundReversal},
         },
       })
@@ -3076,8 +3513,7 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       break
     }
 
-    const subscriptionRef = upcoming.subscription
-    const upcomingSubscriptionId = typeof subscriptionRef === "string" ? subscriptionRef : subscriptionRef?.id || null
+    const upcomingSubscriptionId = getInvoiceSubscriptionId(upcoming)
     const upcomingAmount = Number(upcoming.amount_due || 0)
     if (!upcomingSubscriptionId || upcomingAmount <= 0) {
       break
@@ -3372,6 +3808,10 @@ export const updateUsage = onDocumentCreated(
     return userRef.update({ currentUsage: nextUsage })
   })
 
+// A fat-fingered extra zero was otherwise unbounded: the ledger records it, and
+// nothing refused it.
+const MAX_PROMOTIONAL_CREDITS = 100000
+
 export const grantPromotionalCredits = onCallv2(
   { secrets: stripeSecrets, enforceAppCheck: false },
   async (req) => {
@@ -3385,20 +3825,32 @@ export const grantPromotionalCredits = onCallv2(
       throw new HttpsError("permission-denied", "Only admins can grant promotional credits")
     }
 
-    const { targetUserId, credits, reason = "promotional_credit" } = req.data as {
+    const { targetUserId, credits, reason = "promotional_credit", requestId } = req.data as {
       targetUserId: string
       credits: number
       reason?: string
+      requestId: string
     }
 
     const normalizedTargetUserId = String(targetUserId || "").trim()
     const normalizedReason = String(reason || "").trim() || "promotional_credit"
+    const normalizedRequestId = String(requestId || "").trim()
 
     if (!normalizedTargetUserId || !Number.isFinite(credits) || credits <= 0) {
       throw new HttpsError("invalid-argument", "targetUserId and positive credits are required")
     }
 
+    // Mandatory, not optional: a promotional grant has no invoice, payment intent
+    // or session to key on, so without a caller token the ledger document id is
+    // random and the same click mints again on every retry.
+    if (!normalizedRequestId) {
+      throw new HttpsError("invalid-argument", "requestId is required so a retried grant cannot mint twice")
+    }
+
     const normalizedCredits = Math.floor(credits)
+    if (normalizedCredits > MAX_PROMOTIONAL_CREDITS) {
+      throw new HttpsError("invalid-argument", `A single grant is limited to ${MAX_PROMOTIONAL_CREDITS} credits`)
+    }
 
     await addCreditsLedgerEntry({
       uid: normalizedTargetUserId,
@@ -3407,6 +3859,7 @@ export const grantPromotionalCredits = onCallv2(
       bucket: "purchased",
       grantedBy: actorUid,
       reason: normalizedReason,
+      requestId: normalizedRequestId,
     })
 
     await db.collection("audit_logs").add({
@@ -3415,6 +3868,9 @@ export const grantPromotionalCredits = onCallv2(
       target_userId: normalizedTargetUserId,
       credits: normalizedCredits,
       reason: normalizedReason,
+      // Correlates the audit row with the ledger row the key produced, so a
+      // suspicious grant can be traced both ways.
+      requestId: normalizedRequestId,
       timestamp: FieldValue.serverTimestamp(),
     })
 
@@ -3912,7 +4368,7 @@ export const downgradePastDueAccounts = onSchedule(
       }
 
       const downgradedBilling = {
-        ...getDefaultBillingForPlan("free"),
+        ...billingDefaultsForMerge("free"),
         plan: "free" as BillingPlanTier,
         status: "inactive",
         subscriptionId: null,
@@ -3975,9 +4431,17 @@ export const expireStaleCredits = onSchedule(
     const nowIso = now.toISOString()
 
     // Find all credit grant ledger entries that have expired.
+    //
+    // `expiresAt > ""` is load-bearing, not decoration. Every ledger row is
+    // written with `expiresAt: <null>` when the caller sets no expiry
+    // (`billing-credits.ts`), and Firestore sorts null BELOW every string — so
+    // the `<=` alone matched every grant ever written and this job deducted the
+    // sum of all of them from each wallet. The second inequality turns the two
+    // into the range `("", nowIso]`, which cannot contain null.
     const expiredLedgerSnap = await db.collectionGroup("credits_ledger")
       .where("operation", "==", "grant")
       .where("expiresAt", "<=", nowIso)
+      .where("expiresAt", ">", "")
       .limit(500)
       .get()
 
@@ -4085,8 +4549,11 @@ export const expireStaleCredits = onSchedule(
       })
 
       for (const entryDoc of userLedgerEntries) {
+        // Clearing `expiresAt` IS the idempotency. Writing only `expiredAt` left the
+        // row matching `expiresAt <= now` on every later run, so the same credits
+        // were deducted again six hours later — for ever.
         deletions.push(
-          entryDoc.ref.set({ expiredAt: nowIso }, { merge: true }).catch(() => undefined),
+          entryDoc.ref.set({ expiredAt: nowIso, expiresAt: null }, { merge: true }).catch(() => undefined),
         )
       }
 
@@ -4138,14 +4605,22 @@ export const checkStripeCatalogHealth = onSchedule(
     // amount is the honest test here, because a sellable price that lost its id is exactly
     // what this check exists to catch.
     const entries = [
-      ...billingPlanCatalog.flatMap((plan) =>
-        (Object.keys(plan.prices) as BillingInterval[])
-          .filter((interval) => plan.prices[interval].amount > 0)
-          .map((interval) => ({
-            key: lookupKeyForPlan(plan.id, interval),
-            fallbackId: plan.prices[interval].stripePriceId,
-          })),
-      ),
+      ...billingPlanCatalog.flatMap((plan) => {
+        // A sales-led tier is not sold by price id, so asking Stripe about its lookup keys
+        // would report a failure every hour for a tier that is working exactly as intended.
+        if (plan.salesLed) {
+          return []
+        }
+
+        return (Object.keys(plan.prices) as BillingInterval[]).flatMap((interval) => {
+          const price = plan.prices[interval]
+          if (!price || price.amount <= 0) {
+            return []
+          }
+
+          return [{key: lookupKeyForPlan(plan.id, interval), fallbackId: price.stripePriceId}]
+        })
+      }),
       ...creditPackCatalog.map((pack) => ({
         key: lookupKeyForCredits(pack.credits),
         fallbackId: pack.stripePriceId,

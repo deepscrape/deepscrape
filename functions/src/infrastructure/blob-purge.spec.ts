@@ -75,9 +75,10 @@ const storeOver = (pages: StoredBlob[][], vaultPages: StoredBlob[][] = []) => {
 describe("purgeAccountBlobs", () => {
   it("sweeps both of the caller's namespaces, and nothing else", async () => {
     const {store, deleted, prefixes} = storeOver([pageOf(2, "a")])
-    const count = await purgeAccountBlobs("uid-1", store)
+    const {deleted: count, complete} = await purgeAccountBlobs("uid-1", store)
 
     assert.equal(count, 2)
+    assert.equal(complete, true, "a short page means the sweep finished")
     assert.deepEqual(deleted, ["a/0", "a/1"])
     // The load-bearing assertion: both prefixes are derived from this uid, so
     // neither can reach another account's objects.
@@ -98,7 +99,7 @@ describe("purgeAccountBlobs", () => {
       [pageOf(2, "vault/uid-1/github")],
     )
 
-    const count = await purgeAccountBlobs("uid-1", store)
+    const {deleted: count} = await purgeAccountBlobs("uid-1", store)
 
     assert.equal(count, 3)
     assert.ok(deleted.includes("vault/uid-1/github/0"))
@@ -125,9 +126,10 @@ describe("purgeAccountBlobs", () => {
       pageOf(3, "tail"),
     ])
 
-    const count = await purgeAccountBlobs("uid-1", store)
+    const {deleted: count, complete} = await purgeAccountBlobs("uid-1", store)
 
     assert.equal(count, LIST_LIMIT + 3)
+    assert.equal(complete, true)
     assert.equal(deleted.length, LIST_LIMIT + 3)
     // Three listings: the full artifact page, the short one that ended that
     // walk, then the vault namespace's single empty answer.
@@ -146,8 +148,11 @@ describe("purgeAccountBlobs", () => {
     const originalWarn = console.warn
     console.warn = (...args: unknown[]) => warnings.push(args)
     let count = 0
+    let complete = true
     try {
-      count = await purgeAccountBlobs("uid-1", store)
+      const swept = await purgeAccountBlobs("uid-1", store)
+      count = swept.deleted
+      complete = swept.complete
     } finally {
       console.warn = originalWarn
     }
@@ -155,5 +160,9 @@ describe("purgeAccountBlobs", () => {
     assert.equal(count, BLOB_PURGE_MAX_PAGES * LIST_LIMIT)
     assert.equal(deleted.length, BLOB_PURGE_MAX_PAGES * LIST_LIMIT)
     assert.equal(warnings.length, 1, "hitting the ceiling must be visible")
+    // The whole point of the return type: a truncated sweep must say so, because
+    // the caller records `purgedAt` on a count it trusts and nothing would ever
+    // sweep the remainder afterwards.
+    assert.equal(complete, false, "a truncated sweep is NOT a finished erasure")
   })
 })

@@ -68,6 +68,25 @@ export type AiVendorId =
  */
 export type ProviderKeyId = AiVendorId | ScrapeProviderId
 
+/**
+ * The Secret Manager id for one user's key for one vendor.
+ *
+ * Lives HERE rather than in the callable that writes it, because the ERASURE path
+ * has to derive it too: `accountSecrets` enumerates every id a uid can own, and
+ * that registry's rule is that an id comes from its owning helper rather than
+ * being rebuilt at the call site. Two builders would be two answers to "where is
+ * this credential stored", and the loser is a credential surviving an erase that
+ * reported success.
+ *
+ * Deterministic, so a save and a later read agree without storing the name twice,
+ * and scoped by uid so one account's secret is not reachable from another's.
+ * @param {string} uid The verified caller uid.
+ * @param {ProviderKeyId} vendor The AI vendor or scrape reader.
+ * @return {string} The Secret Manager id.
+ */
+export const aiKeySecretId = (uid: string, vendor: ProviderKeyId): string =>
+  `ai-key-${uid}-${vendor}`
+
 export interface AiVendorDescriptor {
   id: AiVendorId
   /** i18n key for the display name, so this catalogue carries no English. */

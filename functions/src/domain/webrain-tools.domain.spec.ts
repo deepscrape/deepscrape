@@ -18,6 +18,7 @@ import {
   VAULT_TOOLS,
   decideWebrainTool,
   isEndpointCookieCall,
+  isPageStateCall,
   needsCallerOwnWorker,
   isSessionTool,
   needsExclusiveWorker,
@@ -235,6 +236,87 @@ describe("needsCallerOwnWorker", () => {
   })
 })
 
+describe("isPageStateCall", () => {
+  it("covers extract unconditionally, because it takes no url at all", () => {
+    // `extractArguments` REFUSES a `url`, so the worker's current page is the
+    // only thing the tool can read. On a pooled worker that page belongs to
+    // whoever was there last: the lease is `EX 120` around one request and
+    // nothing resets the browser between tenants.
+    assert.equal(isPageStateCall("webrain_extract"), true)
+    assert.equal(isPageStateCall("webrain_extract", {}), true)
+  })
+
+  it("covers only the `page` op of pdf", () => {
+    // The other three ops require a `path`/`paths` the caller supplied, so they
+    // address a file rather than a page. Refusing them too would take a working
+    // URL/path conversion away for no security gain.
+    assert.equal(isPageStateCall("webrain_pdf", {op: "page"}), true)
+    for (const op of ["extract", "render", "images"]) {
+      assert.equal(isPageStateCall("webrain_pdf", {op}), false, op)
+    }
+  })
+
+  it("does not treat a pdf call with no op as a page read", () => {
+    // A missing op never reaches the worker -- `pdfArguments` refuses it -- so
+    // reading it as `page` would refuse a call that is about to fail anyway.
+    assert.equal(isPageStateCall("webrain_pdf"), false)
+    assert.equal(isPageStateCall("webrain_pdf", {}), false)
+  })
+
+  it("covers observe, which reads whatever page the worker is on", () => {
+    // The gap, and it was live: observe's handler comment claimed
+    // `SHARED_UNSAFE_TOOLS` refused it, and that list never contained the name.
+    // So a paid caller with no machine of their own got a pooled lease and the
+    // accessibility tree, screenshot or console of the previous tenant's page.
+    assert.equal(isPageStateCall("webrain_observe", {what: "tree"}), true)
+    assert.equal(isPageStateCall("webrain_observe", {what: "screenshot"}),
+      true)
+    assert.equal(isPageStateCall("webrain_observe"), true)
+  })
+
+  it("exempts the one observe mode that loads its own url", () => {
+    // `what=media` with a `url` navigates to an address the caller named, so it
+    // reads nothing a previous tenant left behind. Without a url it projects
+    // the CURRENT page's media, which is the same leak again.
+    assert.equal(
+      isPageStateCall("webrain_observe", {what: "media", url: "https://a.c/x"}),
+      false
+    )
+    assert.equal(isPageStateCall("webrain_observe", {what: "media"}), true)
+    assert.equal(
+      isPageStateCall("webrain_observe", {what: "media", url: "   "}),
+      true
+    )
+  })
+
+  it("leaves page-free tools alone", () => {
+    for (const tool of [
+      "webrain_guide",
+      "webrain_scrape",
+      "webrain_profiles",
+    ]) {
+      assert.equal(isPageStateCall(tool), false, tool)
+    }
+  })
+
+  it("answers false for a name that is not a string", () => {
+    for (const value of [undefined, null, 0, false, {}, []]) {
+      assert.equal(isPageStateCall(value), false)
+    }
+  })
+
+  it("only covers tools a session can actually serve", () => {
+    // The load-bearing invariant, and it is not cosmetic: the refusal in
+    // `webrainTool` is a hard return, so a page-state tool that is NOT in
+    // `SESSION_TOOLS` would have nowhere left to run. `/api/extract` would go
+    // from "leaks the last tenant's page" to "refused for everybody", which is
+    // a dead tool rather than a fixed one.
+    for (const tool of ["webrain_extract", "webrain_pdf", "webrain_observe"]) {
+      assert.equal(isSessionTool(tool), true, tool)
+    }
+  })
+})
+
 describe("SESSION_TOOLS", () => {
   const REFUSED: readonly string[] = [
     "webrain_eval",
@@ -248,6 +330,7 @@ describe("SESSION_TOOLS", () => {
     assert.deepEqual([...SESSION_TOOLS], [
       "webrain_navigate",
       "webrain_observe",
+      "webrain_extract",
       "webrain_interact",
       "webrain_batch",
       "webrain_crawl",

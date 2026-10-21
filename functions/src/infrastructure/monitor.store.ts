@@ -335,6 +335,35 @@ export const recordCheck = async (
 }
 
 /**
+ * Hands back monitors that were claimed but never checked.
+ *
+ * A claim consumes the due-time, which is what stops two runs checking the same
+ * page. The cost shows up when a run stops early: every monitor it claimed and
+ * did not reach keeps its ADVANCED due-time, so one slow page delays the rest
+ * of the batch by a whole interval. Re-stamping them as due now is the honest
+ * state -- they were never checked.
+ * @param {Array} monitors The claimed monitors that were not checked.
+ * @param {number} now Epoch milliseconds.
+ * @return {Promise<void>} Resolves once every release has been attempted.
+ */
+export const releaseUncheckedMonitors = async (
+  monitors: Array<{ id: string }>,
+  now: number
+): Promise<void> => {
+  await Promise.all(
+    monitors.map((monitor) =>
+      db.collection(MONITOR_COLLECTION).doc(monitor.id).set(
+        { nextCheckAt: now, updatedAt: now },
+        { merge: true }
+      ).catch((error: unknown) => {
+        // Best effort: the next run's claim query simply will not see it.
+        console.warn(`monitor ${monitor.id}: release failed:`, error)
+      })
+    )
+  )
+}
+
+/**
  * Claims the monitors whose turn it is, and advances them.
  *
  * Claim-then-check, not check-then-claim: the due-time moves BEFORE the worker

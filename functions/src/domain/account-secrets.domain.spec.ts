@@ -15,6 +15,7 @@ import {accountSecrets} from "./account-secrets.domain"
 import {byobSecretId} from "./storage-settings.domain"
 import {cdpSecretId} from "./browser-session.domain"
 import {vaultKeySecretId} from "./vault-entry.domain"
+import {aiKeySecretId} from "./user-ai-settings.domain"
 
 describe("accountSecrets", () => {
   it("composes every id from its owning helper", () => {
@@ -25,10 +26,21 @@ describe("accountSecrets", () => {
     assert.ok(ids.includes(vaultKeySecretId("u1")), "vault-key missing")
   })
 
+  it("covers the BYOK AI credentials, not just the subcollection ones", () => {
+    // The gap this closes: a vendor key lives in Secret Manager while only a
+    // POINTER sits at `users/{uid}/private/ai`, so `recursiveDelete` destroyed
+    // the pointer and the live credential outlived the account for ever.
+    const ids = accountSecrets("u1").map((secret) => secret.id)
+
+    assert.ok(ids.includes(aiKeySecretId("u1", "openai")), "openai key missing")
+    assert.ok(ids.includes(aiKeySecretId("u1", "jina")), "jina key missing")
+  })
+
   it("pins the count, so a silent removal fails", () => {
     // A registry that quietly loses an entry is the bug this file exists to
-    // catch, and `includes` alone would not notice.
-    assert.equal(accountSecrets("u1").length, 3)
+    // catch, and `includes` alone would not notice. Three derived credentials
+    // plus one per provider id -- 10 AI vendors and 3 scrape readers.
+    assert.equal(accountSecrets("u1").length, 16)
   })
 
   it("scopes every id to the uid, and never to another account's", () => {
@@ -45,6 +57,12 @@ describe("accountSecrets", () => {
 
   it("names each resource, so a purge log says which credential it was", () => {
     const resources = accountSecrets("u1").map((secret) => secret.resource)
-    assert.deepEqual(resources, ["storage-byob", "browser-cdp", "vault-key"])
+
+    // The DISTINCT set, because the AI keys are one row per vendor. The exact
+    // count is pinned separately, so collapsing them here cannot hide a loss.
+    assert.deepEqual(
+      [...new Set(resources)],
+      ["storage-byob", "browser-cdp", "vault-key", "ai-key"]
+    )
   })
 })

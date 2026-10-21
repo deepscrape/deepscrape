@@ -43,6 +43,7 @@ import { withPlatformProxy } from "../domain/webrain-proxy.domain"
 import {
   decideWebrainTool,
   isEndpointCookieCall,
+  isPageStateCall,
   isSessionTool,
   needsCallerOwnWorker,
   needsExclusiveWorker,
@@ -216,6 +217,23 @@ export const webrainTool = async (
     }
   }
 
+  // The caller's uid, resolved before any guard needs it. An empty-string uid is
+  // read as absent HERE rather than guarded at every call site: one rule at the
+  // consumer beats the same guard copied into four producers, where one of them
+  // would eventually forget it.
+  const callerUid = uid && uid.length > 0 ? uid : undefined
+
+  // The caller whose OWN machine this call may use, or `undefined` when it may
+  // not: no caller, no token to authenticate the machine route with, or a tool
+  // that route does not accept. Declared ONCE and used by both the page-state
+  // refusal below and the routing further down, so the two cannot disagree about
+  // whether a machine is available -- a condition duplicated between a refusal
+  // and the fallback it guards is how those two drift apart.
+  const ownMachineUid =
+    callerUid !== undefined && callerToken && isSessionTool(name) ?
+      callerUid :
+      undefined
+
   // A vault tool is refused BEFORE a worker is taken, because the vault needs
   // state that OUTLIVES the machine -- see `VAULT_TOOLS`. Admin is exempt to
   // match the allowlist's own decision (an operator diagnosing a failure needs
@@ -241,16 +259,56 @@ export const webrainTool = async (
     }
   }
 
+  // Resolved BEFORE the page-state refusal below, and the order is the whole
+  // correctness argument: that refusal must be decided by whether a machine
+  // ACTUALLY resolved, not by whether one might. Keyed on eligibility instead, a
+  // caller who passes the test but whose machine cannot be read -- no live
+  // session, a BYO session with no `machineId`, a closed one -- would fall
+  // through to the pool and read the page it is holding, which is the exact leak
+  // being closed.
+  //
+  // Best-effort for every other tool: this is an optimisation for callers who
+  // have a session, so a caller who has none falls through to the pool rather
+  // than failing. `ownBrowserMachine` is deliberately NOT caught here, so a store
+  // that throws fails the call -- for the page-state tools below that is
+  // fail-CLOSED, which is the only direction that is safe.
+  const ownMachine =
+    ownMachineUid !== undefined ?
+      await ownBrowserMachine(ownMachineUid) :
+      undefined
+
+  // A page already LOADED in a worker outlives the lease that loaded it, so
+  // these calls are refused unless they are going to the caller's own machine --
+  // see `isPageStateCall`. Exclusivity is not enough and never was: the lease is
+  // released as soon as the body is read and nothing resets the browser, so the
+  // next tenant to lease that worker reads the page the last one left.
+  //
+  // Refusal rather than a quiet fallback to the pool is the point. There is no
+  // pooled page that belongs to this caller, so the only correct answer is to
+  // say so; the message is the `shared-worker` one because it already describes
+  // this exact failure ("reads the current page ... cannot attribute to one
+  // caller"). The remedy is a session, which is what `SESSION_TOOLS` admits.
+  if (
+    decision.tier !== "admin" &&
+    isPageStateCall(name, args) &&
+    ownMachine === undefined
+  ) {
+    return {
+      ok: false,
+      text: "",
+      error: webrainToolRefusalMessage("shared-worker"),
+      toolRefused: true,
+      refusal: "shared-worker",
+      status: 0,
+    }
+  }
+
   // A caller's OWN egress pool, resolved BEFORE a worker is taken, and the order
   // is load-bearing rather than tidy: an exclusive worker is released in the
   // `finally` further down, so a refusal placed after the acquisition would
   // strand that lease for its whole TTL. `null` here means "no caller", which is
   // the smoke probe and the internal monitoring checks -- the platform pool,
   // exactly as this behaved before a caller could supply their own.
-  // An empty-string uid is read as absent HERE rather than guarded at every call
-  // site: one rule at the consumer beats the same guard copied into four
-  // producers, where one of them would eventually forget it.
-  const callerUid = uid && uid.length > 0 ? uid : undefined
   const egress = callerUid ? await resolveEgress(callerUid) : null
 
   if (egress?.kind === "unusable") {
@@ -273,20 +331,12 @@ export const webrainTool = async (
 
   // A caller who has leased a machine drives THAT browser rather than a pool
   // worker: it holds their cookies, their logins and the page they are watching,
-  // and they are already being billed for it by the minute. Eligibility is
-  // `SESSION_TOOLS`, the SAME allowlist the machine route enforces for itself,
-  // so this cannot widen what may run on a machine -- it only decides whether we
-  // TRY. A tool outside it (`batch`, `crawl`, `extract`, `pdf`) keeps using the
-  // pool, which is why the check is here and not in the plan.
+  // and they are already being billed for it by the minute. `ownMachine` was
+  // resolved further up, before the page-state refusal, because that refusal has
+  // to know the answer rather than guess it. The tools that must never run on a
+  // pooled worker (`eval`, the vault) never reach this line: the guards above
+  // returned first.
   //
-  // Best-effort by design: this is an optimisation for callers who have a
-  // session, so a caller who has none -- or a store that cannot be read -- must
-  // fall through to the pool rather than fail the call.
-  const ownMachine =
-    callerUid && callerToken && isSessionTool(name) ?
-      await ownBrowserMachine(callerUid) :
-      undefined
-
   // One exclusive worker for this call, released in the `finally` below. With
   // no pool configured the single `WEBRAIN_MCP_URL` is still the source;
   // `planWorkerAcquisition` decides, and it deliberately does NOT fall back to
@@ -337,6 +387,10 @@ export const webrainTool = async (
 
   const options: RequestInit = {
     method: "POST",
+    // Bounded, and the bound is what releases the lease. Without a signal a
+    // stalled engine holds a pooled worker until its TTL and this caller until
+    // the platform timeout -- the case QStash then redelivers into.
+    signal: AbortSignal.timeout(env.WEBRAIN_CALL_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       // Both, or webrain's streamable-HTTP transport rejects the request.

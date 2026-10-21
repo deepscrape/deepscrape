@@ -16,13 +16,16 @@ import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {
   LIST_LIMIT,
+  PLATFORM_EGRESS_ID,
   PRESIGN_TTL_SECONDS,
   SHARED_KEY_PREFIX,
   USERS_KEY_PREFIX,
   decideStorageScope,
+  isExposableSharedUrl,
   isReadableObjectKey,
   isSharedObjectKey,
   sanitizeFilename,
+  sharedObjectKey,
   userObjectKeyPrefix,
 } from "./storage-scope.domain"
 
@@ -33,7 +36,7 @@ const URL_B = "https://example.com/other"
 const anonymous = {
   anonymous: true,
   proxy: "platform",
-  egress: "eu-west",
+  egress: PLATFORM_EGRESS_ID,
 }
 
 describe("an authenticated fetch is refused the shared tier", () => {
@@ -98,7 +101,7 @@ describe("an authenticated fetch is refused the shared tier", () => {
     const decision = decideStorageScope("uid-1", URL_A, {
       anonymous: true,
       proxy: "platform",
-      egress: "eu-west",
+      egress: PLATFORM_EGRESS_ID,
       cookies: null,
       authorization: null,
     })
@@ -191,7 +194,11 @@ describe("the shared key", () => {
     assert.equal(first.key, second.key)
   })
 
-  it("differs when the egress identity differs", () => {
+  it("cannot be varied by declaring a different exit", () => {
+    // The former rule keyed on the caller's string, so `eu-west`, `us-east`,
+    // `a`, `b` ... each minted a fresh shared key for one URL and the same
+    // bytes. A declared exit is now verified against the one the handler
+    // actually used, so neither value reaches the shared tier at all.
     const eu = decideStorageScope("uid-1", URL_A, {
       anonymous: true,
       proxy: "platform",
@@ -203,7 +210,9 @@ describe("the shared key", () => {
       egress: "us-east",
     })
 
-    assert.notEqual(eu.key, us.key)
+    assert.equal(eu.scope, "user")
+    assert.equal(us.scope, "user")
+    assert.equal(eu.key, us.key)
   })
 
   it("differs when the URL differs", () => {
@@ -304,5 +313,73 @@ describe("the constants the routes rely on", () => {
     // A presigned URL is a bearer credential in a query string.
     assert.ok(PRESIGN_TTL_SECONDS <= 900)
     assert.ok(LIST_LIMIT > 0 && LIST_LIMIT <= 1000)
+  })
+})
+
+describe("the egress in the key is derived, not declared", () => {
+  it("refuses a declared exit the handler did not use", () => {
+    // The fan-out this closes: one URL, one set of bytes, and a fresh shared
+    // key per invented exit string.
+    const decision = decideStorageScope("uid-1", URL_A, {
+      anonymous: true,
+      proxy: "platform",
+      egress: "eu-west",
+    })
+
+    assert.equal(decision.scope, "user")
+    assert.equal(decision.reason, "unverified-egress")
+  })
+
+  it("mints the shared key from the derived identity", () => {
+    const decision = decideStorageScope("uid-1", URL_A, anonymous)
+
+    assert.equal(decision.scope, "shared")
+    assert.equal(decision.key, sharedObjectKey(URL_A, PLATFORM_EGRESS_ID))
+  })
+
+  it("gives one URL one key whatever the descriptor declares", () => {
+    // Only the derived identity can reach the tier, so every accepted
+    // descriptor for a URL lands on the same object -- which is the cache.
+    const first = decideStorageScope("uid-1", URL_A, anonymous)
+    const second = decideStorageScope("uid-2", URL_A, {
+      ...anonymous,
+      proxy: "none",
+    })
+
+    assert.equal(first.scope, "shared")
+    assert.equal(second.scope, "shared")
+    assert.equal(first.key, second.key)
+  })
+})
+
+describe("which shared entries a listing may show", () => {
+  it("accepts a plain URL", () => {
+    assert.equal(isExposableSharedUrl(URL_A), true)
+  })
+
+  it("refuses a signed link in a query string", () => {
+    const signed = "https://bucket.example.com/a.pdf?X-Amz-Signature=abc"
+    assert.equal(isExposableSharedUrl(signed), false)
+  })
+
+  it("refuses an invite token in a query string", () => {
+    assert.equal(
+      isExposableSharedUrl("https://example.com/join?token=abc123"),
+      false
+    )
+  })
+
+  it("refuses a fragment, which can carry a token too", () => {
+    assert.equal(isExposableSharedUrl("https://example.com/#t=abc"), false)
+  })
+
+  it("refuses credentials in the authority", () => {
+    assert.equal(isExposableSharedUrl("https://me:pw@example.com/x"), false)
+  })
+
+  it("refuses an empty, unparseable or non-http value", () => {
+    for (const value of ["", "not a url", "javascript:alert(1)"]) {
+      assert.equal(isExposableSharedUrl(value), false, value)
+    }
   })
 })

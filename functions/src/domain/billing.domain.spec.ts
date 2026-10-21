@@ -142,6 +142,17 @@ describe("billing.domain", () => {
     assert.equal(getBillingAccessMode({plan: "free"}, now), "free")
   })
 
+  it("withholds the plan once the subscription has ended, however the plan name reads", () => {
+    const now = Date.UTC(2026, 2, 19)
+
+    for (const status of ["unpaid", "incomplete", "incomplete_expired", "canceled"]) {
+      assert.equal(getBillingAccessMode({plan: "pro", status}, now), "free", status)
+    }
+
+    // Dunning is not an ending: Stripe is still retrying, and the sweep bounds it.
+    assert.equal(getBillingAccessMode({plan: "pro", status: "past_due"}, now), "plan")
+  })
+
   it("hasBillingAccess is false only for free mode", () => {
     const now = Date.UTC(2026, 2, 19)
 

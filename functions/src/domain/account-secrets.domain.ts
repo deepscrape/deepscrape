@@ -35,6 +35,8 @@
 import {byobSecretId} from "./storage-settings.domain"
 import {cdpSecretId} from "./browser-session.domain"
 import {vaultKeySecretId} from "./vault-entry.domain"
+import {SCRAPE_PROVIDERS} from "./scrape-providers.domain"
+import {AI_VENDORS, aiKeySecretId} from "./user-ai-settings.domain"
 
 /** A per-uid Secret Manager id, and what the credential is for. */
 export type AccountSecret = {
@@ -53,8 +55,28 @@ export type AccountSecret = {
  * @param {string} uid The verified caller uid.
  * @return {AccountSecret[]} One entry per derived credential.
  */
-export const accountSecrets = (uid: string): AccountSecret[] => [
-  {resource: "storage-byob", id: byobSecretId(uid)},
-  {resource: "browser-cdp", id: cdpSecretId(uid)},
-  {resource: "vault-key", id: vaultKeySecretId(uid)},
-]
+export const accountSecrets = (uid: string): AccountSecret[] => {
+  // Every vendor that can own an `ai-key-<uid>-<vendor>` secret. BOTH lists are
+  // needed, because `ProviderKeyId` is a union of the chat vendors and the scrape
+  // READERS. `jina` is the case that proves it: it is a reader, it is not in
+  // `AI_VENDORS`, and a caller can still store a key for it.
+  const providerVendors = [
+    ...AI_VENDORS.map((vendor) => vendor.id),
+    ...SCRAPE_PROVIDERS.map((provider) => provider.id),
+  ]
+
+  return [
+    {resource: "storage-byob", id: byobSecretId(uid)},
+    {resource: "browser-cdp", id: cdpSecretId(uid)},
+    {resource: "vault-key", id: vaultKeySecretId(uid)},
+    // The BYOK credentials. `users/{uid}/private/ai` holds only the POINTER, so
+    // `recursiveDelete` destroyed it and left the live vendor key in Secret
+    // Manager for ever -- while the erase reported success. Same shape as the
+    // storage and CDP entries above, and the same answer: derive from the uid.
+    // Deduped, because an id in both catalogues would otherwise be purged twice.
+    ...[...new Set(providerVendors)].map((vendor) => ({
+      resource: "ai-key",
+      id: aiKeySecretId(uid, vendor),
+    })),
+  ]
+}

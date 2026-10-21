@@ -91,7 +91,7 @@ type CallableLike = {
  * one. This is abuse control, not a security boundary; App Check is the boundary.
  *
  * @param {CallableLike} request Callable request carrying the caller identity.
- * @return {string | null} The rate-limit key, or null to skip metering.
+ * @return {string} The rate-limit key. Anonymous callers are ALWAYS metered now.
  */
 export const resolveCallableLimitKey = (request: CallableLike): string | null => {
   const uid = request.auth?.uid
@@ -100,19 +100,22 @@ export const resolveCallableLimitKey = (request: CallableLike): string | null =>
   const raw = request.rawRequest
   const forwarded = raw?.headers?.["x-forwarded-for"]
   const forwardedValue = (Array.isArray(forwarded) ? forwarded[0] : forwarded) || ""
-  // x-forwarded-for is a chain (`client, proxy1, proxy2`); the client is the first
-  // entry. Keying on the whole header would bucket every caller behind a shared proxy
-  // together and make the key grow with the chain.
-  const [clientIp] = forwardedValue.split(",")
+  // The LAST entry, not the first. The header is a chain and a TRUSTED proxy
+  // APPENDS the address it saw, so everything to the left of that came from the
+  // caller. Reading index 0 therefore read a caller-supplied string, and a
+  // rotating `X-Forwarded-For: 1.2.3.<random>` minted a fresh bucket per
+  // request -- which is the same as having no limiter on the anonymous callables.
+  const entries = forwardedValue.split(",")
+  const clientIp = (entries[entries.length - 1] || "").trim()
   const ip = (clientIp || raw?.ip || raw?.socket?.remoteAddress || "").trim()
 
-  // A loopback or missing address identifies nobody, and pooling every such caller
-  // into one bucket would throttle them collectively for no benefit.
-  if (!ip || ip === "0.0.0.0" || ip === "::" || ip === "::1" || ip === "127.0.0.1" || ip === "localhost") {
-    return null
-  }
-
-  return callableRateLimitKey(`ip:${ip}`)
+  // No loopback exemption, deliberately. This used to return null -- "skip
+  // metering" -- for 127.0.0.1 and friends, and because the source above was
+  // attacker-controlled a caller could simply CLAIM loopback to get an unlimited
+  // budget on `recordGuestPresence` and the WebAuthn options callable. A caller
+  // whose address cannot be derived now shares one `unknown` bucket instead,
+  // which is the bounded direction.
+  return callableRateLimitKey(`ip:${ip || "unknown"}`)
 }
 
 /**

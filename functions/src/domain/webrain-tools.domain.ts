@@ -263,10 +263,18 @@ export const needsExclusiveWorker = (name: unknown): boolean =>
  * the mappers in `handlers/webrain-tools.ts` at all. Those mappers narrow the
  * POOL routes (`/api/batch` refuses `op=eval` and `dir`); they are not, and must
  * not be mistaken for, a boundary on a machine the caller already owns.
+ *
+ * `webrain_extract` joined this list with the page-state rule below it. It takes
+ * no `url` at all and reads whichever page the worker has CURRENTLY loaded, which
+ * on a pooled worker is the previous tenant's -- so it is refused there and only
+ * meaningful on a machine the caller navigated themselves. Listing it here is
+ * what gives that refusal somewhere to send the call, rather than closing the
+ * tool outright.
  */
 export const SESSION_TOOLS: readonly string[] = [
   "webrain_navigate",
   "webrain_observe",
+  "webrain_extract",
   "webrain_interact",
   "webrain_batch",
   "webrain_crawl",
@@ -328,6 +336,64 @@ export const VAULT_TOOLS: readonly string[] = [
  */
 export const needsCallerOwnWorker = (name: unknown): boolean =>
   typeof name === "string" && VAULT_TOOLS.includes(name)
+
+/**
+ * Tools that read the page the worker already has LOADED.
+ *
+ * This is a third axis, and it is the one that was missing. `needsExclusiveWorker`
+ * asks whether anyone else is in the worker right now -- a pooled lease answers
+ * that truthfully and it is not enough. A lease is a Redis key with `EX 120`
+ * around one HTTP request, released as soon as the body is read, and NOTHING
+ * resets the browser. So tenant A navigates to a page behind their own login, the
+ * lease expires, tenant B takes the next lease on that worker, and reads A's
+ * page. Exclusivity was never the property being relied on; freshness was.
+ *
+ * `webrain_extract` is the unconditional case: `extractArguments` refuses a `url`
+ * outright, so the ONLY thing it can read is the worker's current page.
+ *
+ * `webrain_pdf` is conditional, which is why this predicate takes the args. Only
+ * `op=page` reads the current page; `extract`, `render` and `images` each require
+ * a `path` or `paths` that the caller supplied themselves, so they address a file
+ * they named rather than a page somebody else left, and stay on their route.
+ *
+ * `webrain_observe` is here too, and its absence was the gap: every `what` except
+ * `media` with a caller-supplied `url` reads the worker's CURRENT page, so on a
+ * pooled lease it returns the previous tenant's page exactly as `extract` does.
+ * Its handler docstring claimed it was refused via `SHARED_UNSAFE_TOOLS`, which it
+ * never was -- the name is not in that list.
+ *
+ * Why this is NOT part of `needsCallerOwnWorker`: that predicate is a hard refusal
+ * evaluated BEFORE the caller's machine is resolved, because the vault needs state
+ * outliving any machine. These only need the caller's machine for the duration
+ * of the call, so they are refused only when there is no machine to send them to --
+ * see `webrainTool`. Folding them in would refuse `/api/extract` for a caller who
+ * has a session, which is the opposite of the intent.
+ * @param {unknown} name The tool name as the caller supplied it.
+ * @param {Record<string, unknown>} args The mapped worker arguments, when known.
+ * @return {boolean} True when the call reads a page a previous tenant may have left.
+ */
+export const isPageStateCall = (
+  name: unknown,
+  args: Record<string, unknown> = {}
+): boolean => {
+  if (typeof name !== "string") {
+    return false
+  }
+  if (name === "webrain_extract") {
+    return true
+  }
+  if (name === "webrain_observe") {
+    // `what=media` with a caller-supplied `url` LOADS an address the caller
+    // named, so it addresses no page a previous tenant left and refusing it
+    // would take a working mode away for no security gain. Everything else --
+    // the accessibility tree, the screenshot, the console -- reads whatever
+    // page the worker is sitting on.
+    const url = args["url"]
+    const ownUrl = typeof url === "string" && url.trim() !== ""
+    return !(args["what"] === "media" && ownUrl)
+  }
+  return name === "webrain_pdf" && args["op"] === "page"
+}
 
 /**
  * The two vault ops that move the cookie jar in the PAYLOAD.

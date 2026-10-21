@@ -138,6 +138,11 @@ export const chargeSessionMeter = async (
         source: METER_LEDGER_SOURCE,
         reason: "meter:block",
         sessionId: record.id,
+        // Without this a metered block is anonymous: `reason` is the same string
+        // on every row, so the usage report could total browser time but never
+        // attribute it. `isMeterBillable` has already guaranteed this is a
+        // platform machine by the time the loop runs.
+        machineId: record.machineId ?? null,
         metadata: {block: key},
         idempotencyKey: key,
       },

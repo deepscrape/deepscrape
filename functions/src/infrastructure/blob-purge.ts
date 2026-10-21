@@ -60,15 +60,30 @@ const purgePrefixes = (uid: string): string[] => [
 ]
 
 /**
+ * The outcome of sweeping one namespace.
+ *
+ * `complete` exists because a COUNT cannot answer the question the caller has to
+ * ask. Hitting the page ceiling deletes a real number of objects and logs a
+ * warning, and the caller used to read that number as success -- so an account
+ * holding more than the ceiling was left with ~100 objects in the bucket AND a
+ * document asserting the erasure was finished, which nothing would look at
+ * again because `purgedAt` was set.
+ */
+export type PrefixSweep = {
+  deleted: number
+  complete: boolean
+}
+
+/**
  * Delete every object under one prefix, up to the page ceiling.
  * @param {BlobStore} store The platform store.
  * @param {string} prefix The namespace to sweep.
- * @return {Promise<number>} How many objects this walk deleted.
+ * @return {Promise<PrefixSweep>} What this walk deleted, and whether it finished.
  */
 const purgePrefix = async (
   store: BlobStore,
   prefix: string,
-): Promise<number> => {
+): Promise<PrefixSweep> => {
   let deleted = 0
 
   for (let page = 0; page < BLOB_PURGE_MAX_PAGES; page += 1) {
@@ -82,7 +97,7 @@ const purgePrefix = async (
     // A short page means the namespace is exhausted. Without this the loop would
     // spend its whole budget on an empty listing.
     if (batch.length < LIST_LIMIT) {
-      return deleted
+      return {deleted, complete: true}
     }
   }
 
@@ -90,7 +105,7 @@ const purgePrefix = async (
     `Blob purge hit its page ceiling (${BLOB_PURGE_MAX_PAGES}) for ${prefix}; ` +
     `${deleted} objects deleted so far.`,
   )
-  return deleted
+  return {deleted, complete: false}
 }
 
 /**
@@ -113,15 +128,24 @@ const purgePrefix = async (
  * @param {string} uid The account being erased.
  * @param {BlobStore} store The platform store. Resolved by default; a spec
  *   injects a fake.
- * @return {Promise<number>} How many objects were deleted.
+ * @return {Promise<PrefixSweep>} How many objects were deleted, and whether BOTH
+ *   namespaces were swept to the end.
  */
 export const purgeAccountBlobs = async (
   uid: string,
   store: BlobStore = getPlatformBlobStore(),
-): Promise<number> => {
+): Promise<PrefixSweep> => {
   let deleted = 0
+  let complete = true
+
   for (const prefix of purgePrefixes(uid)) {
-    deleted += await purgePrefix(store, prefix)
+    const sweep = await purgePrefix(store, prefix)
+    deleted += sweep.deleted
+    // Sticky, so one truncated namespace makes the whole erasure incomplete: the
+    // artifact walk must not be able to vouch for the vault's, and the vault is
+    // where a credential lives.
+    complete = complete && sweep.complete
   }
-  return deleted
+
+  return {deleted, complete}
 }

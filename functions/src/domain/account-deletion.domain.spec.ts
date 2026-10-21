@@ -89,6 +89,25 @@ test("isPurgeDue waits for the deadline and accepts Firestore timestamps", () =>
   assert.equal(isPurgeDue(timestampLike, now), true)
 })
 
+test("a cleared purgedAt is not enough on its own to make an account due", () => {
+  // Pinned because the erasure path depends on it. When a blob sweep is
+  // truncated the purger clears `purgedAt` so it stops recording a finished
+  // erasure -- but `buildErasedUserRecord` has already set `purgeAfter` to null,
+  // and this predicate then answers false. That combination (no `purgedAt`, no
+  // `purgeAfter`) is neither purged nor retryable, which is worse than either, so
+  // the path also sets `purgeAfter` to now. Do not simplify it to one field.
+  const now = new Date("2026-02-01T00:00:00Z")
+
+  assert.equal(
+    isPurgeDue({isDeleted: true, purgedAt: null, purgeAfter: null}, now),
+    false,
+  )
+  assert.equal(
+    isPurgeDue({isDeleted: true, purgedAt: null, purgeAfter: now}, now),
+    true,
+  )
+})
+
 test("erasure replaces the record so PII cannot survive as an unlisted field", () => {
   const now = new Date("2026-02-01T00:00:00Z")
   const record = buildErasedUserRecord({

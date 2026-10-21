@@ -28,8 +28,9 @@
  * A/B assignment, bot walls keyed by ASN. A key of URL alone would answer one
  * exit's request with another exit's page, which is the failure this repo's
  * `url-guard.domain.ts` calls out in the other direction. The key digests the
- * URL AND the declared egress identity, so a change of exit is a different
- * object rather than a wrong answer.
+ * URL AND the egress identity the handler DERIVED (`PLATFORM_EGRESS_ID`), so a
+ * change of exit is a different object rather than a wrong answer -- while a
+ * caller-supplied string cannot become key material at all.
  *
  * The two tiers are namespaced so one bucket can hold both: `shared/<digest>`
  * for URL-keyed entries readable by all, `users/<digest(uid)>/<digest(url)>`
@@ -112,6 +113,7 @@ export type StorageScopeReason =
   | "unrecognised-field"
   | "byop"
   | "missing-egress"
+  | "unverified-egress"
 
 /** The decision, and the key it produced. */
 export type StorageScopeDecision = {
@@ -119,6 +121,19 @@ export type StorageScopeDecision = {
   key: string
   reason: StorageScopeReason
 }
+
+/**
+ * The exit a shared-tier object in this build was actually fetched through.
+ *
+ * `handlers/storage.ts` performs one anonymous, unproxied `fetch`, so there is
+ * exactly one answer to "where did these bytes come from" and it is not a
+ * caller choice. The key still carries an egress component -- a future handler
+ * that routes through several exits needs it, and the key shape is worth
+ * keeping -- but the value is DERIVED here and never read from the descriptor.
+ * A caller-supplied string as key material would let one URL fan out into a
+ * shared entry per invented exit, every one of them holding the same bytes.
+ */
+export const PLATFORM_EGRESS_ID = "platform:direct"
 
 /** The shared-tier key for one (url, egress) pair.
  * @param {string} url The URL the bytes were fetched from.
@@ -178,6 +193,36 @@ export const isReadableObjectKey = (uid: string, key: string): boolean => {
   }
 
   return isSharedObjectKey(key) || key.startsWith(userObjectKeyPrefix(uid))
+}
+
+/**
+ * Whether a shared entry's stored URL may be shown to a caller who did not
+ * save it.
+ *
+ * The shared key is a digest, so it reveals nothing. The `url` metadata does:
+ * it is the string some other caller fetched, and that string can BE a
+ * capability -- a presigned link, an invite token in a query string, a password
+ * in userinfo. Reading it would let a different tenant use it directly, which
+ * is worse than reading the cached bytes. So only a URL with no query, no
+ * fragment and no userinfo is listed, and an unparseable one is not listed at
+ * all: it is not a value this function can vouch for.
+ * @param {string} value The stored `url` metadata.
+ * @return {boolean} True when nothing in it can act as a capability.
+ */
+export const isExposableSharedUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value)
+
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.search.length === 0 &&
+      parsed.hash.length === 0 &&
+      parsed.username.length === 0 &&
+      parsed.password.length === 0
+    )
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -252,21 +297,29 @@ export const sharedEligibility = (credential: unknown): SharedEligibility => {
     return {ok: false, reason: "no-descriptor"}
   }
 
-  const egress = typeof credential["egress"] === "string" ?
+  const declared = typeof credential["egress"] === "string" ?
     credential["egress"].trim() :
     ""
 
-  // Without the egress identity the key cannot be composed correctly, and a key
-  // that is wrong in this direction serves one region's page as another's.
-  if (egress.length === 0) {
+  // A descriptor that names no exit cannot be accounted for at all.
+  if (declared.length === 0) {
     return {ok: false, reason: "missing-egress"}
+  }
+
+  // Verified, not trusted. The handler fetches directly, so the only exit a
+  // shared object can have been fetched through is `PLATFORM_EGRESS_ID`. Any
+  // other declared value names an exit nothing used, and using it as a key
+  // component is one URL stored under a fresh key per invented string.
+  if (declared !== PLATFORM_EGRESS_ID) {
+    return {ok: false, reason: "unverified-egress"}
   }
 
   if (credential["anonymous"] !== true) {
     return {ok: false, reason: "no-descriptor"}
   }
 
-  return {ok: true, egress}
+  // Derived, never echoed: the caller's string was only a claim to check.
+  return {ok: true, egress: PLATFORM_EGRESS_ID}
 }
 
 /**

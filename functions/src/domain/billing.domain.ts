@@ -1,7 +1,7 @@
 /* eslint-disable max-len */
 export type BillingPlanTier = "free" | "trial" | "starter" | "pro" | "enterprise"
 export type BillingInterval = "payAsYouGo" | "monthly" | "quarterly" | "annually"
-export type BillingAccessMode = "free" | "credits" | "plan" | "grace"
+export type BillingAccessMode = "free" | "credits" | "plan" | "grace" | "unlimited"
 export type CreditBucket = "purchased" | "included"
 
 export type BillingCredits = {
@@ -27,7 +27,29 @@ export type BillingSnapshot = {
   /** When the current period ends. Authoritative for a `payAsYouGo` window. */
   currentPeriodEnd?: string | null
   graceUntil?: string | null
+  /**
+   * The Stripe subscription status, as stored on the billing document.
+   *
+   * Absent on documents written before it was recorded, and those are treated as
+   * paying — the same rule the MRR metrics already use, so the two cannot disagree
+   * about whether a legacy row is live.
+   */
+  status?: string | null
   credits?: BillingCredits | null
+  /**
+   * Sales-provisioned unmetered usage.
+   *
+   * Set by an operator on a negotiated agreement, never by a purchase. It only REFINES the
+   * `plan` verdict: an unlimited flag on a lapsed plan grants nothing, because the validity
+   * test still runs first.
+   */
+  unlimited?: boolean
+  /**
+   * When the granted window closes. Absent means "until revoked", which is what a term
+   * contract wants — a pilot sets it so an unmetered account cannot quietly outlive the
+   * deal that justified it.
+   */
+  unlimitedUntil?: string | null
 }
 
 const paidPlans = new Set<BillingPlanTier>(["trial", "starter", "pro", "enterprise"])
@@ -289,8 +311,31 @@ export const canPurchaseStandaloneCredits = (billing: BillingSnapshot | undefine
 }
 
 export const getBillingAccessMode = (billing: BillingSnapshot | undefined, now = Date.now()): BillingAccessMode => {
-  if (isPaidPlan(billing?.plan) && !isPaygWindowClosed(billing, now)) {
-    return "plan"
+  // `status` was never read here, and the plan NAME was the only input. Dunning
+  // ends at `unpaid`, which matched neither the sweep's `past_due` nor `free`, so a
+  // subscription that stopped paying kept full plan access forever. `past_due`
+  // deliberately still grants `plan`: Stripe is retrying, and the sweep bounds it.
+  const status = String(billing?.status || "").trim().toLowerCase()
+  const agreementEnded =
+    status === "unpaid" ||
+    status === "incomplete" ||
+    status === "incomplete_expired" ||
+    status === "canceled"
+
+  if (isPaidPlan(billing?.plan) && !agreementEnded && !isPaygWindowClosed(billing, now)) {
+    // `unlimited` refines the verdict rather than replacing it, and that order is the whole
+    // safety property: the validity test above already ran, so a flag left on a lapsed
+    // account grants nothing. Every charging path asks `isChargeableAccessMode` next, and
+    // that predicate names only `credits` and `plan` -- so returning this string is what
+    // actually stops the meter, not the flag on its own.
+    //
+    // An unparseable end date counts as CLOSED, matching `isPaygWindowClosed`: a grant with
+    // a date nobody can read is not one to keep honouring.
+    const unlimitedUntil = billing?.unlimitedUntil
+    const unlimitedLive = billing?.unlimited === true &&
+      (!unlimitedUntil || now < new Date(unlimitedUntil).getTime())
+
+    return unlimitedLive ? "unlimited" : "plan"
   }
 
   // Purchased credits OUTLIVE the plan they were bought beside.
@@ -323,6 +368,11 @@ export const hasBillingAccess = (billing: BillingSnapshot | undefined, now = Dat
  * than being re-spelled as `accessMode === "credits" || accessMode === "plan"` in
  * more than one place. `free` and `grace` are deliberately excluded: neither has
  * credits to spend, so charging them would drive a wallet negative.
+ *
+ * `unlimited` is excluded for the opposite reason: it is an entitlement a person
+ * granted, and there is no wallet it should draw down. Adding it to this list is
+ * the ONLY thing that would start billing an unlimited account, which is why the
+ * list is explicit rather than `accessMode !== "free"`.
  * @param {string|undefined} accessMode The mode `resolveAccess` resolved.
  * @return {boolean} True when a call under this mode is charged.
  */

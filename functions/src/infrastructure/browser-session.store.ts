@@ -20,7 +20,10 @@
  * BYO adapter, with §1.7, and is the only place that should.
  */
 import {randomUUID} from "node:crypto"
+import {lookup} from "node:dns/promises"
+import {isIP} from "node:net"
 import {db, upsertSecretValue} from "../app/config"
+import {isBlockedHost} from "../domain/url-guard.domain"
 import {
   BROWSER_KINDS,
   SESSION_CAPS,
@@ -199,6 +202,46 @@ export type CreateBrowserSessionResult =
   | {ok: false; reason: LeaseRefusal}
 
 /**
+ * Refuse a BYO endpoint whose NAME resolves to a blocked address.
+ *
+ * `decideCdpUrl` refuses a literal `127.0.0.1` or `169.254.169.254`, but not
+ * `wss://metadata.example.com` — the same request written as a name. The worker dials
+ * whatever we store, so the name has to be resolved while we can still say no. It lives
+ * here and not in the domain validator because that one has to stay synchronous and pure
+ * to be testable, and this needs I/O.
+ *
+ * shortcut: checks the addresses resolved NOW, not the ones the worker will connect to — a
+ * DNS answer that changes in between (rebinding) still gets through. Closing that needs the
+ * connection made by us through a pinned proxy, which is a new service. This covers the
+ * static-name case, which is the one written by hand.
+ * @param {string} url A URL already accepted by `decideCdpUrl`.
+ * @param {Function} [resolve] Name resolver; `node:dns` by default, injectable for the spec.
+ * @return {Promise<boolean>} True when every resolved address is public.
+ */
+export const cdpResolvesPublic = async (
+  url: string,
+  resolve: (host: string) => Promise<Array<{address: string}>> = (host) => lookup(host, {all: true}),
+): Promise<boolean> => {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, "")
+
+  // A literal address was already vetted by `decideCdpUrl`; nothing to resolve.
+  // `isIP`, not a character test: `cafe.de` is all hexy characters and is a NAME, so a
+  // regex here skipped the lookup for any such domain and handed the guard straight back.
+  if (isIP(host) !== 0) {
+    return true
+  }
+
+  try {
+    const addresses = await resolve(host)
+    return addresses.length > 0 && addresses.every((entry) => !isBlockedHost(entry.address))
+  } catch {
+    // Unresolvable is refused: a name we cannot resolve at write time is one the worker
+    // cannot connect to either, and "we do not know" is not a reason to store a credential.
+    return false
+  }
+}
+
+/**
  * Open a session, atomically with the quota check that allows it.
  *
  * The count and the write are in one transaction, and that is the whole point of
@@ -241,6 +284,9 @@ export const createBrowserSession = async (
     if (!vetted.ok) {
       return {ok: false, reason: vetted.reason}
     }
+    if (!(await cdpResolvesPublic(vetted.url))) {
+      return {ok: false, reason: "cdp-url-refused"}
+    }
     cdpSecretPath = await upsertSecretValue(cdpSecretId(input.uid), vetted.url)
   }
 
@@ -268,13 +314,17 @@ export const createBrowserSession = async (
 
   return db.runTransaction<CreateBrowserSessionResult>(
     async (transaction) => {
-      const snapshot = await transaction.get(sessionsRef(input.uid))
+      // Live states only, for the same reason as the listing read: the lease needs
+      // to know how many sessions are LIVE, and closed ones accumulate forever.
+      const snapshot = await transaction.get(
+        sessionsRef(input.uid).where("state", "in", METERABLE_STATES),
+      )
 
       const decision = decideLease({
         tier: input.tier,
         mode: input.mode,
         kind: input.kind,
-        liveSessions: countLive(snapshot),
+        liveSessions: countLive(snapshot, input.mode),
         // The route's reading of this, restated rather than inferred: the
         // endpoint is configured BY this request when it carries one, and this
         // module never reads a stored credential back to find out.
@@ -341,18 +391,25 @@ type DocsSnapshot = {docs: {id: string, data: () => unknown}[]}
  * needs no Admin SDK type import for it: the only things touched are `.docs` and
  * each document's `id` and `data()`.
  *
- * This exists so the filter is written ONCE. It is used both by the listing read
- * and by the count taken inside the create transaction, and those two must agree
- * — if they ever drifted, the transactional check would enforce a different rule
- * from the one the route pre-flights with.
+ * How many of this caller's sessions are live IN ONE MODE.
+ *
+ * The mode is part of the count, not an afterthought. `decideLease` compares the
+ * number against two different caps — `byo: 3` and `dedicated: 1` — so a single
+ * unfiltered total meant three free BYO sessions consumed the slot for the
+ * dedicated machine the customer was paying for, and the answer was `quota`.
  * @param {DocsSnapshot} snapshot A query snapshot of one caller's sessions.
- * @return {number} How many are live.
+ * @param {string} mode The mode the lease is being requested in.
+ * @return {number} How many live sessions of that mode there are.
  */
-const countLive = (snapshot: DocsSnapshot): number => {
+export const countLive = (
+  snapshot: DocsSnapshot,
+  mode: CreateBrowserSessionInput["mode"],
+): number => {
   let live = 0
   for (const doc of snapshot.docs) {
     const raw = (doc.data() ?? {}) as Record<string, unknown>
-    if (isLive(parseSession(doc.id, raw))) {
+    const record = parseSession(doc.id, raw)
+    if (isLive(record) && record?.mode === mode) {
       live += 1
     }
   }
@@ -370,7 +427,10 @@ const countLive = (snapshot: DocsSnapshot): number => {
 export const listBrowserSessions = async (
   uid: string,
 ): Promise<BrowserSessionPublic[]> => {
-  const snapshot = await sessionsRef(uid).get()
+  // Filtered in the QUERY, not after the read. Closed records are never pruned, so
+  // an unfiltered `get()` returned every session the account had ever opened and
+  // paid for all of them on every listing and on every create's lease check.
+  const snapshot = await sessionsRef(uid).where("state", "in", METERABLE_STATES).get()
   const sessions: BrowserSessionPublic[] = []
 
   for (const doc of snapshot.docs) {
@@ -586,7 +646,12 @@ export const listAdminSessions = async (): Promise<AdminSessionReply> => {
 export const listSessionMachineIds = async (
   uid: string,
 ): Promise<Record<string, string>> => {
-  const snapshot = await sessionsRef(uid).get()
+  // Live states only. `closed` records are never pruned, so an unfiltered read is
+  // O(every session the account ever created) -- and this runs inside
+  // `GET /api/machines/mine` on every page that shows the machine list.
+  const snapshot = await sessionsRef(uid)
+    .where("state", "in", METERABLE_STATES)
+    .get()
   const owned: Record<string, string> = {}
 
   for (const doc of snapshot.docs) {
@@ -634,7 +699,11 @@ export const listSessionMachineIds = async (
 export const ownBrowserMachine = async (
   uid: string,
 ): Promise<OwnMachine | undefined> => {
-  const snapshot = await sessionsRef(uid).get()
+  // Live states only, for the same reason as `listSessionMachineIds`: this runs on
+  // every browser tool call, and a closed record can never be the answer.
+  const snapshot = await sessionsRef(uid)
+    .where("state", "in", METERABLE_STATES)
+    .get()
 
   let best: OwnMachine | undefined
   let bestAt = -1
@@ -747,6 +816,34 @@ export const expireMeteredSession = async (
 }
 
 /**
+ * Whether serving a frame should push the idle deadline out.
+ *
+ * Watching is activity — only `keepalive` used to extend, so a live view under
+ * active watch died at its idle TTL and the documented flow simply stopped.
+ * Refreshing on every poll would write several times a second, so the threshold is
+ * the session's OWN window (`idleDeadline - lastUsedAt`): at most two writes per
+ * window, whatever the tier.
+ *
+ * A deadline that has already passed is never refreshed. That is the same rule
+ * `keepaliveBrowserSession` enforces, stated separately so the cost ceiling cannot
+ * be undone by watching the very session it stopped.
+ * @param {object} session The stored session's idle fields.
+ * @param {number} now Epoch ms of this poll.
+ * @return {boolean} True when the deadline is close but not yet reached.
+ */
+export const shouldRefreshOnWatch = (
+  session: {lastUsedAt: number, idleDeadline?: number},
+  now: number,
+): boolean => {
+  const deadline = session.idleDeadline
+  if (deadline === undefined || deadline <= now) {
+    return false
+  }
+  const idleWindow = deadline - session.lastUsedAt
+  return idleWindow > 0 && deadline - now < idleWindow / 2
+}
+
+/**
  * Record activity and push the idle deadline out.
  *
  * A closed session is not revived: this answers undefined so a keepalive after a
@@ -763,28 +860,60 @@ export const keepaliveBrowserSession = async (
   now: number,
 ): Promise<BrowserSessionPublic | undefined> => {
   const ref = sessionRef(uid, id)
-  const snapshot = await ref.get()
-  if (!snapshot.exists) {
-    return undefined
-  }
-  const raw = (snapshot.data() ?? {}) as Record<string, unknown>
-  const record = parseSession(id, raw)
-  if (!record || record.state === "closed") {
-    return undefined
-  }
 
-  const updates: Record<string, unknown> = {lastUsedAt: now}
-  const idleDeadline = idleDeadlineForTier(record.tier, now)
-  if (idleDeadline !== undefined) {
-    updates.idleDeadline = idleDeadline
-  }
-  await ref.set(updates, {merge: true})
+  // Read, decide and write in ONE transaction.
+  //
+  // The decision below is "has a stop already been written", and the stop is
+  // written by `expireMeteredSession` inside a transaction of its own. A plain
+  // read-then-`set` here left a window in which the two could interleave: this
+  // read a live deadline, the stop landed, then this overwrote it — the exact
+  // indefinite-billing behaviour the check exists to prevent, narrowed to a race
+  // but just as unbounded once hit.
+  return db.runTransaction<BrowserSessionPublic | undefined>(
+    async (transaction) => {
+      const snapshot = await transaction.get(ref)
+      if (!snapshot.exists) {
+        return undefined
+      }
+      const raw = (snapshot.data() ?? {}) as Record<string, unknown>
+      const record = parseSession(id, raw)
+      if (!record || record.state === "closed") {
+        return undefined
+      }
 
-  const updated: BrowserSessionRecord = {...record, lastUsedAt: now}
-  if (idleDeadline !== undefined) {
-    updated.idleDeadline = idleDeadline
-  }
-  return toPublicSession(updated)
+      // Reaching the deadline is a STOP, not idleness, and a stop is terminal here.
+      //
+      // The platform ceiling and the customer's own cap both end a session by writing
+      // `idleDeadline = now`; that value IS how a scheduled job asks the Go reaper to
+      // suspend the machine, because a cron has no owner to authenticate as. Recomputed
+      // unconditionally, `now + 15 min` erased that instruction: a client posting
+      // keepalive every 30 seconds held the deadline permanently in the future, so a
+      // session that hit the 20-credit ceiling at block 21 had its stop written and
+      // then overwritten, forever -- the machine billed Fly compute indefinitely while
+      // the customer paid 25 credits for it.
+      //
+      // So the record is answered unchanged instead of extended. The caller sees the
+      // session it asked about (not a 404), and the stop it cannot see stays in place.
+      const stopped =
+        record.idleDeadline !== undefined && record.idleDeadline <= now
+      if (stopped) {
+        return toPublicSession(record)
+      }
+
+      const updates: Record<string, unknown> = {lastUsedAt: now}
+      const idleDeadline = idleDeadlineForTier(record.tier, now)
+      if (idleDeadline !== undefined) {
+        updates.idleDeadline = idleDeadline
+      }
+      transaction.set(ref, updates, {merge: true})
+
+      const updated: BrowserSessionRecord = {...record, lastUsedAt: now}
+      if (idleDeadline !== undefined) {
+        updated.idleDeadline = idleDeadline
+      }
+      return toPublicSession(updated)
+    },
+  )
 }
 
 /**
@@ -830,6 +959,20 @@ export const attachMachine = async (
 
   if (record.machineId) {
     return toPublicSession(record)
+  }
+
+  // A stop written by the meter is terminal for the lease as well.
+  //
+  // The write below recomputes `idleDeadline = now + ttl`; a deploy that landed
+  // after the ceiling was reached would re-arm a lease nobody is paying for, and
+  // the reaper would find a live deadline instead of the stop that asked it to act.
+  // Answering undefined routes the caller down the attach-failure path, which
+  // suspends the machine it just created and releases the reservation -- correct
+  // for a session that has already been stopped.
+  const stopped =
+    record.idleDeadline !== undefined && record.idleDeadline <= now
+  if (stopped) {
+    return undefined
   }
 
   const updates: Record<string, unknown> = {

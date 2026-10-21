@@ -17,24 +17,36 @@ test("resolveCallableLimitKey keys by uid when there is one, by IP otherwise", (
     "callableRateLimit:u1",
   )
 
-  // Anonymous callers get an IP bucket, namespaced so it cannot collide with a uid.
+  // The LAST entry. A trusted proxy APPENDS the address it saw, so everything to
+  // its left came from the caller -- a leading loopback here is a spoof attempt
+  // and must not win. Keying on index 0 was how a rotating header minted a fresh
+  // bucket per request, i.e. no limiter at all.
   assert.equal(
-    resolveCallableLimitKey({auth: null, rawRequest: {headers: {"x-forwarded-for": "203.0.113.7, 10.0.0.1"}}}),
+    resolveCallableLimitKey({auth: null, rawRequest: {headers: {"x-forwarded-for": "127.0.0.1, 203.0.113.7"}}}),
     "callableRateLimit:ip:203.0.113.7",
   )
 
-  // A loopback or absent address identifies nobody: pooling those callers into one
-  // bucket would throttle them collectively, so they are left unmetered.
-  assert.equal(resolveCallableLimitKey({}), null)
-  assert.equal(resolveCallableLimitKey({auth: null, rawRequest: {ip: "127.0.0.1"}}), null)
-  assert.equal(resolveCallableLimitKey({auth: null, rawRequest: {ip: "::1"}}), null)
+  // No loopback exemption any more: claiming loopback used to mean "skip
+  // metering", which is exactly what an anonymous caller would send.
+  assert.equal(
+    resolveCallableLimitKey({auth: null, rawRequest: {ip: "127.0.0.1"}}),
+    "callableRateLimit:ip:127.0.0.1",
+  )
+  assert.equal(
+    resolveCallableLimitKey({auth: null, rawRequest: {ip: "::1"}}),
+    "callableRateLimit:ip:::1",
+  )
+  // An address the platform cannot derive collapses to one shared bucket rather
+  // than to nothing. `null` is never returned for an anonymous caller now.
+  assert.equal(resolveCallableLimitKey({}), "callableRateLimit:ip:unknown")
 })
 
-test("enforceCallableRateLimit is a no-op when the caller cannot be identified", async () => {
+test("enforceCallableRateLimit resolves even with no identifiable caller", async () => {
   // Must resolve, not throw: a callable that cannot be invoked at all is worse than
-  // one that is unmetered. Note an anonymous caller *with* an IP is metered now — the
-  // guest heartbeat (`recordGuestPresence`) never rejects an anonymous caller, so the
-  // old "no uid => nothing to meter" assumption left it unbounded.
+  // one that is unmetered -- this limiter fails OPEN by design. Note the caller is
+  // still METERED: an anonymous caller with no derivable address shares the single
+  // `unknown` bucket, because a callable never rejecting an anonymous caller (the
+  // guest heartbeat) is what made "no uid => nothing to meter" unbounded.
   await enforceCallableRateLimit({})
   await enforceCallableRateLimit({auth: null})
 })

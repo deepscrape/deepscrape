@@ -82,7 +82,14 @@ export type LeaseRequest = {
   tier: BrowserTier
   mode: SessionMode
   kind: BrowserKind
-  /** Sessions this caller holds, in any state other than `closed`. */
+  /**
+   * Sessions this caller holds IN THE REQUESTED `mode`, in any state but `closed`.
+   *
+   * The mode filter is load-bearing: this one number is compared against
+   * `caps.byo` (3) on the BYO branch and `caps.dedicated` (1) below it, so an
+   * unfiltered total let free BYO sessions hold the slot for the dedicated
+   * machine the customer actually pays for.
+   */
   liveSessions: number
   /** Whether the caller has a BYO CDP endpoint configured. */
   byoConfigured: boolean

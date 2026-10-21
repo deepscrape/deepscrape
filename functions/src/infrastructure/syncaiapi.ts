@@ -570,35 +570,42 @@ class ReverseAPIProxy {
                 .limit(100)
                 .get()
 
-            /**
-             * callback
-             * @param {*} membershipDoc
-             */
-            const organizations = await Promise.all(membershipsSnap.docs.map(async (membershipDoc) => {
-                const membership = membershipDoc.data() as {
-                    orgId?: string
-                    role?: string
-                }
+            const memberships = membershipsSnap.docs
+                .map((membershipDoc) => membershipDoc.data() as { orgId?: string; role?: string })
+                .filter((membership): membership is { orgId: string; role?: string } => Boolean(membership.orgId))
 
-                if (!membership.orgId) {
-                    return null
-                }
+            if (memberships.length === 0) {
+                res.status(200).json({ organizations: [] })
+                return
+            }
 
-                const orgSnap = await db.collection("organizations").doc(membership.orgId).get()
-                if (!orgSnap.exists) {
-                    return null
+            // One `getAll` instead of a `get` per membership. The old shape paid a whole
+            // round trip per org, and this route runs on every load of the org picker.
+            // `getAll` rejects a repeated reference, so the refs are de-duplicated first --
+            // two membership documents can name the same org and the old loop simply
+            // returned that org twice.
+            const roleByOrgId = new Map<string, string | undefined>()
+            for (const membership of memberships) {
+                if (!roleByOrgId.has(membership.orgId)) {
+                    roleByOrgId.set(membership.orgId, membership.role)
                 }
+            }
 
-                return {
+            const orgSnaps = await db.getAll(
+                ...[...roleByOrgId.keys()].map((orgId) => db.collection("organizations").doc(orgId)),
+            )
+
+            const organizations = orgSnaps
+                .filter((orgSnap) => orgSnap.exists)
+                .map((orgSnap) => ({
                     id: orgSnap.id,
                     ...(orgSnap.data() || {}),
                     membership: {
-                        role: membership.role || "member",
+                        role: roleByOrgId.get(orgSnap.id) || "member",
                     },
-                }
-            }))
+                }))
 
-            res.status(200).json({ organizations: organizations.filter(Boolean) })
+            res.status(200).json({ organizations })
         } catch (error) {
             console.error("Failed to list organizations:", error)
             res.status(500).json({ error: "internal", code: "internal" })

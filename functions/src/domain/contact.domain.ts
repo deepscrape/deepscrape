@@ -136,18 +136,22 @@ export const storeContactSubmission = async (
  * Sends a notification email via Resend to the support team when a
  * new contact form is submitted. The sender receives a confirmation too.
  *
- * Silently swallows errors so a failed email never breaks the form response.
- * @param {*} data
+ * The submission is already stored by the time this runs, so a failure is
+ * returned rather than thrown: the caller decides what the visitor is told.
+ * The auto-reply is best effort and does not change the result.
+ * @param {Omit<ContactSubmission, "createdAt">} data Sanitized submission
+ * @return {Promise<boolean>} True when the support notification was sent
  */
 export const sendContactNotification = async (
   data: Omit<ContactSubmission, "createdAt">
-): Promise<void> => {
+): Promise<boolean> => {
   const apiKey = env.RESEND_API_KEY
   const fromEmail = env.RESEND_FROM_EMAIL
 
   if (!apiKey || !fromEmail) {
     console.warn("[contact] RESEND_API_KEY or RESEND_FROM_EMAIL not configured — skipping email notification")
-    return
+    // Unconfigured mail is normal in local dev, never in production.
+    return env.IS_EMULATOR
   }
 
   try {
@@ -204,8 +208,11 @@ export const sendContactNotification = async (
     } else {
       console.log(`[contact] Auto-reply sent to ${data.email}: ${confirmResult.data?.id}`)
     }
+
+    return !supportResult.error
   } catch (error) {
     console.error("[contact] Failed to send email notification:", error)
-    // Never break the form response for an email failure
+    // Never throw for a mail failure: the submission is already stored.
+    return false
   }
 }

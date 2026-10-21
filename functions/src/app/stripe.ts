@@ -2605,18 +2605,22 @@ export const listMyPaymentMethods = onCallv2(
 
     const list = await stripe.paymentMethods.list({
       customer: customerId,
-      type: "card",
       limit: 20,
     })
 
     return {
       methods: list.data.map((paymentMethod) => ({
         id: paymentMethod.id,
-        brand: paymentMethod.card?.brand || null,
+        // No `type` filter: Stripe Checkout saves `link` payment methods, so asking only
+        // for `card` hid every saved method on an account that paid through Link.
+        brand: paymentMethod.card?.brand || paymentMethod.type || null,
         last4: paymentMethod.card?.last4 || null,
         expMonth: paymentMethod.card?.exp_month ?? null,
         expYear: paymentMethod.card?.exp_year ?? null,
-        billingDetails: paymentMethod.billing_details?.name || null,
+        billingDetails: paymentMethod.billing_details?.name ||
+          (paymentMethod as { link?: { email?: string | null } | null }).link?.email ||
+          paymentMethod.billing_details?.email ||
+          null,
       })),
     }
   }

@@ -66,9 +66,14 @@ export class PaymentMethodsComponent {
   }
 
   getCardDisplay(pm: SavedPaymentMethod): string {
+    // A Link payment method has no card number to mask; its only identifier is the email
+    // the customer saved.
+    if (!pm.last4) {
+      return pm.billingDetails || pm.brand || 'Payment method'
+    }
+
     const brand = pm.brand || 'card'
-    const last4 = pm.last4 || '****'
-    return `${brand.charAt(0).toUpperCase() + brand.slice(1)} •••• ${last4}`
+    return `${brand.charAt(0).toUpperCase() + brand.slice(1)} •••• ${pm.last4}`
   }
 
   getExpiryDisplay(pm: SavedPaymentMethod): string {

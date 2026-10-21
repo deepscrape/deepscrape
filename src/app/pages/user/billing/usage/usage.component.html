@@ -101,13 +101,13 @@
               <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
                 <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.TOTAL_INVOICED' | translate }}</p>
                 <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
-                  {{ report.summary.totalInvoiced | currency: asCurrencyCode(report.summary.currency) }}
+                  {{ (report.summary.totalInvoiced / 100) | currency: asCurrencyCode(report.summary.currency) }}
                 </p>
               </div>
               <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
                 <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.TOTAL_PAID' | translate }}</p>
                 <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
-                  {{ report.summary.totalPaid | currency: asCurrencyCode(report.summary.currency) }}
+                  {{ (report.summary.totalPaid / 100) | currency: asCurrencyCode(report.summary.currency) }}
                 </p>
               </div>
             </div>
@@ -181,14 +181,14 @@
                         </td>
                         <td class="px-3 py-2 whitespace-nowrap">
                           @if (item.unitAmount !== null) {
-                            {{ item.unitAmount | currency: asCurrencyCode(item.currency) }}
+                            {{ (item.unitAmount / 100) | currency: asCurrencyCode(item.currency) }}
                           }
                           @if (item.unitAmount === null) {
                             -
                           }
                         </td>
                         <td class="px-3 py-2 whitespace-nowrap font-medium">
-                          {{ item.total | currency: asCurrencyCode(item.currency) }}
+                          {{ (item.total / 100) | currency: asCurrencyCode(item.currency) }}
                         </td>
                       </tr>
                     }

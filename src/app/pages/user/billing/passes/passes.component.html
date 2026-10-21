@@ -30,7 +30,7 @@
       @for (pack of creditPacks$ | async; track pack) {
         <div class="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/30 p-5 shadow-sm">
           <p class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ pack.label }}</p>
-          <p class="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-2">{{ (pack.amount / 100) | currency:pack.currency }}</p>
+          <p class="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-2">{{ (pack.amount / 100) | currency:asCurrencyCode(pack.currency) }}</p>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ pack.credits }} credits</p>
           <button
             type="button"

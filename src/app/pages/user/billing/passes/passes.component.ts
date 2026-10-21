@@ -36,6 +36,11 @@ export class PassesComponent {
     return billing.plan === 'free' ? Math.max(0, (billing.credits.balance || 0) - (billing.credits.reserved || 0)) : 0
   }
 
+  /** Stripe sends lowercase codes and `CurrencyPipe` needs the ISO form to print €. */
+  asCurrencyCode(currency: string | null | undefined): string {
+    return (currency || 'EUR').toUpperCase()
+  }
+
   getAvailableIncluded(billing: UserBilling | null): number {
     if (!billing?.credits) {
       return 0

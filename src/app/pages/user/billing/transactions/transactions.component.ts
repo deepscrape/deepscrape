@@ -51,6 +51,11 @@ export class TransactionsComponent {
     this.rangeKey$.next(key)
   }
 
+  /** Stripe sends lowercase codes and `CurrencyPipe` needs the ISO form to print €. */
+  asCurrencyCode(currency: string | null | undefined): string {
+    return (currency || 'EUR').toUpperCase()
+  }
+
   getInvoiceStatusIcon(status: string | null): string {
     switch (status) {
       case 'paid': return 'check_circle'

@@ -34,6 +34,26 @@ const bootstrap = async () => {
   }
 }
 
+describe('hardening headers', () => {
+  test('reach a raw Response and a JSON handler alike', async () => {
+    // `/page` returns `new Response(...)` directly, which is the shape the CSR
+    // shell and the frame route take — the case a hook is most likely to miss.
+    const responses = [await call('/page'), await call('/api/echo', { method: 'POST' })]
+
+    for (const res of responses) {
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+      expect(res.headers.get('x-frame-options')).toBe('SAMEORIGIN')
+      expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin')
+    }
+  })
+
+  test('omit HSTS outside production so localhost is never pinned to https', async () => {
+    const res = await call('/page')
+
+    expect(res.headers.get('strict-transport-security')).toBeNull()
+  })
+})
+
 describe('csrf, cookies and cors', () => {
   test('issues a signed httpOnly secret plus a readable token', async () => {
     const res = await call('/page')

@@ -218,6 +218,26 @@ export const security = new Elysia({ name: 'security' })
       credentials: true,
     }),
   )
+  /**
+   * Hardening headers for a request that reaches this service DIRECTLY.
+   *
+   * The production domains sit behind Firebase Hosting, which stays the single
+   * owner of CSP — the file header records why a nonce policy here would block
+   * the CSR shell. But a `*.run.app` request has no Hosting in front of it, so
+   * nothing else would emit these, and that origin is reachable.
+   * HSTS is prod-only: sending it from localhost pins the developer's browser
+   * to https on that host and breaks dev with no way back.
+   */
+  .onAfterHandle({ as: 'global' }, ({ set }) => {
+    set.headers['x-content-type-options'] = 'nosniff'
+    set.headers['x-frame-options'] = 'SAMEORIGIN'
+    set.headers['referrer-policy'] = 'strict-origin-when-cross-origin'
+
+    if (isProd) {
+      set.headers['strict-transport-security'] =
+        'max-age=31536000; includeSubDomains'
+    }
+  })
   .onBeforeHandle({ as: 'global' }, ({ request, set, cookie }) => {
     const { pathname } = new URL(request.url)
     const incoming = parseCookies(request.headers.get('cookie'))

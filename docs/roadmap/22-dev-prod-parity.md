@@ -66,8 +66,27 @@ three ways at once, and they look unrelated:
 | `GET /api/orgs → 401` | The BFF verifies with the Admin SDK. Without `FIREBASE_AUTH_EMULATOR_HOST` in `bff/.env.dev` it cannot accept the emulator's unsigned `alg:none` token, so every `/api` call is unauthorized even though the browser is signed in. |
 | Stripe returns you to `:8080` and the page is broken | Checkout sends `window.location.origin + '/billing/success'`, and `billingAllowedOrigins` in non-production contains `http://localhost:8080` **on purpose**, so `assertAllowedReturnUrl` accepts it. The origin was the mistake, not the guard. |
 
-So: the UI is served by `ng serve` on **4200**, and `:8080` is only ever the API. If you need the app
-on a single origin, use the **hosting emulator** on 5000, which is in both allowlists.
+So: the UI is served by `ng serve` on **4200**, and `:8080` is only ever the API.
+
+**The hosting emulator on 5000 is NOT the single-origin answer** — measured 2026-10-21:
+
+| Request | Result |
+|---|---|
+| `http://localhost:5000/api/orgs` | **200 `text/html`**, body starts `<!DOCTYPE html>` — the hosting emulator's `**` → `/index.csr.html` rewrite answers it |
+| `http://localhost:8080/api/orgs` | **401 `application/json`** — the BFF, correctly refusing an unverifiable token |
+
+A Firebase hosting rewrite can only target a static file, a function or Cloud Run — **not an arbitrary
+host**, so the hosting emulator cannot forward `/api` to a local BFF at all. It is fine for testing the
+marketing site alone; it cannot host an authenticated app against a local API.
+
+The failure mode that produces is worth recognising: Angular reports
+`HttpErrorResponse { status: 200, statusText: 'OK', ok: false }`. `HttpErrorResponse.ok` is always
+`false`, and the status is copied from the response that arrived — so a **200 with an unparseable
+body** looks like "a 200 that failed". It is HTML where JSON was expected, and it means the request
+reached something that is not the BFF.
+
+The only origin whose `/api` reaches the BFF is **4200**, because `src/proxy.conf.json` forwards
+`/api`, `/event` and `/oauth` to `127.0.0.1:8080`. Without `ng serve` running there is no such origin.
 
 ## The five shared backends, measured 2026-10-21
 

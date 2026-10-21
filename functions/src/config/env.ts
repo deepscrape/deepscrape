@@ -168,6 +168,16 @@ const getConfigValue = (key: string, fallback = ""): string => {
   return fallback
 }
 
+/**
+ * The authenticated app's production origin.
+ *
+ * Exported rather than inlined because a second module has to tell "the
+ * default" apart from "a value someone chose": the queue refuses to publish a
+ * crawl target at THIS origin from a non-production process, and comparing
+ * against a second copy of the literal is how the two drift apart.
+ */
+export const DEFAULT_APP_ORIGIN = "https://deepscrape.dev"
+
 const getEnv = () => {
   const env = {
     // Environment configuration
@@ -372,7 +382,7 @@ const getEnv = () => {
     // Origin of the AUTHENTICATED app — settings, login, billing. An email link must be
     // absolute or it is a dead link, hence the hard-coded default. Still the apex today;
     // set it to the dashboard origin at cutover.
-    APP_ORIGIN: getConfigValue("APP_ORIGIN", "https://deepscrape.dev"),
+    APP_ORIGIN: getConfigValue("APP_ORIGIN", DEFAULT_APP_ORIGIN),
     // Origin of the public marketing site. Deliberately not the same constant as
     // APP_ORIGIN: the two diverge at the subdomain split, and an "Appeal" link belongs on
     // the marketing contact page while a "Sign in" link must not.

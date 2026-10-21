@@ -23,6 +23,7 @@ import assert from "node:assert/strict"
 import {
   FLOW_CONTROL_KEY,
   parallelismFor,
+  queueTargetsProduction,
   verifyQstashDelivery,
   workerUrl,
   workerUrlFor,
@@ -65,6 +66,22 @@ describe("workerUrl", () => {
   it("delegates to the builder and always names the worker path", () => {
     assert.ok(workerUrl().endsWith("/api/jobs/crawl/worker"))
     assert.ok(!workerUrl().includes("//api"))
+  })
+})
+
+describe("queueTargetsProduction", () => {
+  it("refuses the default origin when this is not the deployment", () => {
+    assert.equal(queueTargetsProduction("https://deepscrape.dev", false), true)
+    assert.equal(queueTargetsProduction("https://deepscrape.dev/", false), true)
+  })
+
+  it("allows the same origin in production, which is what it names", () => {
+    assert.equal(queueTargetsProduction("https://deepscrape.dev", true), false)
+  })
+
+  it("allows any origin a developer actually chose", () => {
+    assert.equal(queueTargetsProduction("http://127.0.0.1:8080", false), false)
+    assert.equal(queueTargetsProduction("https://staging.example", false), false)
   })
 })
 

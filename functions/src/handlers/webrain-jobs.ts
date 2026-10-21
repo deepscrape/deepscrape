@@ -51,7 +51,7 @@ import { Request, Response } from "express"
 import { randomUUID } from "node:crypto"
 import { FieldValue } from "firebase-admin/firestore"
 import { webrainTool } from "../infrastructure/webrain-mcp"
-import { publishCrawlTarget } from "../infrastructure/qstash"
+import { publishCrawlTarget, qstashConfigured } from "../infrastructure/qstash"
 import { safeTargetUrls } from "../domain/url-guard.domain"
 import { resolveProvider } from "../domain/scrape-providers.domain"
 import { readStoredProvider } from "../infrastructure/scrape-provider.store"
@@ -509,6 +509,17 @@ const enqueueTargets = async (
   res: Response
 ): Promise<void> => {
   const taskId = randomUUID()
+
+  // Fail once, before anything is written. Without this, a queue-less local run
+  // fails per target and records EVERY one as a crawl failure, leaving a
+  // partial job document plus N misleading rows for a deployment mistake that
+  // has exactly one cause.
+  if (!qstashConfigured()) {
+    res.status(503).json({
+      error: "Queue is not configured: set QSTASH_URL and QSTASH_TOKEN.",
+    })
+    return
+  }
 
   // Written before publishing, and the id is only handed out once it exists:
   // the caller's very next `GET` must not race this write and report a job that

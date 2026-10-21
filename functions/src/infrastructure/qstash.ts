@@ -28,7 +28,7 @@
  * place on the verifier alone.
  */
 import { Client, Receiver } from "@upstash/qstash"
-import { env } from "../config/env"
+import { DEFAULT_APP_ORIGIN, env } from "../config/env"
 import { webrainWorkerPool } from "./webrain-config.store"
 
 /**
@@ -116,6 +116,24 @@ export const workerUrl = (): string => workerUrlFor(env.APP_ORIGIN)
 export const failureUrl = (): string => failureUrlFor(env.APP_ORIGIN)
 
 /**
+ * Whether publishing here would enqueue work for the DEPLOYED platform.
+ *
+ * `APP_ORIGIN` defaults to the production app because an email link must be
+ * absolute — correct for a deployment, wrong for a laptop. A local batch with
+ * a real `QSTASH_TOKEN` would otherwise ask the queue to crawl against
+ * production, carrying the local caller's uid, and it would SUCCEED: nothing on
+ * the publish path can tell you it did the wrong thing.
+ * @param {string} origin The origin the worker URL is built from.
+ * @param {boolean} isProduction Whether this process is the deployment.
+ * @return {boolean} True when the target would be delivered to production.
+ */
+export const queueTargetsProduction = (
+  origin: string,
+  isProduction: boolean
+): boolean =>
+  !isProduction && origin.replace(/\/+$/, "") === DEFAULT_APP_ORIGIN
+
+/**
  * Publishes one target to the queue.
  *
  * `retries` is explicit rather than left to the default: three attempts is the
@@ -128,6 +146,12 @@ export const failureUrl = (): string => failureUrlFor(env.APP_ORIGIN)
 export async function publishCrawlTarget(
   message: CrawlTargetMessage
 ): Promise<string> {
+  if (queueTargetsProduction(env.APP_ORIGIN, env.IS_PRODUCTION)) {
+    throw new Error(
+      "Refusing to queue a crawl target for the production origin from a " +
+        "non-production process. Set APP_ORIGIN to this machine's address."
+    )
+  }
   const response = await new Client({
     token: env.QSTASH_TOKEN,
     baseUrl: env.QSTASH_URL,

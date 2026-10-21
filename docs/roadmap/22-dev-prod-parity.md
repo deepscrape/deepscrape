@@ -81,7 +81,11 @@ that works. Ports are from `firebase.dev.json` and are not free choices — the 
 | 2 | BFF | `cd bff && bun run start` | **8080** | every client `/api`, `/event`, `/oauth` call |
 | 3 | Angular | `npm start` | **4200** | the UI (`prbuild:dev` regenerates `environment.ts`) |
 | 4 | webrain (docker) | `docker run -p 9223:9223 …` | 9223 | `/api/scrape`, `/api/search`, jobs |
-| — | arachnefly | `go run .` with `PORT=8082` | **8082** | any machine or browser-session route |
+| — | arachnefly | `go run .` with `PORT=8083` | **8083** | any machine or browser-session route |
+
+8082 is what `bff/.env.dev.example` names and it is a free choice — but on this machine it is
+already bound (a node process), so the working value here is **8083**. Whatever is chosen, the
+BFF's `API_ARACHNEFLY_URL` and arachnefly's `PORT` must be the same number.
 
 `src/proxy.conf.json` sends `/api`, `/event` and `/oauth` to `http://127.0.0.1:8080`, and the
 client addresses everything relatively (`API_BASE_URL = '/api'`), so **the browser never needs the
@@ -116,11 +120,44 @@ Two gotchas in that table, both measured:
 
 | # | Mismatch | Evidence | Fix |
 |---|---|---|---|
-| A | **arachnefly's dev default collides with the BFF.** `upstreams.ts` resolves arachnefly to `http://localhost:8080` outside production, which is the port the BFF itself binds. | `config/upstreams.ts` vs `bff/server.ts` | Run arachnefly with `PORT=8082` and set `API_ARACHNEFLY_URL=http://127.0.0.1:8082` (what `bff/.env.dev.example` already says). Otherwise the BFF calls itself and answers 404. |
+| A | **arachnefly's dev default collides with the BFF.** `upstreams.ts` resolves arachnefly to `http://localhost:8080` outside production, which is the port the BFF itself binds. | `config/upstreams.ts` vs `bff/server.ts` | Run arachnefly with `PORT=8083` and set `API_ARACHNEFLY_URL=http://127.0.0.1:8083` (**8083, not the example's 8082** — 8082 was already bound here). Otherwise the BFF calls itself and answers 404. |
 | B | **The two examples disagree on the webrain port.** `functions/.env.example` says 9223 and explains `webrain mcp --http 9223`; `bff/.env.dev.example` says 9333. | both example files | One number, matching what docker publishes. Check with `docker ps --format "{{.Ports}}"`. A wrong port presents as "search is broken", not as a config error. |
 | C | **`bff/.env.dev.example` had no emulator hosts.** | the file, before this change | Three placeholders added: the two hosts plus `GCLOUD_PROJECT`. Without them the BFF falls back to ADC and talks to **production Firestore and Auth** while the browser is on the emulator. |
 | D | **`npm run serve` never starts the BFF** | `package.json` scripts | Three terminals, or one `dev` script that runs all four. Not added: it needs a process runner. |
 | E | **Storage needs GCP credentials even in dev** — unless Tigris is used. `admin.storage()` cannot use the Storage emulator, so `staging.libnet-d76db.appspot.com` requires `gcloud auth application-default login`. | `firebase-blob-store.ts` | Either accept the ADC login, or set `TIGRIS_BUCKET` in dev: the S3 path needs only the key pair, no GCP credentials at all. |
+
+### arachnefly in dev
+
+`godotenv.Load()` reads `./.env` in **arachnefly's** working directory, so that is where its settings
+go — not the app's, not the BFF's. Emulator support is already built in and is the reason this needs
+no credentials at all: `NewFirebaseClient` branches on `FIRESTORE_EMULATOR_HOST` to
+`option.WithoutAuthentication()` and pins project `libnet-d76db`, database `easyscrape`.
+
+```
+PORT=8083
+FLY_API_TOKEN=<token>
+FLY_APP=deepscrape-browser-session
+FIRESTORE_EMULATOR_HOST=127.0.0.1:5001
+FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+```
+
+`Prefork: true` is set in `main.go`; Fiber cannot prefork on Windows, so expect a warning and treat
+the root `Dockerfile` as the faithful test. Note `FLY_APP` must name an app that **exists** — that is
+what keeps `CheckOrCreateApp` on its check branch and the `softmind` literal out of the picture
+(row 6). Nothing is created in Fly while you are in dev unless that app is missing.
+
+### webrain in dev: three images, one of them right
+
+| Image | Port | Right for dev? |
+|---|---|---|
+| `deploy/webrain-engine/Dockerfile` (full engine) | 9223 | **yes** — chromium included, so `/api/serp` and JS pages work |
+| `deploy/webrain-engine/Dockerfile.api-only` | 9223 | **no** — it is built for the *deployed* shared engine and only works with `CDP_URL` set; without a browser, `serp` on `google`/`brave` fails outright, not degraded |
+| `deploy/browser-session/Dockerfile` | 11235 | only when testing the Fly machine contract: nginx in front, a **mandatory** token, and a port that is asserted rather than configured |
+
+`-p 9223:9223` does not work on its own because the engine binds loopback by default; the container
+has to say `WEBRAIN_HTTP_ADDR=0.0.0.0:9223`, which in turn **requires** `WEBRAIN_HTTP_TOKEN`. Set the
+same string as `WEBRAIN_MCP_TOKEN` in the BFF and the emulator, or every call is a 401 that reads as
+"search is broken".
 
 
 

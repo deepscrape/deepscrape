@@ -10,12 +10,14 @@ what it does not:
 | `functions` build / lint / test | 0 / 0 errors (8 pre-existing warnings) / 974 tests, 965 pass, 0 fail, 9 skipped |
 | `app` `tsc --noEmit -p tsconfig.app.json` | 0 |
 | `app` `bun run build` | 0, 14 routes prerendered — the only template and SSR gate |
-| `app` Karma | 900 / 900 |
+| `app` Karma | 902 / 902 (900 + the 2 auth specs added when #81 closed) |
+| `bff` `tsc --noEmit` / `bun test` | 0 / **83 tests, 0 fail** |
 | `arachnefly` `go build` / `go vet` | 0 / 0 |
 | `crawlagent` `compileall` | 0 |
 
-Not run today: `bff` `tsc` / `bun test`, any profiling, any bundle measurement, `gcloud describe`,
-and a preview deploy. So "the suite is green" is a statement about the **app and functions** only.
+Not run today: any profiling, any bundle measurement, `gcloud describe`, and a preview deploy —
+so the suite is green in **all four code surfaces**, and green says nothing about production
+configuration.
 Rows were re-read against source; only the rows marked *(re-proved 2026-10-21)* were re-checked
 end to end. The rest still carry their original evidence and could be stale.
 
@@ -35,43 +37,38 @@ Two things were removed, deliberately:
     from source before anyone acts on it.
   - `decision` — the defect may be real, but the fix changes money, a public contract, or
     user-visible behaviour, so it is not mine to take.
-- **Do not work this list in numeric order.** The numbers are the old audit's, kept only so
-  a commit message can reference them. Order by blast radius: request path → money →
-  trust boundary → correctness → polish.
+- **Work the list in the order given, not by audit number.** The audit numbers are kept only
+  so a commit message can reference them; the work list below is easiest-first (1 = smallest
+  verified change). `Risk` is a column, so a one-line money item still gets its own proof even
+  though it is small.
 - **Evidence rule.** An item without a current `file:line`, or whose premise I could not
   reproduce, is not actionable. Line numbers rot within days in this repo; re-locate
   before editing.
 
-## Ranked open work
+## Work list — easiest first
 
-### 1. Request path / product dead ends
+Ordered by what the change costs: files touched, then the gate that proves it, then whether a
+decision is needed at all. Blast radius is a column, not the sort key — "easy" is about the size
+of the diff, never about how much damage a wrong one does.
 
-| # | Status | What | Where |
-|---|---|---|---|
-| 87 | open | The full Firebase ID token is placed in the WebSocket URL: `?token=${jwtToken}`. Ends up in proxy/CDN/access logs and is replayable by anyone who can read them. `websocket.service.ts` documents this as the reason the old transport was removed. | `core/services/webrtc.service.ts:111`, `:163` |
-| 120 | open | `deepscrape-bff-*.run.app` is `--allow-unauthenticated` and serves the app directly with no CSP and no HSTS, because `security.ts` omits `helmet` on the stated assumption that only Hosting's CSP reaches a browser. Its own comment names the hole. | `bff/security.ts`, Cloud Run deploy flags |
+| Do | Audit # | Size | Risk | What | Proof / blocker |
+|---|---|---|---|---|---|
+| 1 | 58 | — | money | **Not a defect.** `decideLease` does compare one `liveSessions` field against both caps, but its only meaningful caller passes `countLive(snapshot, input.mode)`, which counts **only that mode** — so three BYO sessions cannot block the dedicated machine. Cosmetic leftover: the parameter name is what made this look like a bug; `liveSessionsForMode` would say it. | `browser-session.store.ts:404-417`, `domain/browser-session.domain.ts:111-143`. Moved to *Refused*. |
+| 2 | 120 | S | trust boundary | **Half fixed 2026-10-21.** The BFF now emits `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin` on every response — raw `Response` handlers included, which is the case a hook usually misses — and `Strict-Transport-Security` in production only, because HSTS from localhost pins the developer's browser to https with no way back. **CSP stays Hosting's:** its own comment in the file records that a nonce policy here would block the CSR shell, so the remaining gap is a CSP for a direct `.run.app` request, which needs a policy chosen deliberately. | `bff/security.ts` `onAfterHandle`; `bff/security.spec.ts` asserts all four, and that HSTS is absent without `PRODUCTION`. Gates: bff tsc 0, 83 tests 0 fail. |
+| 3 | 61 | M | money | The create path races keepalives: the admission query runs **inside** a transaction whose read range `keepaliveBrowserSession` writes to, so a UI poll replays the create. Fix is the `counters/sessions` document (O15), not another `where`. | `browser-session.store.ts:320`. Needs a backfill for sessions that already exist, and a spec that a concurrent keepalive no longer aborts the create. |
+| 4 | 133 | M | cost | Backlog is trimmed to **5,000** while the drain commits 1,000 per half hour, so ingress above ~2,000/hour silently drops the oldest. | `gfunctions/analytics.ts:1120,1311`. The cadence or a second drain — not a bigger constant, which only moves the cliff. |
+| 5 | 99 | M | cost | Page *n* costs *n* callables: `resolveMachinePageCursor` walks from the nearest known page and throws the walk away on the next jump. | `machine-store.service.ts:88-132`. Cache cursors per page (page 1 is already persisted), or let the callable take an offset. |
+| 6 | 89 | S + **choice** | user data | The service worker activates on `VERSION_READY` and reloads immediately, destroying unsaved state mid-crawl or mid-checkout. | `ngsw-update.service.ts` — 28 lines, so the code is small; the choice is not mine. Not reloading strands old assets, so prompt-vs-idle-reload is the owner's call. |
+| 7 | 60 | M/H | money | `handlers/browser-sessions.ts` has **no spec** — attach/close/keepalive, which is where a stranded machine or a double charge would come from. | Blocked on a harness, not on effort: the module builds the Admin SDK at import, so it needs an emulator or a seam. |
+| 8 | 67 | H | correctness | A retry appends a second row for one target, and `deriveStatus` mixes row counts with URL counts. | One document per target keyed by `sha1(url)` — schema change plus migration. |
+| 9 | 87 | H | security | The full ID token rides in the WebSocket URL (`?token=`), so it lands in proxy/CDN logs and is replayable. | `webrtc.service.ts:111`, `:163`. Needs a transport change (subprotocol or first-frame auth) plus whatever terminates the socket. |
+| 10 | 134 | H | cost | `byIP.<raw address>` is uncapped on `metrics_daily`, `metrics_hourly` and the dashboard singleton; near 1 MiB the **whole batch** fails. | Three readers depend on the shape, so it is a schema change. |
 
-### 2. Money under concurrency
+Verify-only rows cost a lookup rather than a change — see *Needs re-deriving from source* below.
+#50 is the one that cannot be settled here at all: it needs the deployed `FUNCTIONS_ENV_JSON`.
 
-| # | Status | What | Where |
-|---|---|---|---|
-| 58 | open | Two caps, one counter: `SESSION_CAPS.paid` is `{dedicated: 1, byo: 3}`, but one `liveSessions` number is compared against both — three free BYO sessions block the dedicated machine the customer pays for. | `domain/browser-session.domain.ts:52-64` |
-| 59 | decision | `machinesToRelease` is written at erasure and **read by nothing**, a retry can overwrite it with `[]`, `users/{uid}/machines` is never enumerated, and stopping a machine needs a service credential because machine control relays the caller's token. | `gfunctions/admin-users.ts` |
-| 69 | decision | `blob-purge` now reports `complete`, but `purgedAt` and the `purgeAfter` correction are two writes: a crash between them restores the original false "erased" claim. One-line fix, lands in `admin-users.ts`. | `gfunctions/admin-users.ts` ~1578, ~1598 |
-| 74 | decision | Shared-tier objects are immortal: first anonymous fetch is served forever, `storageDelete` refuses shared keys. Egress half is fixed; this needs a retention window (7 vs 30 days) nobody has chosen. | `handlers/storage.ts`, `domain/storage-scope.domain.ts` |
-| 133 | open *(re-proved 2026-10-21)* | Event ingress capacity is ~2,000/hour and silently drops the oldest: the drain commits 1,000 per half hour into a list head-trimmed by `ltrim` to **5,000**. Both halves read in source: `ltrim(…, 0, CLIENT_EVENT_LIST_MAX - 1)` on append and again mid-drain, and `CLIENT_EVENT_LIST_MAX = 5000`. The old citation pointed at `src/config/redis-keys.ts`, which does not exist — the constant lives in `functions/src/config/` and is re-exported through `analytics.ts`. | `functions/src/config/redis-keys.ts:144`, `gfunctions/analytics.ts:1120,1311` |
-| 134 | decision | `byIP.<raw address>` is an uncapped dimension on `metrics_daily`, `metrics_hourly` and the dashboard singleton. Near 1 MiB the **whole batch** fails, taking `newGuests` and every funnel counter with it. Fix is per-(day, IP) documents, which three readers depend on. The audit pointed at the wrong file. | `gfunctions/analytics-realtime.ts` |
+## Decisions — not mine to take
 
-### 3. Correctness users see
-
-| # | Status | What | Where |
-|---|---|---|---|
-| 61 | open — **half fixed** *(re-proved 2026-10-21)* | The scan half is gone: `ownBrowserMachine` and `listSessionMachineIds` both filter on `state in METERABLE_STATES`, so cost no longer grows with account age. What remains is the create path: it runs that query **inside** a transaction whose read range covers every live session, and `keepaliveBrowserSession` writes into the same range — a UI keepalive can abort and replay the create. Fix is the counter doc in `21` §O15, not another `where`. | `infrastructure/browser-session.store.ts:320`, `:653`, `:705` |
-| 67 | open | A retry appends a second row for one target (`arrayUnion` on an element carrying `ms`/`data` dedupes equal values only), and `deriveStatus` mixes row counts with URL counts — two failures plus one duplicate `ok` row reads as `Failed` with a page actually scraped. Needs one doc per target keyed by `sha1(url)`. | `handlers/webrain-jobs.ts` |
-| 89 | open | The service worker activates on `VERSION_READY` and immediately `location.reload()`s, destroying unsaved state mid-crawl or mid-checkout, triggered by someone else's deploy. | `core/services/ngsw-update.service.ts` |
-| 99 | open | One machine page change costs two billed callable reads, and a jump to page *n* costs *n+1*: the cursor chain is walked then thrown away. | `core/services/machine-store.service.ts` |
-
-### 4. Decisions
 
 | # | Status | The decision |
 |---|---|---|
@@ -81,8 +78,11 @@ Two things were removed, deliberately:
 | 95 | decision | `LoggerService` patches global `console` as a module side effect. Redaction is fixed (all arguments, nested, cycle-safe); the patch itself should move behind an explicit opt-in initialiser. |
 | 105 | decision | `PackService` is `providedIn:'root'` with a constructor token that has no root provider, so three components `new` it: each tab switch builds a fresh instance, refetches, and `ngOnDestroy` never runs. |
 | 113 | decision | `listMyOrganizations()` has a write side effect that races `AuthzService.refreshMemberships()` for the active tenant. |
+| 59 | decision | `machinesToRelease` is written at erasure and **read by nothing**, a retry can overwrite it with `[]`, `users/{uid}/machines` is never enumerated, and stopping a machine needs a service credential because machine control relays the caller's token. |
+| 69 | decision | `blob-purge` reports `complete`, but `purgedAt` and the `purgeAfter` correction are two writes: a crash between them restores the original false "erased" claim. One-line fix, lands in `admin-users.ts` ~1578/~1598 — held back because it changes what erasure claims. |
+| 74 | decision | Shared-tier objects are immortal: the first anonymous fetch is served forever and `storageDelete` refuses shared keys. Egress half is fixed; this needs a retention window (7 vs 30 days) nobody has chosen. |
 
-### 5. Needs re-deriving from source
+## Needs re-deriving from source
 
 These did not reproduce as written. Do not act on the audit text.
 
@@ -113,6 +113,7 @@ Recorded so they are not re-attempted. Each was read in source.
 | 126, 127 | No `dataGroups` and `/index.html` is mandatory; the codemods are manual and referenced by no CI job. |
 | 137, 138 | Exporting `trackGuest` double-counts every registration. Four analytics helpers are wired by their spec — deleting them broke the suite. |
 | 124 | **Latent, not a cost.** No service calls Meilisearch: the name appears **only under `docs/`** (5 files) and in no `functions/`, `bff/` or `src/` file. `deploy/meilisearch/fly.toml` is undeployed infrastructure with no client, so no request pays the `fra` round trip today. Re-open the day a search client is written — and put it beside webrain, not in `fra`. |
+| 58 | **Not a defect** *(re-proved 2026-10-21)*. The shared counter looked real: `decideLease` compares one `liveSessions` field against `caps.byo` and `caps.dedicated`. But the caller passes `countLive(snapshot, input.mode)`, and `countLive` increments only when `record.mode === mode` — so a BYO request counts BYO sessions and a dedicated request counts dedicated ones. No customer is blocked by the other mode's sessions. The only thing left is the parameter's name, which is why this read as a bug. |
 
 ## Closed in this campaign
 

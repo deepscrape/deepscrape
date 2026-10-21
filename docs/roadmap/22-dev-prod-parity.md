@@ -80,7 +80,7 @@ that works. Ports are from `firebase.dev.json` and are not free choices — the 
 | 1 | Emulators | `cd functions && npm run serve` | 5001/8081/9099/9199/5000/4000/8085 | Auth, Firestore, Storage, callables |
 | 2 | BFF | `cd bff && bun run start` | **8080** | every client `/api`, `/event`, `/oauth` call |
 | 3 | Angular | `npm start` | **4200** | the UI (`prbuild:dev` regenerates `environment.ts`) |
-| 4 | webrain (docker) | `docker run -p 9223:9223 …` | 9223 | `/api/scrape`, `/api/search`, jobs |
+| 4 | webrain (docker) | `docker run -p 127.0.0.1:9223:9223 …` | 9223 | `/api/scrape`, `/api/search`, jobs |
 | — | arachnefly | `go run .` with `PORT=8083` | **8083** | any machine or browser-session route |
 
 8082 is what `bff/.env.dev.example` names and it is a free choice — but on this machine it is
@@ -158,6 +158,12 @@ what keeps `CheckOrCreateApp` on its check branch and the `softmind` literal out
 has to say `WEBRAIN_HTTP_ADDR=0.0.0.0:9223`, which in turn **requires** `WEBRAIN_HTTP_TOKEN`. Set the
 same string as `WEBRAIN_MCP_TOKEN` in the BFF and the emulator, or every call is a 401 that reads as
 "search is broken".
+
+**Publish on loopback, always: `-p 127.0.0.1:9223:9223`, never `-p 9223:9223`.** The short form
+creates a 0.0.0.0 mapping, so the engine answers the whole LAN; the bare form `-p 9223` is the same
+mistake. In a dev process the only client is the BFF on this machine, so loopback loses nothing. The
+same holds for `11235`: the browser-session image is a Fly machine contract, and publishing it to the
+LAN puts a bearer-guarded MCP surface on a host where the bearer is a word a developer picked.
 
 ### The Obscura version decides whether frames exist at all (measured 2026-10-21)
 

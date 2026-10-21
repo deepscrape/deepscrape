@@ -113,6 +113,13 @@ RUN webrain install obscura && webrain install lightpanda
 #
 # `lightpanda` takes `version`, NOT `--version` -- the latter exits fatal with a
 # `did_you_mean`, which is exactly the kind of detail a guess gets wrong.
+#
+# The Obscura version is FLOORED at 0.2.0, not merely printed. Its paint engine
+# arrived in that release: a 0.1.x binary answers `Page.captureScreenshot` with
+# "no layout or paint engine", so the machine starts, the MCP surface answers,
+# and only the FRAME is missing -- per session, in production, never in a build.
+# `sort -V -C` exits non-zero when the installed version sorts before 0.2.0.
+# Verified on this base image: 0.2.0 and 0.2.5 pass, 0.1.11 exits 1.
 RUN set -eux; \
     chromium --version; \
     obscura_bin="$(find /root/.cache/webrain/browsers -type f -name obscura | head -n 1)"; \
@@ -120,6 +127,7 @@ RUN set -eux; \
     test -n "$obscura_bin"; \
     test -n "$lightpanda_bin"; \
     "$obscura_bin" --version; \
+    printf '%s\n' 0.2.0 "$("$obscura_bin" --version | awk '{print $2}')" | sort -V -C; \
     "$lightpanda_bin" version
 
 COPY nginx.conf /etc/nginx/nginx.conf

@@ -60,7 +60,7 @@
             </tr>
           </thead>
           <tbody>
-            @for (inv of invoices$ | async; track inv) {
+            @for (inv of invoices$ | async; track inv.id) {
               <tr class="border-b border-gray-100 dark:border-gray-800">
                 <td class="py-3 text-gray-900 dark:text-gray-100">{{ inv.number || inv.id.slice(0, 12) + '…' }}</td>
                 <td class="py-3 text-gray-600 dark:text-gray-400">{{ inv.createdAt | date:'mediumDate' }}</td>
@@ -122,7 +122,7 @@
             </tr>
           </thead>
           <tbody>
-            @for (pmt of payments$ | async; track pmt) {
+            @for (pmt of payments$ | async; track pmt.id) {
               <tr class="border-b border-gray-100 dark:border-gray-800">
                 <td class="py-3 text-gray-900 dark:text-gray-100">{{ pmt.description || pmt.id.slice(0, 12) + '…' }}</td>
                 <td class="py-3 text-gray-600 dark:text-gray-400">{{ pmt.createdAt | date:'mediumDate' }}</td>

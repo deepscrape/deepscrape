@@ -438,9 +438,13 @@ export type CreateRequestDecision =
 /**
  * Parse and validate a create-session body.
  *
- * Pure, and separate from the handler so it can be tested without a store: the
- * handler's module builds the Admin SDK on import, so nothing reachable from
- * there is testable without an emulator.
+ * Pure, and separate from the handler on purpose. The handler's module imports
+ * the Firestore client directly (`db` from `../app/config`) and calls it inside
+ * the store functions, so exercising a handler path needs an emulator or an
+ * injection seam. Every decision it makes before that I/O — which request is
+ * valid, which refusal a caller sees — lives here, where a plain test can pin
+ * it. (Importing the handler itself is fine: measured 2026-10-21, it loads
+ * under `tsx` with no credentials. It is the I/O that needs the emulator.)
  *
  * `kind` is checked against `BROWSER_KINDS` at RUNTIME, because `BrowserKind`
  * is erased by the time JSON arrives — a cast alone would let an unknown

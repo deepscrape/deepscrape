@@ -21,6 +21,8 @@ import {
   idleDeadlineForTier,
   idleDeadlineFrom,
   initialStateFor,
+  parseCreateRequest,
+  refusalFor,
   toPublicSession,
   type BrowserKind,
   type BrowserSessionRecord,
@@ -374,5 +376,89 @@ describe("countLiveForMode", () => {
 
     assert.equal(countLiveForMode(sessions, "dedicated"), 1)
     assert.equal(countLiveForMode(sessions, "byo"), 0)
+  })
+})
+
+describe("refusalFor", () => {
+  it("answers every reason with a 4xx and a sentence", () => {
+    // Three parallel tables keyed by one union: a reason added to one and not
+    // the others used to answer `undefined` as the status.
+    const reasons = [
+      "quota",
+      "byo-not-allowed",
+      "unsupported-kind",
+      "cdp-url-refused",
+    ] as const
+
+    for (const reason of reasons) {
+      const refusal = refusalFor(reason)
+      assert.equal(refusal.code, reason)
+      assert.ok(refusal.status >= 400 && refusal.status < 500)
+      assert.ok(refusal.error.length > 0)
+    }
+  })
+
+  it("does not present a plan limit as a malformed request", () => {
+    // A customer at their cap made no mistake; a byo request with no endpoint
+    // did. Collapsing these into one status is what makes a support ticket.
+    assert.equal(refusalFor("quota").status, 429)
+    assert.equal(refusalFor("byo-not-allowed").status, 403)
+    assert.equal(refusalFor("unsupported-kind").status, 400)
+  })
+})
+
+describe("parseCreateRequest", () => {
+  const kind = BROWSER_KINDS[0]
+
+  it("refuses a body with no usable mode", () => {
+    for (const body of [undefined, null, "byo", {}, {mode: "shared"}]) {
+      const decision = parseCreateRequest(body)
+      assert.equal(decision.ok, false)
+      if (!decision.ok) {
+        assert.equal(decision.refusal.status, 400)
+        assert.equal(decision.refusal.code, "unsupported-mode")
+      }
+    }
+  })
+
+  it("refuses an unknown engine at RUNTIME, not just in the type", () => {
+    // `BrowserKind` is erased by the time JSON arrives, so a cast alone would
+    // let this string reach the store and be written to a document.
+    const decision = parseCreateRequest({mode: "dedicated", kind: "netscape"})
+    assert.equal(decision.ok, false)
+    if (!decision.ok) {
+      assert.equal(decision.refusal.code, "unsupported-kind")
+    }
+  })
+
+  it("accepts a dedicated request and carries no cdpUrl key", () => {
+    const decision = parseCreateRequest({mode: "dedicated", kind})
+    assert.equal(decision.ok, true)
+    if (decision.ok) {
+      assert.equal(decision.request.mode, "dedicated")
+      // Absent, not `undefined`: the record is written with a spread, so the
+      // key's presence is what a later reader would see.
+      assert.equal("cdpUrl" in decision.request, false)
+    }
+  })
+
+  it("folds a blank CDP endpoint down to absent", () => {
+    const decision = parseCreateRequest({mode: "byo", kind, cdpUrl: "   "})
+    assert.equal(decision.ok, true)
+    if (decision.ok) {
+      assert.equal("cdpUrl" in decision.request, false)
+    }
+  })
+
+  it("trims a CDP endpoint it does accept", () => {
+    const decision = parseCreateRequest({
+      mode: "byo",
+      kind,
+      cdpUrl: "  ws://example.test:9222  ",
+    })
+    assert.equal(decision.ok, true)
+    if (decision.ok) {
+      assert.equal(decision.request.cdpUrl, "ws://example.test:9222")
+    }
   })
 })

@@ -161,6 +161,21 @@ const perm = <R extends AuthResource>(
 ): ExpressMiddleware =>
   requirePermission(resource, action) as unknown as ExpressMiddleware
 
+/**
+ * Permission gate for the caller's own stored artifacts.
+ *
+ * `storage` is granted to the `self` role only, but `requirePermission` drops `ownerId`
+ * the moment the request carries an org, and `org-context.interceptor` puts `x-org-id`
+ * on every `/api` call. The request was therefore authorised as an org member, no org
+ * role holds `storage`, and list/settings answered 403 for every signed-in user.
+ * @param {*} action
+ * @return {*} The middleware, with the caller resolved as the object's owner.
+ */
+const permStorage = (action: 'read' | 'write'): ExpressMiddleware =>
+  requirePermission('storage', action, {
+    getData: (req) => ({ ownerId: (req as unknown as { user?: { uid?: string } }).user?.uid }),
+  }) as unknown as ExpressMiddleware
+
 const api = new Elysia({ name: 'api' })
 
 /**
@@ -692,30 +707,30 @@ api.put('/api/compute', h(guard([perm('machine', 'update'), setCompute])))
 // which returns the chosen scope in the response.
 api.get(
   '/api/storage/list',
-  h(guard([perm('storage', 'read'), storageList])),
+  h(guard([permStorage('read'), storageList])),
 )
 api.get(
   '/api/storage/settings',
-  h(guard([perm('storage', 'read'), storageGetSettings])),
+  h(guard([permStorage('read'), storageGetSettings])),
 )
 api.post(
   '/api/storage/save',
-  h(guard([perm('storage', 'write'), storageSave])),
+  h(guard([permStorage('write'), storageSave])),
 )
 api.post(
   '/api/storage/presign',
-  h(guard([perm('storage', 'read'), storagePresign])),
+  h(guard([permStorage('read'), storagePresign])),
 )
 // `storage.write`, not `read`: this removes an object. The scoping the other
 // routes rely on still applies -- the handler answers 404 for a key the caller
 // may not read, and refuses a shared key outright.
 api.post(
   '/api/storage/delete',
-  h(guard([perm('storage', 'write'), storageDelete])),
+  h(guard([permStorage('write'), storageDelete])),
 )
 api.post(
   '/api/storage/settings',
-  h(guard([perm('storage', 'write'), storageSetSettings])),
+  h(guard([permStorage('write'), storageSetSettings])),
 )
 
 // ── the job surface ──────────────────────────────────────────────────────────

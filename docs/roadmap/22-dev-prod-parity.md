@@ -42,6 +42,7 @@ works but is needlessly hostile in dev).
 | 12 | **A dev process on the production Redis** | correctness | S | `upstreams.ts` has a dev branch for arachnefly, crawl4ai and webrain; **Upstash and Tigris have none** — they resolve to whatever env says, and the key builders carry no environment prefix. A dev process on the production database takes production worker leases, shares rate-limit buckets, and drains the production analytics queue. | **No code.** The account already holds two databases — `crawlcache` and `crawldev` — so dev points `UPSTASH_REDIS_REST_URL`/`_TOKEN` at `crawldev`. Verified with `redis_database_list_databases`. |
 | 13 | **No Redis configured is a silent no-op, by design** | not a bug | — | `createNoopRedis` answers `"OK"`, `0`, `null` to every modelled command so callers fall through to Firestore. Leases still fail closed (a real holder string is required), but rate limits, presence and the analytics FIFO silently do nothing. | Nothing to fix. Recorded so "the dev rate limit never fires" is not chased as a defect. |
 | 14 | **Two storage systems in one page in dev** | not a bug | — | Client avatars use the **client** Storage SDK (`uploadFileToStorage` → `uploads/{uid}/{name}`), which the emulator honours on :9199. Server artifacts go through the **Admin** SDK, which has no emulator and reaches GCS/Tigris directly. | Expected. Noted because "my upload works but the artifact does not" is the same page talking to two backends. |
+| 15 | **A local checkout charges real cards** ✅ **fixed** | correctness | S | `getStripe` (`app/config.ts`) checked only that the key starts with `sk_`. `sk_live_` and `sk_test_` both pass, and `resolveStripeSecret` falls back to `env.STRIPE_SECRET_KEY` when the bound parameter is absent — which is exactly what happens when the BFF runs the handlers in-process. So a dev "Subscribe to Starter €27.99" opened a **live** Checkout Session, and every call site builds its client through that one function. | Refuse a `_live_` key unless `IS_PRODUCTION`, so the failure is a clear error instead of a real charge. One direction only: `stripeWebhookTest` deliberately verifies sandbox deliveries with `STRIPE_SECRET_KEY_TEST` in production, so a blanket "no test keys in prod" would break it — that needs a per-endpoint decision. Functions: build 0, lint 0 errors, **986 tests / 977 pass / 0 fail**. |
 
 ## Where a code lives vs where the code runs (measured 2026-10-21)
 
@@ -52,6 +53,21 @@ works but is needlessly hostile in dev).
 
 That table is the single most useful thing in this document. A bare `ng serve` is a
 production client, and nothing in the UI says so.
+
+### Never browse the app on :8080 (measured 2026-10-21)
+
+The BFF *can* answer an app route — `firebase.dev.json` rewrites hosting to a static
+`index.csr.html` and the BFF serves it from `dist/deepscrape/browser`. Doing that in dev breaks in
+three ways at once, and they look unrelated:
+
+| Symptom | Cause |
+|---|---|
+| `Failed to fetch dynamically imported module: /chunk-XXXX.js` | The shell came from `dist/`, which is a **build artifact**. A rebuild changes the hashed chunk names while the open page still references the old ones, and a lazy route then 404s its own chunk. |
+| `GET /api/orgs → 401` | The BFF verifies with the Admin SDK. Without `FIREBASE_AUTH_EMULATOR_HOST` in `bff/.env.dev` it cannot accept the emulator's unsigned `alg:none` token, so every `/api` call is unauthorized even though the browser is signed in. |
+| Stripe returns you to `:8080` and the page is broken | Checkout sends `window.location.origin + '/billing/success'`, and `billingAllowedOrigins` in non-production contains `http://localhost:8080` **on purpose**, so `assertAllowedReturnUrl` accepts it. The origin was the mistake, not the guard. |
+
+So: the UI is served by `ng serve` on **4200**, and `:8080` is only ever the API. If you need the app
+on a single origin, use the **hosting emulator** on 5000, which is in both allowlists.
 
 ## The five shared backends, measured 2026-10-21
 

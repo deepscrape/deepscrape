@@ -207,6 +207,26 @@ export const getStripe = (secret: string | undefined) => {
         )
     }
 
+    // Fail closed on a LIVE key outside production. Nothing else in this path can
+    // notice the difference: `sk_live_` and `sk_test_` both pass the prefix check
+    // and both create a session, so a local checkout built from a live key
+    // completes against a real card and looks exactly like a working one. Same
+    // class as `queueTargetsProduction` in the queue: a dev process reaching
+    // production, successfully.
+    //
+    // One direction only, deliberately. The reverse (a test key in production) is
+    // NOT refused here because `stripeWebhookTest` is a deployed endpoint that
+    // verifies sandbox deliveries with `STRIPE_SECRET_KEY_TEST` -- refusing every
+    // test key in production would break it. Guarding that needs a per-endpoint
+    // decision, not a global one.
+    if (stripeSecret.includes("_live_") && !env.IS_PRODUCTION) {
+        throw new Error(
+            "Refusing a LIVE Stripe key outside production: this " +
+            "process would charge real cards. Set PRODUCTION=true, " +
+            "or use a test key."
+        )
+    }
+
     stripeClient = new Stripe(stripeSecret)
     return stripeClient
 }

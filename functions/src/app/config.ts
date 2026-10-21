@@ -221,9 +221,10 @@ export const getStripe = (secret: string | undefined) => {
     // decision, not a global one.
     if (stripeSecret.includes("_live_") && !env.IS_PRODUCTION) {
         throw new Error(
-            "Refusing a LIVE Stripe key outside production: this " +
-            "process would charge real cards. Set PRODUCTION=true, " +
-            "or use a test key."
+            "STRIPE_SECRET_KEY is a LIVE key and PRODUCTION is not true: " +
+            "this process would charge real cards. Use a sk_test_ key " +
+            "(functions/.env.local overrides functions/.env, and the BFF " +
+            "reads bff/.env.dev) or set PRODUCTION=true."
         )
     }
 

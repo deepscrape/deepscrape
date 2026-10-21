@@ -882,7 +882,7 @@ export const revokeMyLoginSession = onCall(
  * @param {*} allowCrossUserRevoke
  * @param {*} collector
  */
-async function performSessionRevoke(
+export async function performSessionRevoke(
   actorUid: string,
   loginId: string,
   reason: string | undefined,
@@ -987,6 +987,13 @@ async function performSessionRevoke(
     actorRole,
   })
 
+  // `trusted_devices` is a 90-day re-authentication bypass, so it travels with the session
+  // that earned it: revoking a session must not leave its device trusted.
+  const revokedDeviceId = String(sessionData?.deviceId || "").trim()
+  if (revokedDeviceId) {
+    batch.delete(db.doc(`users/${targetUserId}/trusted_devices/${revokedDeviceId}`))
+  }
+
   // revoked: flag + session cache drop. A caller-supplied collector owns the pipeline
   // (many sessions → one round-trip); otherwise this revocation gets its own.
   const revokePipeline = collector?.pipeline ?? redis.pipeline()
@@ -995,6 +1002,9 @@ async function performSessionRevoke(
     userId: targetUserId,
   }))
   revokePipeline.del(sessionKey(loginId))
+  if (revokedDeviceId) {
+    revokePipeline.del(trustedDeviceKey(targetUserId, revokedDeviceId))
+  }
 
   // Commit Firestore before flushing the cache flags, same order as before.
   if (!collector) {

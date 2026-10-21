@@ -23,6 +23,16 @@ describe("sessions trust boundary", () => {
       }
     }
   })
+
+  // A trusted device is a 90-day re-authentication bypass, so revoking its session has to
+  // drop the trust too — otherwise "sign out this device" leaves the bypass in place.
+  it("drops the session's trusted device with the session", () => {
+    const src = readFileSync(join(__dirname, "sessions.ts"), "utf8")
+    const revoke = src.slice(src.indexOf("async function performSessionRevoke"))
+
+    assert.match(revoke, /trusted_devices\/\$\{revokedDeviceId\}/)
+    assert.match(revoke, /trustedDeviceKey\(targetUserId, revokedDeviceId\)/)
+  })
 })
 
 describe("sessions mfa preferences", () => {

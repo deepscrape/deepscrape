@@ -44,7 +44,7 @@ import {
   secretPathFor,
   stripeSecrets,
 } from "../app/config"
-import {redisEval} from "../app/cacheConfig"
+import {redis, redisEval} from "../app/cacheConfig"
 import {env, functionsEnvJson} from "../config/env"
 import {guardedOnCall as onCall} from "../infrastructure/callable-limiter"
 import {validateCallableData} from "../infrastructure/validate"
@@ -65,7 +65,7 @@ import {
   type AccountDeletionActor,
   type RetainedAccountData,
 } from "../domain/account-deletion.domain"
-import {resolveActorSessionAccess, type ActorSessionAccess} from "./sessions"
+import {performSessionRevoke, resolveActorSessionAccess, type ActorSessionAccess} from "./sessions"
 import {
   ACCOUNT_DELETION_ATTEMPT_MAX,
   ACCOUNT_DELETION_ATTEMPT_WINDOW_SECONDS,
@@ -463,19 +463,33 @@ const revokeActiveSessions = async (uid: string, actorUid: string): Promise<numb
 
   if (snapshot.empty) return 0
 
-  const now = Timestamp.now()
+  // One shared revoke path. The lighter copy that lived here left the Redis session cache
+  // warm and every device still trusted, so a deleted account kept a 90-day reauth bypass.
   const batch = db.batch()
+  const pipeline = redis.pipeline()
 
   for (const sessionDoc of snapshot.docs) {
-    batch.set(sessionDoc.ref, {
-      active: false,
-      revokedAt: now,
-      revokedByUid: actorUid,
-      revokeReason: "account_deletion",
-    }, {merge: true})
+    await performSessionRevoke(
+      actorUid,
+      sessionDoc.id,
+      "account_deletion",
+      false,
+      true,
+      actorUid === uid ? "user" : "admin",
+      true,
+      {batch, pipeline, sessionData: sessionDoc.data()},
+    )
   }
 
   await batch.commit()
+  await pipeline.exec()
+
+  if (snapshot.size === SESSIONS_PER_REVOKE) {
+    console.error(
+      `CRITICAL: account ${uid} hit the ${SESSIONS_PER_REVOKE}-session revoke cap; active sessions remain.`
+    )
+  }
+
   return snapshot.size
 }
 
@@ -1548,6 +1562,32 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
   } catch (error) {
     console.error(`Failed to delete subcollections for ${uid}:`, error)
     throw error
+  }
+
+  // Top-level, uid-keyed collections are NOT subcollections of `users/{uid}`, so the
+  // enumeration above cannot see them — and each holds PII the deletion notice promises
+  // to shred: sign-in history, OTP attempts, presence, membership grants.
+  await db.recursiveDelete(db.doc(`login_metrics/${uid}`))
+  collectionsDeleted.push("login_metrics")
+  await Promise.all([
+    db.doc(`presence/${uid}`).delete(),
+    db.doc(`deletion_requests/${uid}`).delete(),
+  ])
+
+  // shortcut: one page of 500 per collection; an account holding more needs a second run.
+  // Turn this into a paged loop when a real account exceeds that.
+  for (const collection of ["device_verifications", "memberships"]) {
+    const page = await db.collection(collection).where("userId", "==", uid).limit(500).get()
+    if (page.empty) continue
+
+    const strayBatch = db.batch()
+    page.docs.forEach((doc) => strayBatch.delete(doc.ref))
+    await strayBatch.commit()
+    collectionsDeleted.push(collection)
+
+    if (page.size === 500) {
+      console.error(`CRITICAL: ${uid} left rows in ${collection}; the purge deletes 500 per run.`)
+    }
   }
 
   // The Auth record is the login itself. Absent already means a previous partial run

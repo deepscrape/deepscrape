@@ -2019,6 +2019,7 @@
     "VERIFYING_PHONE": "Vérification du code SMS...",
     "PHONE_VERIFIED": "Appareil vérifié par téléphone.",
     "PHONE_TRUST_FAILED": "La vérification par téléphone a réussi, mais la confiance de l'appareil a échoué.",
+    "PHONE_SIGN_IN_AGAIN": "Téléphone vérifié. Reconnectez-vous pour qu'il soit demandé comme second facteur.",
     "INVALID_PHONE_CODE": "Code téléphonique invalide. Réessayez ou passez à l'e-mail."
   },
   "ONBOARDING": {

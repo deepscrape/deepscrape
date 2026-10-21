@@ -236,11 +236,11 @@ export class DeviceVerificationService {
   /**
    * Verify device and add to trusted list
    */
-  async verifyDevice(userId: string, code: string, deviceName: string, sessionId?: string, mfaVerified?: boolean): Promise<boolean> {
+  async verifyDevice(userId: string, code: string, deviceName: string, sessionId?: string): Promise<boolean> {
     try {
       const fingerprint = this.getDeviceFingerprint()
       const result = await this.firestore.callFunction<
-        { userId: string; code: string; deviceId: string; deviceName: string; sessionId?: string; mfaVerified?: boolean },
+        { userId: string; code: string; deviceId: string; deviceName: string; sessionId?: string },
         { success: boolean; trustedUntil: string }
       >('verifyAndTrustDevice', {
         userId,
@@ -248,7 +248,6 @@ export class DeviceVerificationService {
         deviceId: fingerprint.deviceId,
         deviceName,
         ...(sessionId ? { sessionId } : {}),
-        ...(mfaVerified ? { mfaVerified: true } : {}),
       })
 
       if (result.success) {

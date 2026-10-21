@@ -2570,43 +2570,40 @@ export const verifyAndTrustDevice = onCall(
     }
 
     try {
-      // Find the verification attempt
-      const snapshot = await db
-        .collection("device_verifications")
-        .where("userId", "==", userId)
-        .where("verified", "==", false)
-        .orderBy("createdAt", "desc")
-        .limit(1)
-        .get()
-
-      if (snapshot.empty) {
-        throw new Error("No pending verification found")
-      }
-
-      const verificationDoc = snapshot.docs[0]
-      const verificationData = verificationDoc.data()
-
-      // Check expiration
-      if (new Date() > verificationData.expiresAt.toDate()) {
-        throw new Error("Verification code expired")
-      }
-
-      // If the verification was bound to a session, validate the session matches
-      if (verificationData.sessionId && sessionId && verificationData.sessionId !== sessionId) {
-        throw new Error("Verification code was generated for a different session. Please request a new code.")
-      }
-
-      // The body's `mfaVerified` was caller-controlled and proved nothing: an
-      // attacker holding only the password could send `true` and walk away with a
-      // 90-day trusted device. `firebase.sign_in_second_factor` is signed by
-      // Firebase and only appears after a real second-factor sign-in, which is the
-      // only attestation this path may accept.
+      // `firebase.sign_in_second_factor` is signed by Firebase and only appears when a
+      // second factor was completed for THIS sign-in, so it needs no record of ours and a
+      // client cannot forge it. Everything else must match the code we minted.
       const secondFactorClaim =
         (auth.token as { firebase?: { sign_in_second_factor?: string } })?.firebase
           ?.sign_in_second_factor
-      const isMfaVerified = Boolean(secondFactorClaim) && verificationData.method === "sms"
 
-      if (!isMfaVerified) {
+      if (!secondFactorClaim) {
+        // Find the verification attempt
+        const snapshot = await db
+          .collection("device_verifications")
+          .where("userId", "==", userId)
+          .where("verified", "==", false)
+          .orderBy("createdAt", "desc")
+          .limit(1)
+          .get()
+
+        if (snapshot.empty) {
+          throw new Error("No pending verification found")
+        }
+
+        const verificationDoc = snapshot.docs[0]
+        const verificationData = verificationDoc.data()
+
+        // Check expiration
+        if (new Date() > verificationData.expiresAt.toDate()) {
+          throw new Error("Verification code expired")
+        }
+
+        // If the verification was bound to a session, validate the session matches
+        if (verificationData.sessionId && sessionId && verificationData.sessionId !== sessionId) {
+          throw new Error("Verification code was generated for a different session. Please request a new code.")
+        }
+
         // ponytail: the Firestore attempt counter that used to live here could not
         // work, so the "lock after 5 wrong attempts" was decorative:
         //   * `attempts + 1` is a read-modify-write — N concurrent guesses all read
@@ -2645,10 +2642,10 @@ export const verifyAndTrustDevice = onCall(
         ) {
           throw new HttpsError("invalid-argument", "Invalid verification code")
         }
-      }
 
-      // Mark verification as complete
-      await verificationDoc.ref.update({ verified: true })
+        // Mark verification as complete
+        await verificationDoc.ref.update({ verified: true })
+      }
 
       // Add device to trusted devices
       const trustedUntil = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) // 90 days

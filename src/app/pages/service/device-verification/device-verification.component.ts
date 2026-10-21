@@ -108,6 +108,23 @@ export class DeviceVerificationRouteComponent implements OnInit, OnDestroy {
       return
     }
 
+    // A sign-in that just completed a second factor is already proof for this device:
+    // `sign_in_second_factor` is signed by Firebase and a client cannot set it. Asking for
+    // another code straight after two factors is the step real platforms never take.
+    const tokenResult = await this.fireAuth.currentUser?.getIdTokenResult()
+    if ((tokenResult?.claims as any)?.firebase?.sign_in_second_factor) {
+      const trustedByMfa = await this.deviceVerification.verifyDevice(
+        userId,
+        'mfa',
+        (this.deviceName || this.getDefaultDeviceName()).trim(),
+        this.sessionId(),
+      )
+      if (trustedByMfa) {
+        await this.router.navigateByUrl(this.getReturnUrl())
+        return
+      }
+    }
+
     this.countdownIntervalId = setInterval(() => {
       if (!this.verificationExpiry()) {
         return
@@ -333,22 +350,17 @@ export class DeviceVerificationRouteComponent implements OnInit, OnDestroy {
         await reauthenticateWithCredential(firebaseUser, credential)
       }
 
-      // Phone MFA succeeded — trust the device with mfaVerified flag
-      const success = await this.deviceVerification.verifyDevice(
-        this.currentUserId,
-        'MFA_VERIFIED',
-        (this.deviceName || this.getDefaultDeviceName()).trim(),
-        this.sessionId(),
-        true,  // mfaVerified
+      // The factor takes effect on the next sign-in, and that sign-in is what mints the
+      // `sign_in_second_factor` claim this device is trusted with. So stop here and let the
+      // login page run the real challenge, instead of sending a code the server cannot check.
+      this.snackbarService.showSnackbar(
+        this.translate.instant('DEVICE_VERIFICATION.PHONE_SIGN_IN_AGAIN'),
+        SnackBarType.success,
+        '',
+        5000,
       )
-
-      if (success) {
-        this.snackbarService.showSnackbar(this.translate.instant('DEVICE_VERIFICATION.PHONE_VERIFIED'), SnackBarType.success, '', 3000)
-        await this.router.navigateByUrl(this.getReturnUrl())
-      } else {
-        this.snackbarService.showSnackbar(this.translate.instant('DEVICE_VERIFICATION.PHONE_TRUST_FAILED'), SnackBarType.error, '', 5000)
-        this.showMfaInput.set(false)
-      }
+      await firstValueFrom(this.authService.logout())
+      await this.router.navigate(['/service/login'], { queryParams: { returnUrl: this.getReturnUrl() } })
     } catch (error) {
       console.error('Phone MFA verification failed:', error)
       this.snackbarService.showSnackbar(this.translate.instant('DEVICE_VERIFICATION.INVALID_PHONE_CODE'), SnackBarType.error, '', 5000)

@@ -2019,6 +2019,7 @@
     "VERIFYING_PHONE": "Verifying phone code...",
     "PHONE_VERIFIED": "Device verified via phone.",
     "PHONE_TRUST_FAILED": "Phone verification succeeded but device trust failed.",
+    "PHONE_SIGN_IN_AGAIN": "Phone verified. Sign in again so it can be requested as your second factor.",
     "INVALID_PHONE_CODE": "Invalid phone code. Try again or switch to email."
   },
   "ONBOARDING": {

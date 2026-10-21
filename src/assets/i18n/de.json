@@ -2013,6 +2013,7 @@
     "NO_PHONE": "Mit Ihrem Konto ist keine Telefonnummer verknüpft. Verwenden Sie stattdessen die E-Mail-Verifizierung.",
     "PHONE_INITIATING": "Telefonverifizierung wird gestartet...",
     "PHONE_TRUST_FAILED": "Die Telefonverifizierung war erfolgreich, aber die Vertrauensstellung für das Gerät ist fehlgeschlagen.",
+    "PHONE_SIGN_IN_AGAIN": "Telefonnummer bestätigt. Melde dich erneut an, damit sie als zweiter Faktor abgefragt wird.",
     "PHONE_VERIFIED": "Gerät per Telefon verifiziert.",
     "SEND_FAILED": "Bestätigungscode konnte nicht gesendet werden",
     "SMS_FAILED": "SMS konnte nicht gesendet werden. Verwenden Sie stattdessen die E-Mail-Verifizierung.",

@@ -2019,6 +2019,7 @@
     "VERIFYING_PHONE": "Verificando el código del teléfono...",
     "PHONE_VERIFIED": "Dispositivo verificado por teléfono.",
     "PHONE_TRUST_FAILED": "La verificación por teléfono se realizó correctamente, pero falló la confianza del dispositivo.",
+    "PHONE_SIGN_IN_AGAIN": "Teléfono verificado. Inicia sesión de nuevo para que se solicite como segundo factor.",
     "INVALID_PHONE_CODE": "Código de teléfono no válido. Inténtalo de nuevo o cambia a correo electrónico."
   },
   "ONBOARDING": {

@@ -93,6 +93,12 @@ export class MachineStoreService {
     }
 
     const knownCursor = cursorStore.get(currPage)
+    if (knownCursor === null) {
+      // Only page 1 legitimately starts at null. A cached null for a later page
+      // means the previous page reported `hasMore: false`, so fetching with it
+      // would silently show page 1's machines labelled as page N.
+      throw new Error('Requested page exceeds total pages.')
+    }
     if (knownCursor !== undefined) {
       return knownCursor
     }

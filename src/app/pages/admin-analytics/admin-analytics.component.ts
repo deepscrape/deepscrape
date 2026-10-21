@@ -786,6 +786,12 @@ export class AdminAnalyticsComponent implements OnInit, OnDestroy {
 
     ngOnDestroy(): void {
         this.teardownRealtimeSubscriptions();
+        // Unsubscribing the RxJS subscription does not detach `onSnapshot`: the
+        // listener lives in the service's `activeListeners`, and the service is a
+        // root singleton. Without this, every write to `metrics_summary/dashboard`
+        // — every login, plus the 30-minute backfill — billed a read for ever,
+        // long after the admin had left the page.
+        this.firestoreAnalyticsService.stopRealtime();
     }
 
     private async initializeAnalytics(): Promise<void> {

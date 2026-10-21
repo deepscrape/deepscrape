@@ -12,6 +12,19 @@ import {
   BillingUsageResponse,
 } from 'src/app/core/types'
 import { BehaviorSubject, catchError, from, map, Observable, of, shareReplay, switchMap } from 'rxjs'
+import { ACTION_LABELS } from '../rates/rates.component'
+
+/**
+ * Ledger reasons that are not pricing actions, so `ACTION_LABELS` cannot name them.
+ *
+ * `meter:block` is written by `chargeSessionMeter` and appears once per started
+ * block of every leased session, which makes it the single largest line on a
+ * browser-heavy account. Without an entry here that line would read `meter:block`
+ * to the customer -- a raw identifier on the one row they most need to understand.
+ */
+const LEDGER_REASON_LABELS: Record<string, string> = {
+  'meter:block': 'BILLING_USAGE.METERED_BILLED_BROWSER_TIME',
+}
 
 type UsageViewModel = {
   report: BillingUsageResponse | null
@@ -70,6 +83,33 @@ export class UsageComponent {
 
   asCurrencyCode(currency: string | null | undefined): string {
     return (currency || 'EUR').toUpperCase()
+  }
+
+  /**
+   * The translated label for a metered capability, or null when there is none.
+   *
+   * Reuses the rates page's action map rather than holding a second copy, so a capability
+   * reads identically on both screens. An unmapped action returns null and the template
+   * falls back to the raw action id — the same intended failure mode the rates page
+   * documents: a raw id is worse than a translated name but better than a wrong one.
+   */
+  meterLabel(action: string): string | null {
+    const reason = LEDGER_REASON_LABELS[action]
+    if (reason) {
+      return reason
+    }
+
+    const suffix = ACTION_LABELS[action]
+    return suffix ? `PRICING_RATES.ACTION_${suffix}` : null
+  }
+
+  /** Share of the period's credits this capability accounts for, 0-100. */
+  shareOfMetered(credits: number, total: number): number {
+    if (!Number.isFinite(credits) || !Number.isFinite(total) || total <= 0) {
+      return 0
+    }
+
+    return Math.min(100, Math.max(0, (credits / total) * 100))
   }
 
 }

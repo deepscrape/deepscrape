@@ -529,7 +529,35 @@
     "F_ENT_5": "SSO & RBAC",
     "F_ENT_6": "Επιλογή ανάπτυξης on-premise",
     "F_ENT_7": "Προσαρμοσμένες ενοποιήσεις",
-    "F_ENT_8": "Αναφορές συμμόρφωσης"
+    "F_ENT_8": "Αναφορές συμμόρφωσης",
+    "F_ENT_UNLIMITED": "Απεριόριστη χρήση βάσει ειδικής συμφωνίας",
+    "UNLIMITED": "Απεριόριστα",
+    "FEATURES": {
+      "PROXY_ROTATION": "Εναλλαγή διακομιστών με geolocation σε κυλιόμενο pool",
+      "STRUCTURED_EXTRACTION": "Δομημένη εξαγωγή μέσω CSS, XPath ή σχημάτων LLM",
+      "BROWSER_SESSION_DEDICATED": "1 αποκλειστική συνεδρία περιήγησης σε μισθωμένη μηχανή",
+      "BROWSER_SESSION_BYO": "Έως 3 συνεδρίες στο δικό σας CDP endpoint",
+      "LIVE_VIEW": "Ζωντανή προβολή της συνεδρίας σας στα 1 fps",
+      "CAPACITY_TOOLS": "Εργαλεία χωρητικότητας: navigate, observe, vision, batch, spider, download, watch",
+      "CREDENTIAL_VAULT": "Κρυπτογραφημένο θησαυροφυλάκιο διαπιστευτηρίων για συνεδρίες με σύνδεση",
+      "SESSION_REUSE": "Επαναχρησιμοποίηση συνεδρίας και διατήρηση προφίλ",
+      "ANTI_BOT": "Διαχείριση anti-bot",
+      "IDENTITY_CRAWLING": "Ανίχνευση βάσει ταυτότητας",
+      "HIGH_CONCURRENCY": "Υψηλός παραλληλισμός",
+      "PRIORITY_SUPPORT": "Υποστήριξη κατά προτεραιότητα",
+      "COMMUNITY_SUPPORT": "Υποστήριξη κοινότητας",
+      "DEDICATED_SUPPORT": "Αποκλειστική υποστήριξη 24/7",
+      "SSO": "SSO και RBAC",
+      "AUDIT_LOGS": "Αρχεία ελέγχου",
+      "CUSTOM_LIMITS": "Προσαρμοσμένα όρια και τοποθεσία δεδομένων",
+      "EXTRACTION_SUITE": "Σουίτα εξαγωγής: scrape, extract, PDF, SERP και αναζήτηση ιστού",
+      "SCHEMA_COMPILER": "Μεταγλωττιστής σχήματος: περιγράψτε μια σελίδα με λόγια, πάρτε επαναχρησιμοποιήσιμο σχήμα",
+      "MONITORS": "Παρακολούθηση σελίδων με ελέγχους αλλαγών",
+      "AI_PROVIDERS": "10 πάροχοι AI (Anthropic, OpenAI, Gemini κ.ά.) με δικό σας κλειδί",
+      "CRAWL_API": "API ανίχνευσης με έξοδο έτοιμη για markdown",
+      "MACHINE_LEASING": "API μίσθωσης μηχανών και πρόσβαση MCP στις δικές σας μηχανές",
+      "UNLIMITED_USAGE": "Απεριόριστη χρήση βάσει ειδικής συμφωνίας"
+    }
   },
   "SOCIAL": {
     "HEAD_LINE": "Μας εμπιστεύονται προγραμματιστές παγκοσμίως",
@@ -1165,6 +1193,14 @@
     "NO_ENTRIES": "Δεν βρέθηκαν εγγραφές χρήσης για αυτό το εύρος.",
     "RANGE": "Εύρος",
     "METERED_USAGE": "Μετρημένη χρήση",
+    "METERED_HINT": "Ένα credit ανά πληρωμένο αίτημα ή ανά διάστημα 5 λεπτών που ξεκινά σε μισθωμένη μηχανή.",
+    "METERED_EMPTY": "Καμία μετρημένη χρήση σε αυτή την περίοδο.",
+    "METERED_CAPABILITY": "Δυνατότητα",
+    "METERED_EVENTS": "Συμβάντα",
+    "METERED_CREDITS": "Credits",
+    "METERED_SHARE": "Ποσοστό",
+    "METERED_MACHINES": "μηχανές",
+    "METERED_BILLED_BROWSER_TIME": "Χρόνος συνεδρίας περιήγησης",
     "UNITS": "μονάδες"
   },
   "SLIDE_MODAL": {
@@ -1936,6 +1972,9 @@
     "ERR_MFA_ENROLL_REQUIRED": "Για την αποκάλυψη των API keys απαιτείται MFA. Ρυθμίστε το MFA στις Ρυθμίσεις Ασφαλείας.",
     "ERR_PASSWORD_CONFIRM_FAILED": "Η επιβεβαίωση του κωδικού απέτυχε. Δοκιμάστε ξανά."
   },
+  "SESSION_TIMEOUT": {
+    "WARNING": "Η σύνδεσή σας λήγει σε {{minutes}} λεπτά. Αποθηκεύστε την εργασία σας."
+  },
   "DEVICE_VERIFICATION": {
     "TITLE": "Επαληθεύστε αυτή τη συσκευή",
     "LOGIN_SUB": "Αυτή η σύνδεση απαιτεί ένα επιπλέον βήμα επαλήθευσης πριν συνεχίσετε.",
@@ -2568,6 +2607,12 @@
     "START_TRIAL": "Έναρξη δοκιμής",
     "TRIAL_ALREADY_USED": "Η δοκιμή έχει ήδη χρησιμοποιηθεί",
     "SELECT_PLAN": "Επιλογή πλάνου {{plan}}",
+    "CONTACT_SALES": "Επικοινωνία με πωλήσεις",
+    "CONTACT_SALES_PRICE": "Κατά παραγγελία",
+    "UNLIMITED_USAGE": "Απεριόριστη χρήση βάσει ειδικής συμφωνίας",
+    "SALES_REQUEST_SENT": "Το αίτημα στάλθηκε. Η ομάδα μας θα επικοινωνήσει σύντομα.",
+    "SALES_REQUEST_FAILED": "Δεν ήταν δυνατή η αποστολή του αιτήματος. Δοκιμάστε ξανά.",
+    "PER_1K_CREDITS": "ανά 1.000 credits",
     "BEST_CHOICE_RECOMMENDED": "Προτεινόμενη καλύτερη επιλογή",
     "VIEW_PLAN_DETAILS": "Δείτε τις λεπτομέρειες του {{plan}}",
     "CANCELLATION_SCHEDULED_TITLE": "Προγραμματισμένη ακύρωση",

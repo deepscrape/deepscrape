@@ -130,6 +130,10 @@ const mockAuthService = {
   isAdmin: false,
   userSubject: { value: null, next: () => {} },
   user$: of(null),
+  // `SessionTimeoutService` subscribes to this at construction: a mock without it throws
+  // `Cannot read properties of undefined (reading 'pipe')` from whichever component
+  // happens to inject the timeout service.
+  sessionExpiresAt$: of(null),
   isAuthenticated: () => of({ isAuthenticated: false, user: null }),
   getEnrolledMultiFactorHints: () => [],
   signOut: () => Promise.resolve(),

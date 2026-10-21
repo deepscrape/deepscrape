@@ -10,7 +10,7 @@ import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule } from '@ngx-translate/core';
-import { AiKeysService } from '../../services';
+import { AiKeysService, AiModelsService } from '../../services';
 import { AiKeyRefusal, AiVendorDescriptor, AiVendorId, ScrapeProviderId, isPlausibleApiKey } from '../../types';
 import { StinputComponent } from '../stinput/stinput.component';
 
@@ -67,6 +67,7 @@ export class AiKeysComponent {
   @HostBinding('class') classes = 'flex w-full flex-col';
 
   private readonly aiKeys = inject(AiKeysService);
+  private readonly aiModels = inject(AiModelsService);
   private readonly destroyRef = inject(DestroyRef);
 
   /** The rows to render, so the UI shows every vendor the platform integrates. */
@@ -288,6 +289,9 @@ export class AiKeysComponent {
     this.busyVendor.set(vendor);
     try {
       await this.aiKeys.storeKey(vendor, candidate, endpoint);
+      // A new key changes which models that vendor serves, and the catalogue is
+      // built once per page life -- so without this the picker kept its old list.
+      this.aiModels.refresh();
     } finally {
       control.reset('');
       this.busyVendor.set(null);
@@ -431,6 +435,8 @@ export class AiKeysComponent {
     this.busyReader.set(id);
     try {
       await this.aiKeys.storeKey(id, candidate);
+      // Same reason as the vendor path: the catalogue is built once per page life.
+      this.aiModels.refresh();
     } finally {
       control.reset('');
       this.busyReader.set(null);

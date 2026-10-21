@@ -57,6 +57,9 @@ export class FirestoreAnalyticsService {
   
   // Active listeners (for cleanup)
   private activeListeners: Unsubscribe[] = []
+  // Separate from reading `dashboardSubject.value`: that getter throws once the
+  // listener has errored the subject, which would take the whole page down.
+  private dashboardListening = false
 
   // ============================================================================
   // PUBLIC API - Optimized Methods
@@ -119,7 +122,7 @@ export class FirestoreAnalyticsService {
    */
   watchDashboard(): Observable<DashboardSummary | null> {
     // Start listening if not already
-    if (this.dashboardSubject.value === null) {
+    if (!this.dashboardListening) {
       this.startDashboardListener()
     }
     
@@ -255,6 +258,7 @@ export class FirestoreAnalyticsService {
 
   private startDashboardListener(): void {
     console.log('🔴 Starting real-time dashboard listener')
+    this.dashboardListening = true
     
     const docRef = doc(this.firestore, 'metrics_summary/dashboard')
     
@@ -565,12 +569,29 @@ export class FirestoreAnalyticsService {
   // ============================================================================
 
   /**
+   * Stop the live listeners without discarding the read cache.
+   *
+   * `watchDashboard()` arms `startDashboardListener()` only while
+   * `dashboardSubject` is null, so this MUST reset the subject or a second visit
+   * to the page never re-arms and the live counters stay frozen. Kept separate
+   * from `destroy()` on purpose: that one also clears the cache, which is right
+   * for a real teardown and wrong for merely leaving a page — and nothing calls
+   * `destroy()`, so until this existed an `onSnapshot` outlived the component.
+   */
+  stopRealtime(): void {
+    this.activeListeners.forEach(unsubscribe => unsubscribe())
+    this.activeListeners = []
+    this.dashboardListening = false
+    this.dashboardSubject.next(null)
+    this.realtimeUpdatesSubject.next(null)
+  }
+
+  /**
    * Call this when the service is destroyed to clean up listeners
    */
   destroy(): void {
     console.log(`🧹 Cleaning up ${this.activeListeners.length} analytics listeners`)
-    this.activeListeners.forEach(unsubscribe => unsubscribe())
-    this.activeListeners = []
+    this.stopRealtime()
     this.cache.clear()
   }
 }

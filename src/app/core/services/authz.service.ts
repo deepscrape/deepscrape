@@ -169,6 +169,8 @@ export class AuthzService {
 
   private membershipsLoadedForUid: string | null = null;
   private lastAuthenticatedUid: string | null = null;
+  /** One retry per uid, so a transient read failure is not a silent lockout. */
+  private membershipsRetriedForUid: string | null = null;
 
   readonly memberships$ = this.membershipsSubject.asObservable();
   readonly membershipsReady$ = this.membershipsReadySubject.asObservable();
@@ -182,6 +184,7 @@ export class AuthzService {
         if (!user?.uid) {
           this.lastAuthenticatedUid = null;
           this.membershipsLoadedForUid = null;
+          this.membershipsRetriedForUid = null;
           this.membershipsSubject.next({});
           this.membershipsReadySubject.next(false);
           this.setActiveOrgId(null);
@@ -334,11 +337,25 @@ export class AuthzService {
       this.setActiveOrgId(firstMembershipOrgId);
     } catch (error) {
       console.error('Failed to refresh org memberships:', error);
-      this.membershipsLoadedForUid = uid;
+      // NOT recorded as loaded. Caching the failure as success was worse than the
+      // console error it hid: `membershipsLoadedForUid = uid` made the constructor's
+      // `!== user.uid` check false for ever after, so ONE transient Firestore failure
+      // kept an org member out of every org page until a full page reload.
+      //
+      // Readiness still flips, because an empty set is the honest answer for "could
+      // not read it" and a guard waiting on readiness must not hang; and one bounded
+      // retry runs, because the next `user$` emission can be minutes away.
       this.membershipsSubject.next({});
       this.membershipsReadySubject.next(true);
       if (!this.activeOrgIdSubject.value) {
         this.setActiveOrgId(defaultOrgId || null);
+      }
+
+      if (this.membershipsRetriedForUid !== uid) {
+        this.membershipsRetriedForUid = uid;
+        setTimeout(() => {
+          void this.refreshMemberships(uid, defaultOrgId);
+        }, 2000);
       }
     }
   }

@@ -7,7 +7,11 @@ import { AppFooterComponent } from '../../footer'
 // import { AppHeaderComponent } from '../../header';
 import { RouterLink } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
-import { LocalStorage, WindowToken } from 'src/app/core/services';
+// Direct paths, not the `core/services` barrel: the barrel re-exports ~44 root
+// services, and pulling it in here put the whole set in the 404 chunk for the sake
+// of two InjectionTokens.
+import { WindowToken } from '../../../core/services/window.service';
+import { LocalStorage } from '../../../core/services/storage.service';
 import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
 import { LandingSubheaderComponent } from 'src/app/shared/landing-subheader/landing-subheader.component';
 

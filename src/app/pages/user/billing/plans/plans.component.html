@@ -63,7 +63,7 @@
                     <li
                       class="px-3 py-1 rounded-full text-xs font-medium bg-primary/10 dark:bg-violet-500/20 text-primary dark:text-violet-300 border border-primary/20 dark:border-violet-400/30"
                       >
-                      {{ feature }}
+                      {{ featureLabel(feature) | translate }}
                     </li>
                   }
                 </ul>
@@ -124,7 +124,7 @@
             <div class="mb-6 flex-1 w-full">
               <div class="text-center mb-4 dark:text-gray-100">
                 <span class="text-3xl font-bold bg-gradient-to-r bg-clip-text text-transparent from-violet-400 to-deep-purple-400 dark:from-violet-400 dark:to-deep-purple-400">
-                  {{ freePlan.prices.payAsYouGo.amount / 100 | currency : currencyValue }}
+                  {{ (freePlan.prices.payAsYouGo?.amount || 0) / 100 | currency : currencyValue }}
                 </span>
                 <span class="text-gray-500 dark:text-gray-300">{{ 'BILLING_PLANS.PRICE_UNIT_USAGE' | translate }}</span>
               </div>
@@ -136,7 +136,7 @@
                       class="!h-5 !w-5 !text-[20px] text-green-500 mr-2 flex-shrink-0">
                       check
                     </mat-icon>
-                    {{ feature }}
+                    {{ featureLabel(feature) | translate }}
                   </li>
                 }
               </ul>
@@ -263,17 +263,33 @@
                   </div>
                 }
                 <p class="text-gray-500 dark:text-gray-300">{{ plan.description }}</p>
+                @if (plan.unlimited) {
+                  <p class="mt-2 text-sm font-medium text-violet-700 dark:text-violet-300">
+                    {{ 'BILLING_PLANS.UNLIMITED_USAGE' | translate }}
+                  </p>
+                }
               </div>
               <div class="mb-6 flex-1 w-full">
                 <div class="text-center mb-4 dark:text-gray-100">
-                  <span class="text-3xl font-bold bg-gradient-to-r bg-clip-text text-transparent" [ngClass]="getPriceGradientClass(plan)">
-                    {{ getPrice(plan) / 100 | currency : currencyValue }}
-                  </span>
-                  <span class="text-gray-500 dark:text-gray-300">{{ getPriceUnit() | translate }}</span>
+                  @if (isSalesLed(plan)) {
+                    <span class="text-3xl font-bold bg-gradient-to-r bg-clip-text text-transparent" [ngClass]="getPriceGradientClass(plan)">
+                      {{ 'BILLING_PLANS.CONTACT_SALES_PRICE' | translate }}
+                    </span>
+                  } @else {
+                    <span class="text-3xl font-bold bg-gradient-to-r bg-clip-text text-transparent" [ngClass]="getPriceGradientClass(plan)">
+                      {{ getPrice(plan) / 100 | currency : currencyValue }}
+                    </span>
+                    <span class="text-gray-500 dark:text-gray-300">{{ getPriceUnit() | translate }}</span>
+                  }
                 </div>
                 @if (getIncludedCredits(plan) > 0) {
-                  <p class="text-center mb-4 text-sm font-medium text-violet-700 dark:text-violet-300">
+                  <p class="text-center mb-2 text-sm font-medium text-violet-700 dark:text-violet-300">
                     {{ 'BILLING_PLAN_DETAILS.INCLUDES' | translate }} {{ getIncludedCredits(plan) }} credits {{ (planView.value === 'payAsYouGo' ? 'BILLING_PLAN_DETAILS.PER_PURCHASE' : planView.value === 'monthly' ? 'BILLING_PLANS.PER_MONTH' : planView.value === 'quarterly' ? 'BILLING_PLANS.PER_QUARTER' : 'BILLING_PLANS.PER_YEAR') | translate }}
+                  </p>
+                }
+                @if (pricePerThousandCredits(plan); as perThousand) {
+                  <p class="text-center mb-4 text-xs text-gray-500 dark:text-gray-400">
+                    {{ perThousand | currency : currencyValue }} {{ 'BILLING_PLANS.PER_1K_CREDITS' | translate }}
                   </p>
                 }
                 <ul class="space-y-3 text-gray-600 dark:text-gray-300">
@@ -284,7 +300,7 @@
                         class="!h-5 !w-5 !text-[20px] text-green-500 mr-2 flex-shrink-0">
                         check
                       </mat-icon>
-                      {{ feature }}
+                      {{ featureLabel(feature) | translate }}
                     </li>
                   }
                 </ul>

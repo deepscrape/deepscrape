@@ -111,6 +111,47 @@
                 </p>
               </div>
             </div>
+            <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md mb-8">
+              <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">{{ 'BILLING_USAGE.METERED_USAGE' | translate }}</h3>
+              <p class="text-sm text-gray-500 dark:text-gray-300 mb-4">{{ 'BILLING_USAGE.METERED_HINT' | translate }}</p>
+              @if ((report.usage.metered?.length ?? 0) === 0) {
+                <p class="text-sm text-gray-500 dark:text-gray-300">{{ 'BILLING_USAGE.METERED_EMPTY' | translate }}</p>
+              } @else {
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-sm">
+                    <thead>
+                      <tr class="text-left border-b border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300">
+                        <th class="px-3 py-2 font-semibold">{{ 'BILLING_USAGE.METERED_CAPABILITY' | translate }}</th>
+                        <th class="px-3 py-2 font-semibold text-right">{{ 'BILLING_USAGE.METERED_EVENTS' | translate }}</th>
+                        <th class="px-3 py-2 font-semibold text-right">{{ 'BILLING_USAGE.METERED_CREDITS' | translate }}</th>
+                        <th class="px-3 py-2 font-semibold">{{ 'BILLING_USAGE.METERED_SHARE' | translate }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (meter of report.usage.metered ?? []; track meter.key) {
+                        <tr class="border-b border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200">
+                          <td class="px-3 py-2 font-mono text-xs">
+                            <span class="block">{{ (meterLabel(meter.key) || meter.key) | translate }}</span>
+                            @if ((meter.machines ?? 0) > 0) {
+                              <span class="block font-sans text-[11px] text-gray-500 dark:text-gray-400">
+                                {{ meter.machines | number:'1.0-0' }} {{ 'BILLING_USAGE.METERED_MACHINES' | translate }}
+                              </span>
+                            }
+                          </td>
+                          <td class="px-3 py-2 whitespace-nowrap text-right">{{ meter.events | number:'1.0-0' }}</td>
+                          <td class="px-3 py-2 whitespace-nowrap text-right font-medium">{{ meter.credits | number:'1.0-0' }}</td>
+                          <td class="px-3 py-2 min-w-[140px]">
+                            <div class="h-2 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                              <div class="h-2 rounded-full bg-blue-600" [style.width.%]="shareOfMetered(meter.credits, report.usage.creditsUsedInRange)"></div>
+                            </div>
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              }
+            </div>
             <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
               <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">{{ 'BILLING_USAGE.BREAKDOWN_TITLE' | translate }}</h3>
               <div class="overflow-x-auto">

@@ -33,7 +33,7 @@ const GROUP_ORDER: readonly RateGroup[] = ['ai', 'crawl', 'machines', 'webrain',
  * intended failure mode. The alternative, a page that lists prices by hand, fails
  * by showing a stale NUMBER, which is worse than showing a machine-readable name.
  */
-const ACTION_LABELS: Record<string, string> = {
+export const ACTION_LABELS: Record<string, string> = {
   'ai.anthropic.messages': 'AI_ANTHROPIC',
   'ai.openai.chat': 'AI_OPENAI',
   'ai.groq.chat': 'AI_GROQ',

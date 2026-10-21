@@ -134,7 +134,8 @@ export class CrawlAPIService {
     })
 
     let previousText = ''
-    
+    let pendingLine = '' // Trailing line that has not seen its newline yet
+
     return this.http.get(crawl4AiEndpoint, { 
       headers/* , transferCache: true */,  
       observe: 'events',
@@ -144,11 +145,13 @@ export class CrawlAPIService {
     }).pipe(
       filter(event => event.type === HttpEventType.DownloadProgress || event.type === HttpEventType.Response),
       map(event => {
-        const fullText = (event as HttpDownloadProgressEvent).partialText || ''
+        const progress = event as HttpDownloadProgressEvent & { body?: string }
+        // A Response event carries the whole body, not `partialText`.
+        const fullText = progress.partialText || progress.body || ''
         const newText = fullText.slice(previousText.length)
         previousText = fullText
-        // Process the chunk to handle boundaries and send as JSON
-        let buffer = newText
+        const isFinal = event.type === HttpEventType.Response
+        let buffer = pendingLine + newText
         let boundary: number
         let result = ''
         while ((boundary = buffer.indexOf('\n')) !== -1) {
@@ -159,6 +162,18 @@ export class CrawlAPIService {
             result += `${jsonChunk}\n` // Add the chunked data to the result
           }
         }
+
+        if (isFinal) {
+          // The stream is over, so the leftover tail is a whole line, not a partial one.
+          const tail = buffer.trim()
+          buffer = ''
+          if (tail) result += `${tail}\n`
+        }
+        // Whatever is left is a line still waiting for its newline. It has to live in
+        // the closure: `previousText` already advanced past these bytes, so a local
+        // buffer lost them for good, and a stream ending without a trailing newline
+        // never delivered its terminal status at all.
+        pendingLine = buffer
 
         return result
       }),
@@ -198,7 +213,11 @@ export class CrawlAPIService {
     )),
       catchError((error: any) => {
         console.error('Error in Crawl4 AI API call:', error)
-        throw throwError(() => error)
+        // RETURN it. `throw throwError(...)` hands the subscriber an Observable as
+        // the error value, so `error.status === 402`, `instanceof HttpErrorResponse`
+        // and the caller's own handler all fail -- making the 402/403/429 handling
+        // around this unreachable.
+        return throwError(() => error)
       })
     )
 
@@ -251,12 +270,14 @@ export class CrawlAPIService {
       }),
       catchError(error => {
         console.error('Error in Crawl4 AI API call:', error)
-        throw throwError(() => error)
+        // Same defect as the status call above: returning the Observable is what
+        // delivers the HttpErrorResponse the callers inspect.
+        return throwError(() => error)
       }))
   }
 
-  streamTaskResults(url: string, taskId: string): Observable<any> {
-    const crawl4AiReaderEndpoint: string = /* url ||  */(this.crawl4AiEndpoint.replace('/crawl', '/job') + "/stream/" + taskId)
+  streamTaskResults(taskId: string): Observable<any> {
+    const crawl4AiReaderEndpoint: string = this.crawl4AiEndpoint.replace('/crawl', '/job') + "/stream/" + taskId
 
     const headers = new HttpHeaders({
       // 'api-key': `Bearer ${this.authService.token}`, // this is for the ssr express server `,
@@ -268,7 +289,7 @@ export class CrawlAPIService {
     })
 
     let previousText = '' // Persistent buffer for incomplete lines
-    let buffer = '' // To accumulate new text chunks
+    let buffer = '' // Trailing line that has not seen its newline yet
     let isErrorState = false // Track if we've encountered an error
     return this.http.get(crawl4AiReaderEndpoint, {
       headers/* , transferCache: true */,
@@ -289,20 +310,28 @@ export class CrawlAPIService {
         //   // newText = previousText
         //   // console.log('Final full textbody  received:', )
         // }
-        const fullText = (event as HttpDownloadProgressEvent).partialText || ''
+        const progress = event as HttpDownloadProgressEvent & { body?: string }
+        // A Response event carries the whole body, not `partialText`.
+        const fullText = progress.partialText || progress.body || ''
         const newText = fullText.slice(previousText.length)
         previousText = fullText
+        const isFinal = event.type === HttpEventType.Response
 
 
-        if (!newText) return [] // No new text to process
+        if (!newText && !isFinal) return [] // No new text to process
 
         // Split by newline to get complete chunks
         const lines = (buffer + newText).split('\n')
         // console.log('Received lines:', lines.length, lines, '...')
 
-        // Buffer the last potentially incomplete line for next chunk
+        // Buffer the last potentially incomplete line for next chunk. A completed
+        // stream has no next event, so its tail is a whole line and gets emitted:
+        // discarding it here is what left a task stuck once the last status line
+        // arrived without a trailing newline.
         if (lines.length && lines[lines.length - 1] !== '') {
-          buffer = lines.pop() || ''
+          const tail = lines.pop() || ''
+          buffer = isFinal ? '' : tail
+          if (isFinal && tail.trim()) lines.push(tail)
         } else {
           buffer = ''
         }

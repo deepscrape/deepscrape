@@ -156,6 +156,11 @@ export class CartService implements OnDestroy {
           this.cartItemSubject.next(item)
           await this.saveToIndexedDB(item)
           // }
+        } else {
+          // Deleted on another device. Doing nothing here left the IndexedDB copy in
+          // place, so the next add restored a pack the customer had removed.
+          this.cartItemSubject.next(null)
+          await this.deletFromIndexedDB(userId)
         }
       })
 

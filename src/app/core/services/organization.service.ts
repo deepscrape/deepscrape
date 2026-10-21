@@ -1,7 +1,7 @@
 import { inject, Injectable } from '@angular/core'
 import { HttpClient, HttpHeaders } from '@angular/common/http'
-import { Observable, throwError } from 'rxjs'
-import { catchError, tap } from 'rxjs/operators'
+import { Observable, of, throwError } from 'rxjs'
+import { catchError, finalize, shareReplay, tap } from 'rxjs/operators'
 import { AnalyticsService } from './analytics.service'
 import { AuthService } from './auth.service'
 import { AuthzService } from './authz.service'
@@ -50,9 +50,47 @@ export class OrganizationService {
     private http: HttpClient,
     private authService: AuthService,
     private authzService: AuthzService,
-  ) {}
+  ) {
+    // The list cache below lives for the whole tab, so it must die with the identity
+    // that filled it — otherwise the next account to sign in here inherits it. Keyed
+    // on the uid, not on every emission: `user$` also fires on profile refreshes, and
+    // clearing the cache there would defeat it for no benefit.
+    this.authService.user$.subscribe((user) => {
+      const uid = user?.uid ?? null
+      if (uid !== this.cachedUid) {
+        this.cachedUid = uid
+        this.invalidateOrganizationList()
+      }
+    })
+  }
 
   private readonly analytics = inject(AnalyticsService)
+
+  /**
+   * `listMyOrganizations()` is called by more than one resolver on the same
+   * navigation, so one load issued 2-3 `GET /api/orgs` at once. The two layers fail
+   * differently: `orgListInFlight` collapses the concurrent calls (the common case —
+   * none has landed yet), `orgList` answers a later navigation with no request at all.
+   * ponytail: one TTL for the whole list, no per-org freshness. Every mutation that
+   * can change the list invalidates it, so lengthen the TTL only if that stays true.
+   */
+  private static readonly ORG_LIST_TTL_MS = 30_000
+  private orgList: { at: number; value: OrganizationListResponse } | null = null
+  private orgListInFlight: Observable<OrganizationListResponse> | null = null
+  /** Which identity `orgList` belongs to. `undefined` until the first auth emission. */
+  private cachedUid: string | null | undefined = undefined
+
+  private invalidateOrganizationList(): void {
+    this.orgList = null
+    this.orgListInFlight = null
+  }
+
+  private applyActiveOrg(response: OrganizationListResponse): void {
+    const activeOrgId = this.authzService.activeOrgId
+    if (!activeOrgId && response.organizations?.length) {
+      this.authzService.setActiveOrgId(response.organizations[0].id)
+    }
+  }
 
   private getAuthHeaders(): HttpHeaders {
     return new HttpHeaders({
@@ -62,21 +100,39 @@ export class OrganizationService {
   }
 
   listMyOrganizations(): Observable<OrganizationListResponse> {
-    return this.http.get<OrganizationListResponse>(API_ORGANIZATIONS, {
+    const cached = this.orgList
+    if (cached && Date.now() - cached.at < OrganizationService.ORG_LIST_TTL_MS) {
+      // Re-apply on the cached path too: `activeOrgId` can be cleared without the
+      // list changing, and a cached hit must not skip that normalisation.
+      this.applyActiveOrg(cached.value)
+      return of(cached.value)
+    }
+
+    if (this.orgListInFlight) {
+      return this.orgListInFlight
+    }
+
+    this.orgListInFlight = this.http.get<OrganizationListResponse>(API_ORGANIZATIONS, {
       headers: this.getAuthHeaders(),
       withCredentials: true,
     }).pipe(
       tap((response) => {
-        const activeOrgId = this.authzService.activeOrgId
-        if (!activeOrgId && response.organizations?.length) {
-          this.authzService.setActiveOrgId(response.organizations[0].id)
-        }
+        this.orgList = { at: Date.now(), value: response }
+        this.applyActiveOrg(response)
       }),
       catchError((error) => {
         console.error('Failed to fetch organizations:', error)
         return throwError(() => error)
       }),
+      finalize(() => {
+        this.orgListInFlight = null
+      }),
+      // refCount: a caller that unsubscribes early must not cancel the request the
+      // other subscriber is still waiting on.
+      shareReplay({ bufferSize: 1, refCount: true }),
     )
+
+    return this.orgListInFlight
   }
 
   createOrganization(name: string): Observable<{ id: string }> {
@@ -86,6 +142,7 @@ export class OrganizationService {
       { headers: this.getAuthHeaders(), withCredentials: true },
     ).pipe(
       tap((response) => {
+        this.invalidateOrganizationList()
         this.authzService.setActiveOrgId(response.id)
         this.analytics.trackEvent('org_created', { orgId: response.id })
           .subscribe({ error: () => undefined })
@@ -103,6 +160,7 @@ export class OrganizationService {
       { name },
       { headers: this.getAuthHeaders(), withCredentials: true },
     ).pipe(
+      tap(() => this.invalidateOrganizationList()),
       catchError((error) => {
         console.error('Failed to rename organization:', error)
         return throwError(() => error)
@@ -140,6 +198,7 @@ export class OrganizationService {
       `${API_ORGANIZATIONS}/${orgId}/members/${userId}`,
       { headers: this.getAuthHeaders(), withCredentials: true },
     ).pipe(
+      tap(() => this.invalidateOrganizationList()),
       catchError((error) => {
         console.error('Failed to remove organization member:', error)
         return throwError(() => error)
@@ -178,6 +237,7 @@ export class OrganizationService {
       { headers: this.getAuthHeaders(), withCredentials: true },
     ).pipe(
       tap((response) => {
+        this.invalidateOrganizationList()
         if (response?.orgId) {
           this.authzService.setActiveOrgId(response.orgId)
           this.analytics.trackEvent('invitation_accepted', { orgId: response.orgId, role: response.role })

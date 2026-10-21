@@ -12,6 +12,7 @@ import { Observable } from 'rxjs/internal/Observable';
 export class OperationStatusService {
   /** Crawl outcomes already reported, so repeated polls cannot inflate activation. */
   private readonly reportedTerminalIds = new Set<string>();
+  private static readonly MAX_REPORTED_IDS = 200;
 
   constructor(
     private crawlService: CrawlAPIService,
@@ -24,7 +25,18 @@ export class OperationStatusService {
    * through this service, so it is the one place worth instrumenting.
    */
   private trackTerminalStatus(taskId: string, status: CrawlOperationStatus): void {
-    if (status === CrawlOperationStatus.CANCELED || this.reportedTerminalIds.has(taskId)) {
+    // A cancel is not an activation, but it is still a finished crawl, so it must
+    // claim the id — otherwise every later poll re-notifies the same cancel.
+    if (this.reportedTerminalIds.has(taskId)) {
+      return;
+    }
+    this.reportedTerminalIds.add(taskId);
+    // Bounded: this set lives for the tab's lifetime, one entry per crawl seen.
+    if (this.reportedTerminalIds.size > OperationStatusService.MAX_REPORTED_IDS) {
+      const oldest = this.reportedTerminalIds.values().next().value;
+      if (oldest !== undefined) this.reportedTerminalIds.delete(oldest);
+    }
+    if (status === CrawlOperationStatus.CANCELED) {
       return;
     }
 
@@ -51,6 +63,9 @@ export class OperationStatusService {
     id: string,
     showSnackbar: (msg: string, type: SnackBarType) => void
   ): Observable<Pick<CrawlStatus, 'error' | 'status' | 'result'>> {
+    // One outcome per subscription: the stream keeps re-sending the terminal status
+    // until it closes, and `tap` would otherwise re-open the snackbar every frame.
+    let notified = false;
     return this.crawlService.getTaskStatus(id).pipe(
       tap((obj) => {
         const status = obj?.status || '';
@@ -73,6 +88,8 @@ export class OperationStatusService {
             [CrawlOperationStatus.PAUSED]: { message: 'Task is in paused.', type: SnackBarType.info },
           };
           const { message, type } = messages[status as CrawlOperationStatus];
+          if (notified) return;
+          notified = true;
           showSnackbar(message, type);
           this.trackTerminalStatus(id, status as CrawlOperationStatus);
         }

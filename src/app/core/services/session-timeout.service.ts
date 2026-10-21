@@ -1,138 +1,90 @@
-import { Injectable, inject, signal, DestroyRef } from '@angular/core'
+import { Injectable, inject } from '@angular/core'
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
-import { interval, Subscription } from 'rxjs'
-import { MatSnackBar } from '@angular/material/snack-bar'
+import { TranslateService } from '@ngx-translate/core'
+
+import { SnackBarType } from '../components/snackbar/snackbar.component'
 import { AuthService } from './auth.service'
-import { environment } from 'src/environments/environment'
+import { SnackbarService } from './snackbar.service'
+
+/** Warn once this far ahead of the server's expiry. */
+const WARN_BEFORE_MS = 5 * 60 * 1000
+
+/** `setTimeout` fires immediately above this, so a 30-day wait has to be chained. */
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 /**
- * PHASE 4.1: Session Timeout Service
- * Monitors session expiry and warns user before logout
+ * Counts down to the session expiry the SERVER reports.
+ *
+ * The previous version derived 30 days from its own construction — page load, not the
+ * session — so it named a date that was not the expiry, and at that date it only showed
+ * a toast. `createLoginSession` stamps `expiresAt` on the session record and
+ * `getMyLoginSessionStatus` returns it, so `AuthService.sessionExpiresAt$` carries the
+ * real value. At expiry this calls `onSessionRevoked()`, the same path a revoked 401
+ * takes, so the user is actually signed out instead of being warned about a deadline
+ * that then passes with the session still live.
  */
 @Injectable({
   providedIn: 'root'
 })
 export class SessionTimeoutService {
-  private authService = inject(AuthService)
-  private snackbar = inject(MatSnackBar)
-  private destroyRef = inject(DestroyRef)
+  private readonly auth = inject(AuthService)
+  private readonly snackbar = inject(SnackbarService)
+  private readonly translate = inject(TranslateService)
 
-  // Configuration
-  private readonly SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
-  private readonly WARNING_BEFORE_MS = 3 * 24 * 60 * 60 * 1000 // 3 days
-  private readonly CHECK_INTERVAL_MS = 60 * 60 * 1000 // Check every hour
-
-  readonly sessionExpiry = signal<Date | null>(null)
-  readonly timeUntilExpiry = signal<number>(0)
-  readonly showWarning = signal(false)
-
-  private checkInterval: Subscription | null = null
-  private lastWarningTime = 0
+  private expiresAtMs: number | null = null
+  private warned = false
+  private timer?: ReturnType<typeof setTimeout>
 
   constructor() {
-    // Auto-start monitoring when auth state changes.
-    // Keep a single subscription and avoid deprecated effect() options.
-    this.authService.user$
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((user) => {
-        if (user) {
-          this.startMonitoring()
-        } else {
-          this.stopMonitoring()
-        }
-      })
+    this.auth.sessionExpiresAt$
+      .pipe(takeUntilDestroyed())
+      .subscribe((expiresAtMs) => this.schedule(expiresAtMs))
   }
 
-  private startMonitoring(): void {
-    if (this.checkInterval) {
-      return // Already monitoring
+  /**
+   * (Re)arm from the reported expiry. Re-arming clears the warning so a renewed
+   * session can warn again.
+   * @param {number | null} expiresAtMs Epoch ms, or null while unknown.
+   */
+  private schedule(expiresAtMs: number | null): void {
+    clearTimeout(this.timer)
+    this.timer = undefined
+    this.expiresAtMs = expiresAtMs
+    this.warned = false
+    this.arm()
+  }
+
+  /** Sleep until the next thing to do: the warning, or the expiry itself. */
+  private arm(): void {
+    if (!this.expiresAtMs) {
+      return
     }
+    const remaining = this.expiresAtMs - Date.now()
 
-    // Set session expiry to 30 days from now
-    const expiryDate = new Date(Date.now() + this.SESSION_DURATION_MS)
-    this.sessionExpiry.set(expiryDate)
-
-    // Check every hour
-    this.checkInterval = interval(this.CHECK_INTERVAL_MS)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => {
-        this.checkSessionExpiry()
-      })
-
-    // Initial check
-    this.checkSessionExpiry()
-  }
-
-  private stopMonitoring(): void {
-    if (this.checkInterval) {
-      this.checkInterval.unsubscribe()
-      this.checkInterval = null
-    }
-    this.sessionExpiry.set(null)
-    this.showWarning.set(false)
-  }
-
-  private checkSessionExpiry(): void {
-    const expiry = this.sessionExpiry()
-    if (!expiry) {
+    if (remaining <= 0) {
+      // The server already treats the session as dead at `expiresAt`
+      // (`cleanupExpiredSessions`), so this is the outcome the next 401 would
+      // produce anyway — announced rather than discovered.
+      this.auth.onSessionRevoked()
       return
     }
 
-    const now = Date.now()
-    const timeUntilExpiry = expiry.getTime() - now
-
-    this.timeUntilExpiry.set(Math.max(0, timeUntilExpiry))
-
-    // Show warning if less than 3 days remaining and not already warned recently
-    if (timeUntilExpiry < this.WARNING_BEFORE_MS && timeUntilExpiry > 0) {
-      const timeSinceLastWarning = now - this.lastWarningTime
-      if (timeSinceLastWarning > 24 * 60 * 60 * 1000) { // Only warn once per day
-        this.showWarning.set(true)
-        this.lastWarningTime = now
-
-        const daysRemaining = Math.ceil(timeUntilExpiry / (24 * 60 * 60 * 1000))
-        this.snackbar.open(
-          `Your session will expire in ${daysRemaining} days. Please refresh to extend your session.`,
-          'Refresh Now',
-          { duration: 8000 }
-        ).onAction().subscribe(() => this.refreshSession())
-      }
+    if (!this.warned && remaining <= WARN_BEFORE_MS) {
+      this.warned = true
+      this.snackbar.showSnackbar(
+        this.translate.instant('SESSION_TIMEOUT.WARNING', {
+          minutes: Math.max(1, Math.ceil(remaining / 60_000)),
+        }),
+        SnackBarType.warning,
+      )
     }
 
-    // Session expired
-    if (timeUntilExpiry <= 0) {
-      this.sessionExpiry.set(null)
-      this.showWarning.set(false)
-      this.snackbar.open(
-        'Your session has expired. Please log in again.',
-        'Log In',
-        { duration: 0 }
-      ).onAction().subscribe(() => this.authService.logout().subscribe())
-    }
-  }
-
-  refreshSession(): void {
-    // Extend session by 30 days
-    const newExpiry = new Date(Date.now() + this.SESSION_DURATION_MS)
-    this.sessionExpiry.set(newExpiry)
-    this.showWarning.set(false)
-    this.snackbar.open(
-      'Session extended for 30 more days',
-      '',
-      { duration: 3000 }
-    )
-  }
-
-  getFormattedTimeRemaining(): string {
-    const ms = this.timeUntilExpiry()
-    if (ms <= 0) return 'Expired'
-
-    const days = Math.floor(ms / (24 * 60 * 60 * 1000))
-    const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000))
-    const minutes = Math.floor((ms % (60 * 60 * 1000)) / (60 * 1000))
-
-    if (days > 0) return `${days}d ${hours}h`
-    if (hours > 0) return `${hours}h ${minutes}m`
-    return `${minutes}m`
+    // Chained rather than one long timer: anything past ~24.8 days exceeds the
+    // setTimeout ceiling and would fire at once, which is the opposite of waiting.
+    const delay = remaining <= WARN_BEFORE_MS ?
+      remaining :
+      remaining - WARN_BEFORE_MS
+    this.timer = setTimeout(() => this.arm(), Math.min(delay, MAX_TIMEOUT_MS))
   }
 }
+

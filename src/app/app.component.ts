@@ -24,7 +24,7 @@ import { ThemeToggleComponent } from './shared/theme-picker/theme-picker.compone
 import { SizeDetectorComponent } from './core/components/size-detector/size-detector.component'
 import { SnackbarComponent, SnackBarType } from './core/components/snackbar/snackbar.component'
 import { LoadingBarHttpClientModule } from '@ngx-loading-bar/http-client'
-import { catchError, filter, forkJoin, of, switchMap, take, tap, timer } from 'rxjs'
+import { catchError, filter, of, switchMap, take, tap, timer } from 'rxjs'
 import { isPlatformBrowser, isPlatformServer } from '@angular/common'
 import { fadeInOutAnimation } from './animations'
 import { Inject, OnInit, OnDestroy, AfterViewInit } from '@angular/core'
@@ -206,31 +206,23 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         .subscribe())
     }
 
-    // Make a request to the status endpoint to trigger guestTracker.
-    // This needs to run in emulator mode too, otherwise first-login metrics miss guest enrichment.
+    // Nothing here needs to trigger `guestTracker`: it is a global `onBeforeHandle`
+    // in the BFF, and this file already requests `/csrf-token` on every boot, so the
+    // tracking hook has run before any of this. The old `GET /status` warm-up was
+    // removed for that reason — it had no route, so it fell through to the page
+    // catch-all and paid the page rate limiter (a Redis round trip) to download an
+    // 86 KB `index.csr.html` whose body was then thrown away, and it inflated
+    // `requestsToday` while doing it.
+    // This block still has to run in emulator mode, or first-login metrics miss
+    // guest enrichment.
     if (isBrowser && (environment.production || environment.emulators)) {
 
-      // Started for anonymous visitors as well. The heartbeat skips itself unless the
-      // visitor is signed in or granted analytics consent, and its first beat is the
-      // only same-origin call that lets `guestTracker` mint a `gid` for a consented
-      // visitor who has no identity yet -- without it nobody is ever counted.
-      this.heartbeatService.start(this.token)
-
-      // Send custom analytics event to backend
-      afterFirstPaint(() => forkJoin([
-        this.analyticsService.sendStatus(),
-      ])
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: ([statusResponse]) => {
-          console.log('API Status Check:', statusResponse)
-        },
-        error: (error) => {
-          console.error('Error checking API status or sending analytics event:', error)
-        }
-      }))
-      
-    
+      // Started for anonymous visitors as well: the heartbeat skips itself unless the
+      // visitor is signed in or granted analytics consent, and it is what keeps
+      // `activeUsersNow` alive for a visitor who never opens a dashboard.
+      // A getter, not a snapshot: `start` runs once per session and the ID token
+      // rotates hourly, so a captured value means every beat after an hour is a 401.
+      this.heartbeatService.start(() => this.token)
     }
 
   }

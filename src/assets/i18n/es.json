@@ -529,7 +529,35 @@
     "F_ENT_5": "SSO y RBAC",
     "F_ENT_6": "Opción de despliegue local (on-premise)",
     "F_ENT_7": "Integraciones personalizadas",
-    "F_ENT_8": "Informes de cumplimiento"
+    "F_ENT_8": "Informes de cumplimiento",
+    "F_ENT_UNLIMITED": "Uso ilimitado según un acuerdo personalizado",
+    "UNLIMITED": "Ilimitado",
+    "FEATURES": {
+      "PROXY_ROTATION": "Rotación de proxies con geolocalización en un pool rotativo",
+      "STRUCTURED_EXTRACTION": "Extracción estructurada mediante CSS, XPath o esquemas LLM",
+      "BROWSER_SESSION_DEDICATED": "1 sesión de navegador dedicada en una máquina alquilada",
+      "BROWSER_SESSION_BYO": "Hasta 3 sesiones en tu propio endpoint CDP",
+      "LIVE_VIEW": "Vista en vivo de tu sesión a 1 fps",
+      "CAPACITY_TOOLS": "Herramientas de capacidad: navigate, observe, vision, batch, spider, download, watch",
+      "CREDENTIAL_VAULT": "Caja fuerte cifrada de credenciales para sesiones autenticadas",
+      "SESSION_REUSE": "Reutilización de sesión y persistencia de perfil",
+      "ANTI_BOT": "Gestión anti-bot",
+      "IDENTITY_CRAWLING": "Rastreo basado en identidad",
+      "HIGH_CONCURRENCY": "Alta concurrencia",
+      "PRIORITY_SUPPORT": "Soporte prioritario",
+      "COMMUNITY_SUPPORT": "Soporte de la comunidad",
+      "DEDICATED_SUPPORT": "Soporte dedicado 24/7",
+      "SSO": "SSO y RBAC",
+      "AUDIT_LOGS": "Registros de auditoría",
+      "CUSTOM_LIMITS": "Límites personalizados y residencia de datos",
+      "EXTRACTION_SUITE": "Suite de extracción: scrape, extract, PDF, SERP y búsqueda web",
+      "SCHEMA_COMPILER": "Compilador de esquemas: describe una página con palabras y obtén un esquema reutilizable",
+      "MONITORS": "Monitores de páginas con comprobación de cambios",
+      "AI_PROVIDERS": "10 proveedores de IA (Anthropic, OpenAI, Gemini y más) con tu propia clave",
+      "CRAWL_API": "API de rastreo con salida lista para markdown",
+      "MACHINE_LEASING": "API de alquiler de máquinas y acceso MCP a tus propias máquinas",
+      "UNLIMITED_USAGE": "Uso ilimitado según un acuerdo personalizado"
+    }
   },
   "SOCIAL": {
     "HEAD_LINE": "Con la confianza de desarrolladores de todo el mundo",
@@ -1165,6 +1193,14 @@
     "NO_ENTRIES": "No se encontraron entradas de uso de facturación para este rango.",
     "RANGE": "Rango",
     "METERED_USAGE": "Uso medido",
+    "METERED_HINT": "Un crédito por solicitud de pago o por bloque de 5 minutos iniciado en una máquina alquilada.",
+    "METERED_EMPTY": "Sin uso medido en este periodo.",
+    "METERED_CAPABILITY": "Capacidad",
+    "METERED_EVENTS": "Eventos",
+    "METERED_CREDITS": "Créditos",
+    "METERED_SHARE": "Proporción",
+    "METERED_MACHINES": "máquinas",
+    "METERED_BILLED_BROWSER_TIME": "Tiempo de sesión del navegador",
     "UNITS": "unidades"
   },
   "SLIDE_MODAL": {
@@ -1936,6 +1972,9 @@
     "ERR_MFA_ENROLL_REQUIRED": "Se requiere MFA para revelar las claves API. Configura MFA en los ajustes de Seguridad.",
     "ERR_PASSWORD_CONFIRM_FAILED": "La confirmación de la contraseña falló. Inténtalo de nuevo."
   },
+  "SESSION_TIMEOUT": {
+    "WARNING": "Tu sesión finaliza en {{minutes}} minutos. Guarda tu trabajo."
+  },
   "DEVICE_VERIFICATION": {
     "TITLE": "Verificar este dispositivo",
     "LOGIN_SUB": "Este inicio de sesión necesita un paso de verificación adicional antes de continuar.",
@@ -2568,6 +2607,12 @@
     "START_TRIAL": "Empezar prueba",
     "TRIAL_ALREADY_USED": "Prueba ya utilizada",
     "SELECT_PLAN": "Seleccionar plan {{plan}}",
+    "CONTACT_SALES": "Contactar con ventas",
+    "CONTACT_SALES_PRICE": "Personalizado",
+    "UNLIMITED_USAGE": "Uso ilimitado según un acuerdo personalizado",
+    "SALES_REQUEST_SENT": "Solicitud enviada. Nuestro equipo te contactará en breve.",
+    "SALES_REQUEST_FAILED": "No se pudo enviar la solicitud. Inténtalo de nuevo.",
+    "PER_1K_CREDITS": "por cada 1.000 créditos",
     "BEST_CHOICE_RECOMMENDED": "Mejor opción recomendada",
     "VIEW_PLAN_DETAILS": "Ver detalles de {{plan}}",
     "CANCELLATION_SCHEDULED_TITLE": "Cancelación programada",

@@ -2,7 +2,6 @@ import { inject, Injectable } from '@angular/core';
 import { BehaviorSubject, catchError, from, map, Observable, of, Subscription, tap, throwError } from 'rxjs';
 import { ApiKey, ApiKeyType } from '../types/apikey.interface';
 import { AnalyticsService } from './analytics.service';
-import { SessionStorage } from './storage.service';
 import { FirestoreService } from './firestore.service';
 import { toDate } from '../functions';
 
@@ -19,7 +18,6 @@ export class ApiKeyService {
 
     private retrieveKeysSub: Subscription;
     private apiKeysSubject = new BehaviorSubject<ApiKey[] | null>([]);
-    private SessionStorage: Storage = inject(SessionStorage)
     private apiKeyPageCursors = new Map<number, string | null>([[1, null]])
     private readonly analytics = inject(AnalyticsService)
 
@@ -27,35 +25,37 @@ export class ApiKeyService {
 
     constructor(
         private firestoreService: FirestoreService,) {
-        // Load existing API keys from local storage or backend
-        const storedKeys = this.SessionStorage.getItem('apiKeys');
-
-        this.initializeApiKeys(storedKeys);
+        // NO cache read. `sessionStorage` is per-TAB, not per-ACCOUNT: `logout()`
+        // never cleared it, so the next person to sign in on the same tab hydrated
+        // the previous account's key list before a single backend call — and after
+        // a reveal the array carried the plaintext that the step-up check exists to
+        // gate, so a reload restored a key the user had to re-authenticate to see.
+        //
+        // Fetching instead is not extra work: an empty cache already took this
+        // path on every new tab, and this way the step-up is re-armed by the
+        // backend on every load.
+        this.initializeApiKeys();
     }
 
-    private initializeApiKeys(storedKeys: string | null) {
-        if (storedKeys) {
-            this.apiKeysSubject.next(JSON.parse(storedKeys));
-        } else {
-            this.apiKeysSubject.next(null);
-            // Get Data from Firestore
-            this.retrieveKeysSub = this.retrieveApiKeysPagination().pipe(
-                catchError((error: any) => {
+    private initializeApiKeys() {
+        this.apiKeysSubject.next(null);
+
+        // Get Data from Firestore
+        this.retrieveKeysSub = this.retrieveApiKeysPagination().pipe(
+            catchError((error: any) => {
+                console.error('Error retrieving API keys:', error);
+                return of([]); // Return an empty array to prevent subscription errors
+            })).subscribe({
+                next: (apiKeys: ApiKey[]) => {
+
+                    // Update the API keys in the BehaviorSubject
+                    this.apiKeysSubject.next(apiKeys);
+                    this.saveApiKeys(apiKeys);
+                },
+                error: (error: any) => {
                     console.error('Error retrieving API keys:', error);
-                    return of([]); // Return an empty array to prevent subscription errors
-                })).subscribe({
-                    next: (apiKeys: ApiKey[]) => {
-
-                        // Update the API keys in the BehaviorSubject
-                        this.apiKeysSubject.next(apiKeys);
-                        this.saveApiKeys(apiKeys);
-                    },
-                    error: (error: any) => {
-                        console.error('Error retrieving API keys:', error);
-                    }
-                })
-        }
-
+                }
+            })
     }
 
     private retrieveApiKeysPagination(apiKeyPage: number = 1, apiKeyPageSize: number = 10): Observable<ApiKey[]> {
@@ -349,8 +349,17 @@ export class ApiKeyService {
         }
         return result;
     }
+    /**
+     * Deliberately does not persist.
+     *
+     * It used to write the whole array to `sessionStorage`, which is where the
+     * plaintext leaked: `key` holds the revealed value after a reveal, so the
+     * cache kept the very secret the step-up gate exists to protect. Kept as the
+     * one named place "the list changed" so no caller quietly regrows a cache.
+     * @param {ApiKey[]} keys The current list, intentionally unused.
+     */
     private saveApiKeys(keys: ApiKey[]) {
-        this.SessionStorage.setItem('apiKeys', JSON.stringify(keys));
+        void keys;
     }
 
     private getSecurityErrorCode(error: any): ApiKeySecurityErrorCode | null {

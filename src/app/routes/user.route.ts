@@ -10,7 +10,7 @@ import { UserResolver } from '../core/services';
 
 /** The app shell. Shared by all three trees; `loadChildren` differs per tree. */
 const shell = {
-    loadComponent: () => import('../layout/full').then(c => c.AppUserLayoutComponent),
+    loadComponent: () => import('../layout/full/app-user-layout/app-user-layout.component').then(c => c.AppUserLayoutComponent),
     data: { title: 'user', animation: 'user' }, // Apply the redirection
     resolve: { user: UserResolver },
 };
@@ -21,7 +21,7 @@ export const UserRoutes: Routes = [
         // otherwise read `/admin` as an org literally named "admin" and move it off the
         // console origin entirely.
         path: 'admin',
-        loadComponent: () => import('../layout/full').then(c => c.AppUserLayoutComponent),
+        loadComponent: () => import('../layout/full/app-user-layout/app-user-layout.component').then(c => c.AppUserLayoutComponent),
         loadChildren: () => import('./user/admin.route').then(m => m.AdminRoutes),
         canActivate: [authGuard, adminGuard],
         data: { title: 'Admin', animation: 'admin' },

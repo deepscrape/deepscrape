@@ -9,6 +9,69 @@ declare global {
   }
 }
 
+const REDACTED = '[REDACTED]'
+const SENSITIVE_KEYS = ['apiKey', 'apiKeys', 'apiKeyId']
+
+function redactString(value: string): string {
+  return value
+    .replace(/apiKeys?\s*:\s*['"][^'"]+['"]/gi, 'apiKey: [REDACTED]')
+    .replace(/apiKeyId\s*:\s*['"][^'"]+['"]/gi, 'apiKeyId: [REDACTED]')
+    .replace(/apiKey\s*=\s*['"][^'"]+['"]/gi, 'apiKey=[REDACTED]');
+}
+
+function isPlainObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Redacts every argument before it reaches the console.
+ *
+ * Strings are pattern-scrubbed; arrays and plain objects are walked recursively. The previous
+ * implementation cloned a single level, so a secret nested one object deeper was printed in
+ * clear. Non-plain objects (`Error`, `Date`, DOM nodes) are returned untouched so their stack
+ * and native inspection survive — spreading an `Error` yields `{}`, which is how production
+ * error logs lost the stack. The exception is an object carrying a sensitive own key: that is
+ * cloned so the value cannot reach the console.
+ *
+ * @param args The console arguments, unmodified.
+ * @return {unknown[]} Redacted copies, positionally aligned with the input.
+ */
+export function redactConsoleArgs(args: readonly unknown[]): unknown[] {
+  const ancestors = new WeakSet<object>();
+
+  const redact = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      return redactString(value);
+    }
+    if (typeof value !== 'object' || value === null) {
+      return value;
+    }
+    if (ancestors.has(value)) {
+      return '[Circular]';
+    }
+
+    const entries = Object.entries(value);
+    const carriesSecret = entries.some(([key]) => SENSITIVE_KEYS.includes(key));
+    if (!Array.isArray(value) && !isPlainObject(value) && !carriesSecret) {
+      return value;
+    }
+
+    ancestors.add(value);
+    const redacted: unknown = Array.isArray(value)
+      ? value.map(item => redact(item))
+      : entries.reduce<Record<string, unknown>>((clone, [key, nested]) => {
+        clone[key] = SENSITIVE_KEYS.includes(key) ? REDACTED : redact(nested);
+        return clone;
+      }, {});
+    ancestors.delete(value);
+
+    return redacted;
+  };
+
+  return args.map(redact);
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -34,24 +97,8 @@ export class LoggerService {
       
       // Keep error logging
       console.error = function(...args) {
-        // Redact sensitive information before logging
-        const redactedArgs = args.map(arg => {
-          if (typeof arg === 'string') {
-            return arg
-              .replace(/apiKeys?\s*:\s*['"][^'"]+['"]/gi, 'apiKey: [REDACTED]')
-              .replace(/apiKeyId\s*:\s*['"][^'"]+['"]/gi, 'apiKeyId: [REDACTED]')
-              .replace(/apiKey\s*=\s*['"][^'"]+['"]/gi, 'apiKey=[REDACTED]');
-          }
-          if (typeof arg === 'object' && arg !== null) {
-            // Shallow clone and redact known keys
-            const clone = { ...arg };
-            ['apiKey', 'apiKeys', 'apiKeyId'].forEach(key => {
-              if (clone[key]) clone[key] = '[REDACTED]';
-            });
-            return clone;
-          }
-          return arg;
-        });
+        // Redact every argument, recursively, before logging
+        const redactedArgs = redactConsoleArgs(args);
         // Show i18n warning before error
         
         let warning = '';
@@ -64,7 +111,8 @@ export class LoggerService {
       
       // Add ability to force logging even in production
       (console as Console).forceLog = (...args: unknown[]): void => {
-        originalMethods.log.apply(console, args)
+        // Same redaction as `console.error`: this path bypasses the patched methods.
+        originalMethods.log.apply(console, redactConsoleArgs(args))
       }
     }
   }

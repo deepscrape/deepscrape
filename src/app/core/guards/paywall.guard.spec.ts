@@ -7,7 +7,7 @@ import { getTestProviders } from 'src/app/testing';
 
 describe('paywallGuard', () => {
   let billingServiceMock: jasmine.SpyObj<Pick<BillingService, 'canAccessPaidFeatures$'>>
-  let routerMock: jasmine.SpyObj<Pick<Router, 'navigate'>>
+  let routerMock: jasmine.SpyObj<Pick<Router, 'navigate' | 'createUrlTree'>>
 
   const executeGuard: CanActivateFn = (...guardParameters) =>
     TestBed.runInInjectionContext(() => paywallGuard(...guardParameters))
@@ -26,7 +26,7 @@ describe('paywallGuard', () => {
 
   beforeEach(() => {
     billingServiceMock = jasmine.createSpyObj<Pick<BillingService, 'canAccessPaidFeatures$'>>('BillingService', ['canAccessPaidFeatures$'])
-    routerMock = jasmine.createSpyObj<Pick<Router, 'navigate'>>('Router', ['navigate'])
+    routerMock = jasmine.createSpyObj<Pick<Router, 'navigate' | 'createUrlTree'>>('Router', ['navigate', 'createUrlTree'])
 
     TestBed.configureTestingModule({
       providers: [
@@ -48,16 +48,21 @@ describe('paywallGuard', () => {
 
   it('redirects to billing plans when user cannot access paid features', async () => {
     billingServiceMock.canAccessPaidFeatures$.and.returnValue(of(false))
-    routerMock.navigate.and.resolveTo(true)
+    // The guard returns a UrlTree and lets the router run ONE navigation; a
+    // `navigate()` call from inside a guard is what dropped the redirect when
+    // two navigations overlapped.
+    const tree = { redirected: '/billing/plans' } as never
+    routerMock.createUrlTree.and.returnValue(tree)
 
     const result = await resolveGuardResult(executeGuard({} as never, { url: '/protected' } as never))
 
-    expect(result).toBeFalsy()
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/billing/plans'], {
+    expect(result).toBe(tree)
+    expect(routerMock.createUrlTree).toHaveBeenCalledWith(['/billing/plans'], {
       queryParams: {
         reason: 'upgrade_required',
         returnUrl: '/protected',
       },
     })
+    expect(routerMock.navigate).not.toHaveBeenCalled()
   })
 })

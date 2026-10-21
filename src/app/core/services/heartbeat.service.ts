@@ -20,6 +20,7 @@ export class HeartbeatService {
     private stop$ = new Subject<void>();
     private sessionRevokedSubject = new Subject<void>();
     sessionRevoked$ = this.sessionRevokedSubject.asObservable();
+    private lastErrorLogAt = 0;
 
     constructor(private http: HttpClient) {
         // Listen for network changes
@@ -34,7 +35,15 @@ export class HeartbeatService {
         });
     }
 
-    start(token?: string, intervalMs: number = 60000) {
+    /**
+     * Start the heartbeat.
+     * @param {string|Function} token A token, or a GETTER read on every beat. The
+     *   getter is what keeps a long-lived tab alive: a captured string froze the
+     *   bearer at page load, so an hour later every beat was a 401 for a token that
+     *   had expired while the session itself was still valid.
+     * @param {number} intervalMs Beat interval.
+     */
+    start(token?: string | (() => string | undefined), intervalMs: number = 60000) {
         this.stop();
         this.isPaused = false;
 
@@ -52,7 +61,7 @@ export class HeartbeatService {
             takeUntil(this.stop$)
         ).subscribe();
 
-        const headers = this.buildHeaders(token);
+        const resolveToken = typeof token === 'function' ? token : () => token;
 
         // Heartbeat interval
         // `timer(0, …)` rather than `interval(…)`: the first beat fires immediately so a
@@ -75,7 +84,11 @@ export class HeartbeatService {
                 // blocked; the server then falls back to its user-agent check.
                 return from(getDeviceSignalsHash(this.window)).pipe(
                     switchMap((deviceSignals) =>
-                        this.http.post('/event/heartbeat', { deviceSignals }, { headers })
+                        this.http.post(
+                            '/event/heartbeat',
+                            { deviceSignals },
+                            { headers: this.buildHeaders(resolveToken()) },
+                        )
                     ),
                     catchError((error) => this.handleHeartbeatError(error))
                 );
@@ -143,7 +156,25 @@ export class HeartbeatService {
             return of({ success: false, skipped: true, reason: 'missing-id' });
         }
 
-        return throwError(() => error);
+        // Everything else is TRANSIENT and must NOT end the stream: a 500, a 429, a
+        // gateway hiccup, an expired bearer.
+        //
+        // The `throwError` that used to sit here errored the `switchMap` projection,
+        // which errored `timer(0, intervalMs)` itself — so ONE bad response stopped the
+        // heartbeat for the rest of the page load, and the outer `console.error` was
+        // the only trace. The user went invisible while the dashboard still showed
+        // them online. Logged, but rate-limited: a persistent 500 at one beat a minute
+        // would otherwise bury the console.
+        const now = Date.now();
+        if (now - this.lastErrorLogAt > 5 * 60 * 1000) {
+            this.lastErrorLogAt = now;
+            console.warn(
+                'Heartbeat failed (will retry on the next beat):',
+                error?.status ?? error,
+            );
+        }
+
+        return of({ success: false, retry: true });
     }
 
     stop() {

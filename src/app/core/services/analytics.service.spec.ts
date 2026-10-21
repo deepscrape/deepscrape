@@ -38,16 +38,6 @@ describe('AnalyticsService', () => {
     expect(service).toBeTruthy();
   });
 
-  it('should call backend status endpoint', () => {
-    service.sendStatus().subscribe((result) => {
-      expect(result).toEqual({ ok: true });
-    });
-
-    const req = httpMock.expectOne('/status');
-    expect(req.request.method).toBe('GET');
-    req.flush({ ok: true });
-  });
-
   it('should log event and queue the payload for the next batch flush', () => {
     service.trackEvent('crawl_started', { source: 'ui' }, 'token-1', 'user-1', 'guest-1').subscribe();
 

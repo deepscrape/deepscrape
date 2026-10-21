@@ -49,7 +49,20 @@ export class AnalyticsService {
     // over-large flush would lose every queued event at once.
     while (this.eventQueue.length) {
       const events = this.eventQueue.splice(0, CLIENT_EVENT_LIST_MAX)
-      this.batchTrackEvents(events, this.lastToken).subscribe({ error: () => undefined })
+      this.batchTrackEvents(events, this.lastToken).subscribe({
+        // A failed flush used to drop the chunk on the floor. The unload path is
+        // the one that matters: a `pagehide` POST is routinely aborted, and those
+        // events have no later chance to be sent.
+        error: () => this.requeueEvents(events),
+      })
+    }
+  }
+
+  /** Re-queue a failed chunk, keeping the oldest events, so an offline tab cannot grow unbounded. */
+  private requeueEvents(events: any[]): void {
+    this.eventQueue.unshift(...events)
+    if (this.eventQueue.length > CLIENT_EVENT_LIST_MAX) {
+      this.eventQueue.length = CLIENT_EVENT_LIST_MAX
     }
   }
 
@@ -66,20 +79,6 @@ export class AnalyticsService {
     private fireService: FirestoreService,
   ) { }
 
-  sendStatus() {
-    if (!isPlatformBrowser(this.platformId)) {
-      return of(null)
-    }
-
-    if (!this.analyticsBackendAvailable) {
-      return of(null)
-    }
-
-    return this.http.get(`/status`).pipe(
-      catchError((error) => this.handleError(error))
-    )
-  }
-  
   /**
    * Send analytics event to Google Analytics and backend for aggregation
    *
@@ -119,10 +118,11 @@ export class AnalyticsService {
       return of(null)
     }
 
-    // Optionally batch logEvent to Google Analytics (not supported natively, so log individually)
-    events.forEach(ev => {
-      this.fireService.logEvent(ev.method || ev.eventType || ev.event, ev.metadata ?? ev.properties)
-    });
+    // No second `logEvent` pass. `trackEvent` already logged every one of these
+    // before enqueuing it, and `flushEvents` is this method's only production
+    // caller — so logging here sent each event to GA4 twice. Every GA-derived
+    // number was ~2x while the server-side `clientEvents` counters (which see a
+    // single batch POST) stayed correct, so the two sources also disagreed.
     // Send batch to backend. HttpHeaders is immutable: append() returns a new
     // instance, so the old code silently dropped the Authorization header.
     let headers = new HttpHeaders({ 'Accept': 'application/json' });

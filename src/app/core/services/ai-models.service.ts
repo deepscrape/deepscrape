@@ -134,6 +134,22 @@ export class AiModelsService {
   }
 
   /**
+   * Rebuild the list, for when the CALLER's key set changed.
+   *
+   * `load()` runs once per page life, which is correct for a picker and wrong after
+   * a key write: the catalogue is built from `allowedVendors()`, so a user who added
+   * their own Anthropic key saw no Claude models until a full reload. The key list
+   * is re-read first because `load()` trusts `isLoaded()`.
+   * @return {void}
+   */
+  refresh(): void {
+    void this.aiKeys.load().then(() => {
+      this.started = false;
+      this.load();
+    });
+  }
+
+  /**
    * The option a picker should hold, given what it had.
    *
    * A selection that is no longer offered renders the dropdown with NOTHING selected -- the trap

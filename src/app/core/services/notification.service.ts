@@ -118,7 +118,12 @@ export class NotificationService {
       return;
     }
 
-    this.state.set(permission === 'granted' ? 'subscribed' : 'default');
+    // 'granted' alone is NOT a subscription, and this line is reached exactly when the
+    // stored flag is absent (cleared storage, new profile, reinstalled PWA) -- i.e. when
+    // no token is registered. Reporting 'subscribed' then made the UI offer only
+    // "disable", so `enable()` -- the only path that registers a token -- could never
+    // run again.
+    this.state.set('default');
   }
 
   /** Request permission and register this device. Must be called from a user gesture. */

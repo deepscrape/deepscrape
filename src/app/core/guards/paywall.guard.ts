@@ -8,19 +8,19 @@ export const paywallGuard: CanActivateFn = (_route, state) => {
   const router = inject(Router)
 
   return billingService.canAccessPaidFeatures$().pipe(
-    map((allowed) => {
-      if (allowed) {
-        return true
-      }
-
-      router.navigate(['/billing/plans'], {
-        queryParams: {
-          reason: 'upgrade_required',
-          returnUrl: state.url,
-        },
-      })
-
-      return false
-    })
+    // A UrlTree, NOT `navigate()` + `false`. Cancelling and starting a second
+    // navigation from inside the guard is what produced the classic "click
+    // Machines, nothing happens": the queued redirect was dropped when the two
+    // navigations overlapped. Returning the tree lets the router run one navigation.
+    map((allowed) =>
+      allowed
+        ? true
+        : router.createUrlTree(['/billing/plans'], {
+            queryParams: {
+              reason: 'upgrade_required',
+              returnUrl: state.url,
+            },
+          }),
+    )
   )
 }

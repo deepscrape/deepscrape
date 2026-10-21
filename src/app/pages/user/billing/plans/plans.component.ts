@@ -179,6 +179,44 @@ export class PlansComponent {
     return plan.prices[interval]?.includedCredits || 0
   }
 
+  /**
+   * A catalog feature token as a translatable key.
+   *
+   * The catalog carries component ids (`browser_session_dedicated`), not sentences -- it is
+   * also what gets written to the billing document. Rendering a token straight into the
+   * card showed customers `browser_session_dedicated`, which is why every feature goes
+   * through here and then through the same `PRICING.FEATURES` vocabulary the public pricing
+   * page uses. One vocabulary means the two pages cannot describe the same plan differently.
+   * @param {string} feature The token from the plan catalog.
+   * @return {string} The i18n key for that feature.
+   */
+  featureLabel(feature: string): string {
+    return `PRICING.FEATURES.${feature.toUpperCase()}`
+  }
+
+  /**
+   * What 1,000 credits cost this plan at the selected interval, in euros.
+   *
+   * This is the value-for-money number a buyer is actually comparing: two plans both "per
+   * month" means nothing, EUR9.99 for 1,000 against EUR19.99 for 5,000 means EUR9.99 versus
+   * EUR4.00. Derived from the catalog rather than written down, so it cannot outlive a price
+   * change. Null when the interval has no price (a sales-led tier), which is also why the
+   * template guards on it instead of printing a zero.
+   * @param {BillingPlanCatalog} plan The plan being rendered.
+   * @return {number | null} Euros per 1,000 credits, or null when not computable.
+   */
+  pricePerThousandCredits(plan: BillingPlanCatalog): number | null {
+    const price = plan.prices[this.planView.value as BillingInterval]
+    const credits = price?.includedCredits || 0
+
+    if (!price || price.amount <= 0 || credits <= 0) {
+      return null
+    }
+
+    // amount is minor units; divide to euros after scaling to 1,000 credits.
+    return (price.amount / credits) * 1000 / 100
+  }
+
   canPurchaseCredits(billing: UserBilling | null | undefined): boolean {
     if (this.isBillingRestricted) {
       return false
@@ -279,8 +317,73 @@ export class PlansComponent {
     }
   }
 
+  /**
+   * Whether this tier is arranged with a person rather than bought here.
+   *
+   * Read from the catalog, never hardcoded to `enterprise`: the server owns which tiers
+   * are sales-led, and the action label, the checkout guard and the click handler all have
+   * to agree with it. If they disagreed, a card would advertise "Contact sales" and then
+   * start a Stripe session.
+   * @param {BillingPlanCatalog} plan The plan being rendered.
+   * @return {boolean} True when the tier is sold by sales, and only then.
+   */
+  isSalesLed(plan: BillingPlanCatalog): boolean {
+    return plan.salesLed === true
+  }
+
+  /**
+   * Ask sales about this tier, through the callable onboarding already uses.
+   *
+   * Deliberately NOT a link to the public contact form: `submitEnterprisePlanRequest` is the
+   * existing sales queue, it records the uid and the tier, and it notifies the admins. A
+   * second path would mean two queues and two ways for an enquiry to be dropped.
+   *
+   * The email is left to the server: it falls back to the authenticated account's address,
+   * which is more reliable than anything this page could pass and saves the caller a field.
+   * @param {BillingPlanCatalog} plan The tier being asked about.
+   */
+  /** True while the request is in flight, so a second click cannot queue a second one. */
+  salesRequestPending = false
+
+  async contactSales(plan: BillingPlanCatalog): Promise<void> {
+    // The server call has no idempotency key, unlike checkout, so the guard has to be here:
+    // a double click wrote two rows into the sales queue and looked like a bug to us.
+    if (this.isBillingRestricted || this.salesRequestPending) {
+      return
+    }
+
+    this.salesRequestPending = true
+
+    try {
+      await this.billingService.submitEnterprisePlanRequest({
+        contactEmail: '',
+        selectedPlan: plan.id,
+        source: 'billing_plans',
+      })
+
+      this.offerBadgeMessage = this.translate.instant('BILLING_PLANS.SALES_REQUEST_SENT')
+    } catch (error) {
+      console.error('Unable to submit the sales request', error)
+      this.offerBadgeMessage = this.translate.instant('BILLING_PLANS.SALES_REQUEST_FAILED')
+    }
+
+    this.salesRequestPending = false
+
+    this.window.setTimeout(() => {
+      this.offerBadgeMessage = null
+      this.cdr.markForCheck()
+    }, 6500)
+    this.cdr.markForCheck()
+  }
+
   canCheckoutPlan(plan: BillingPlanCatalog): boolean {
     if (this.isBillingRestricted) {
+      return false
+    }
+
+    // A sales-led tier has prices to display and nothing to check out. The server refuses
+    // it too; this only decides which button the card shows.
+    if (plan.salesLed) {
       return false
     }
 
@@ -406,6 +509,13 @@ export class PlansComponent {
       return true
     }
 
+    // A sales request in flight disables the sales-led card, which is the visible half of the
+    // guard in `contactSales` -- the click is already refused there, this stops the button
+    // looking pressable while it happens.
+    if (this.isSalesLed(plan) && this.salesRequestPending) {
+      return true
+    }
+
     if (this.isCurrentPlan(plan, currentPlan, billing)) {
       return true
     }
@@ -424,6 +534,11 @@ export class PlansComponent {
 
     if (plan.id === 'trial') {
       return this.canStartTrial(billing) ? 'BILLING_PLANS.START_TRIAL' : 'BILLING_PLANS.TRIAL_ALREADY_USED'
+    }
+
+    // The label is the promise the button makes, so it changes with the mechanism.
+    if (this.isSalesLed(plan)) {
+      return 'BILLING_PLANS.CONTACT_SALES'
     }
 
     return 'BILLING_PLANS.SELECT_PLAN'
@@ -553,6 +668,13 @@ export class PlansComponent {
 
     if (this.isCurrentPlan(plan, this.currentPlanValue, this.currentBillingValue)) {
       this.openPlanDetails(plan.id)
+      return
+    }
+
+    // Before the trial branch and before any checkout: a sales-led tier's action is a
+    // conversation, and no amount of clicking should open a Stripe session for it.
+    if (this.isSalesLed(plan)) {
+      await this.contactSales(plan)
       return
     }
 

@@ -431,7 +431,7 @@ export class DomainSeederComponent implements AfterViewInit, OnDestroy {
           this.latestTaskId.set(task.id) // Emit the current task ID
 
           // process the data return streaming response
-          return this.seedingService.streamTaskResults(task._links.self.href, task.id)
+          return this.seedingService.streamTaskResults(task.id)
         })
       ).subscribe({
         next: (taskResult: CrawlStreamBatch) => {

@@ -601,9 +601,18 @@ export class FirestoreService {
     )
   }
 
-  getMyLoginSessionStatus(loginId: string): Observable<{ loginId: string; active: boolean; revoked: boolean; revokedAt?: string | null }> {
-    return from(
-      this.callFunction<{ loginId: string }, { loginId: string; active: boolean; revoked: boolean; revokedAt?: string | null }>('getMyLoginSessionStatus', { loginId })
+getMyLoginSessionStatus(loginId: string): Observable<{
+      loginId: string; active: boolean; revoked: boolean;
+      revokedAt?: string | null; expiresAt?: string | null
+    }> {
+      return from(
+        this.callFunction<
+          { loginId: string },
+          {
+            loginId: string; active: boolean; revoked: boolean;
+            revokedAt?: string | null; expiresAt?: string | null
+          }
+        >('getMyLoginSessionStatus', { loginId })
     )
   }
 
@@ -1061,13 +1070,23 @@ export class FirestoreService {
   async getGuestActivityByDay(limitDays: number = 7): Promise<{ [date: string]: number }> {
     try {
       const metricsCollection = this.collection(this.firestore, 'metrics_daily')
-      const metricsQuery = this.query(metricsCollection, this.orderBy('date', 'asc'))
+      // DESC + LIMIT, not ASC + a browser-side slice. The old query pulled the whole
+      // collection on every dashboard load — cost grew with history while the caller
+      // read only the last few days — and `orderBy` ascending with no `limit` is also
+      // what made this the slowest call on the admin page. Reversed below so the
+      // chart still receives the rows oldest-first.
+      const days = Math.max(1, Math.floor(limitDays) || 1)
+      const metricsQuery = this.query(
+        metricsCollection,
+        this.orderBy('date', 'desc'),
+        this.limit(days),
+      )
       const metricsSnapshot = await this.getDocs(metricsQuery)
       if (!metricsSnapshot.empty) {
         const ordered = metricsSnapshot.docs
           .map(doc => doc.data())
           .filter(data => !!data['date'])
-          .slice(-limitDays)
+          .reverse()
 
         const optimized = ordered.reduce((accumulator, data) => {
           const dateKey = String(data['date'])

@@ -102,8 +102,11 @@ export class CrawlStoreService {
         if (!crawlOperations || totalPages > 1)
           return
 
-        // keep 10 size data
-        crawlOperations.pop()
+        // keep 10 size data — pop only AT capacity. Unconditionally popping dropped
+        // the oldest row of a 3-item list on every save.
+        if (crawlOperations.length >= 10) {
+          crawlOperations.pop()
+        }
         // maintaining sorted order
         crawlOperations.unshift(operationData)
 

@@ -89,6 +89,16 @@ export class AuthService {
   isAdmin: boolean = false
   private currentLoginId: string = ''
 
+  /**
+   * Epoch ms the server says this login session expires, or null while unknown.
+   *
+   * `createLoginSession` stamps `expiresAt` on the session record and
+   * `getMyLoginSessionStatus` now returns it, so this is the real expiry — not a
+   * duration counted from page load, which is what made the old countdown name a
+   * date that was never the session's own.
+   */
+  readonly sessionExpiresAt$ = new BehaviorSubject<number | null>(null)
+
   private authStateResolved = new BehaviorSubject<boolean>(false)
 
   private userSubject = new BehaviorSubject<Users & { currProviderData: UserInfo | null } | null>(null);
@@ -173,7 +183,10 @@ export class AuthService {
       email: user.email,
       emailVerified: user.emailVerified || emailVerifiedFromClaims || false,
       phoneNumber: user.phoneNumber || userData.phoneNumber || null,
-      phoneVerified: phoneVerifiedFromClaims || userData.phoneVerified || null,
+      // `??`, not `||`: `false || false || null` is `null`, which is neither
+      // `=== false` (what authGuard tests) nor `!== false` (what LoginGuard
+      // tests), so an explicitly unverified user read as "unknown" and passed.
+      phoneVerified: phoneVerifiedFromClaims ?? userData.phoneVerified ?? null,
       providerParent: user.providerId || userData.providerParent || 'firebase',
       providerId: currentProviderId,
       providerData,
@@ -207,6 +220,7 @@ export class AuthService {
           this.token = undefined;
           this.isAdmin = false;
           this.heartbeatService.stop(); // Stop heartbeat if not authenticated
+          this.sessionExpiresAt$.next(null); // Nothing to count down without a session
           return { isAuthenticated: false, user: null }; // Ensure consistent return type
         }
 
@@ -223,13 +237,23 @@ export class AuthService {
           try {
             const sessionStatus = await this.fireService.callFunction<
               { loginId: string },
-              { loginId: string; active: boolean; revoked: boolean }
+              {
+                loginId: string; active: boolean; revoked: boolean;
+                expiresAt?: string | null
+              }
             >('getMyLoginSessionStatus', { loginId: loginState.loginId })
 
             if (sessionStatus?.revoked || sessionStatus?.active === false) {
               this.handleRevokedSession()
               return { isAuthenticated: false, user: null }
             }
+
+            // The expiry is the session's own, not a duration from page load: publish
+            // it so `SessionTimeoutService` can count down to the real end.
+            const expiresAtMs = Date.parse(sessionStatus?.expiresAt || '')
+            this.sessionExpiresAt$.next(
+              Number.isFinite(expiresAtMs) ? expiresAtMs : null
+            )
           } catch (sessionStatusError) {
             console.error('Failed to check login session status:', sessionStatusError)
           }
@@ -241,8 +265,12 @@ export class AuthService {
 
         const getTokenResult = await user.getIdTokenResult(true) // Force-refresh token so newly set claims are available on first login
 
-        // Extract custom claims for phoneVerified
-        const phoneVerifiedFromClaims = getTokenResult.claims?.['phoneVerified'] === true; // Ensure it's explicitly true
+        // Three states, not two. `=== true` collapsed "no claim" and "claim says
+        // false" into one value, so `buildCombinedUserData` could never yield
+        // `phoneVerified: false` — and the gate in authGuard / LoginGuard tests for
+        // exactly that, so it had never once fired.
+        const phoneClaim = getTokenResult.claims?.['phoneVerified'];
+        const phoneVerifiedFromClaims = typeof phoneClaim === 'boolean' ? phoneClaim : null;
         const emailVerifiedFromClaims = getTokenResult.claims?.['email_verified'] === true; // Capture custom claim
         const signInProvider = String((getTokenResult.claims as any)?.firebase?.sign_in_provider || '').trim()
         const combinedUserData: Users & { currProviderData: UserInfo | null } = this.buildCombinedUserData(
@@ -261,7 +289,7 @@ export class AuthService {
 
         // Mark auth as resolved
         this.authStateResolved.next(true);
-        this.heartbeatService.start(this.token); // Start heartbeat when authenticated
+        this.heartbeatService.start(() => this.token); // Start heartbeat when authenticated
 
         // Return user data
         return { isAuthenticated: true, user: this.userSubject.value }
@@ -1231,6 +1259,7 @@ export class AuthService {
         this.token = undefined
         this.isAdmin = false
         this.currentLoginId = ''
+        this.sessionExpiresAt$.next(null) // A stale timer must not sign out the NEXT user
         this.guestTrackingService.clear()
       }),
       switchMap(() => from(this.fireService.signOut())),
@@ -1266,6 +1295,7 @@ export class AuthService {
     this.isAdmin = false
     this.userSubject.next(null)
     this.authStateResolved.next(false)
+    this.sessionExpiresAt$.next(null)
 
     this.guestTrackingService.clear()
 

@@ -9,7 +9,7 @@ import { cleanAndParseJSON } from 'src/app/core/functions';
 import { AuthService, LocalStorage, ScreenResizeService } from 'src/app/core/services';
 import { Session } from 'src/app/core/types';
 import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
-import { AppUserLayoutComponent } from '../../full';
+import { AppUserLayoutComponent } from '../../full/app-user-layout/app-user-layout.component';
 import { orgScopedUrl } from 'src/app/core/guards/host-routing.policy';
 
 @Component({

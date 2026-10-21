@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
-import { LoggerService } from './logger.service';
+import { LoggerService, redactConsoleArgs } from './logger.service';
 import { getTestProviders } from 'src/app/testing';
 import { environment } from 'src/environments/environment';
 
@@ -71,5 +71,47 @@ describe('LoggerService', () => {
     expect(() => {
       service.error(complexError);
     }).not.toThrow();
+  });
+
+  it('should redact a secret carried by any argument, not only the first', () => {
+    const redacted = redactConsoleArgs(['request failed', { apiKey: 'secret-key-123' }]);
+
+    expect((redacted[1] as { apiKey: string }).apiKey).toBe('[REDACTED]');
+  });
+
+  it('should redact string patterns in later arguments', () => {
+    const redacted = redactConsoleArgs(['first', 'apiKey: "secret-token"']);
+
+    expect(redacted[1]).toBe('apiKey: [REDACTED]');
+  });
+
+  it('should redact secrets nested more than one level deep', () => {
+    const redacted = redactConsoleArgs([{ request: { headers: { apiKeyId: 'secret-id' } } }]);
+    const headers = (redacted[0] as { request: { headers: { apiKeyId: string } } }).request.headers;
+
+    expect(headers.apiKeyId).toBe('[REDACTED]');
+  });
+
+  it('should redact secrets inside arrays', () => {
+    const redacted = redactConsoleArgs([[{ apiKeys: ['secret'] }]]);
+    const first = (redacted[0] as { apiKeys: unknown }[])[0];
+
+    expect(first.apiKeys).toBe('[REDACTED]');
+  });
+
+  it('should not recurse forever on circular arguments', () => {
+    const circular: Record<string, unknown> = { name: 'loop' };
+    circular['self'] = circular;
+
+    const redacted = redactConsoleArgs([circular]) as Record<string, unknown>[];
+
+    expect(redacted[0]['self']).toBe('[Circular]');
+  });
+
+  it('should keep Error arguments intact so the stack survives', () => {
+    const error = new Error('boom');
+    const redacted = redactConsoleArgs(['failed', error]);
+
+    expect(redacted[1]).toBe(error);
   });
 });

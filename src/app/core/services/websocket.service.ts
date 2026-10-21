@@ -88,7 +88,27 @@ export class WebSocketService {
       return
     }
 
-    this.trackedTaskIds = [...new Set(taskIds)]
+    const next = [...new Set(taskIds)].sort()
+    /**
+     * Re-entrancy guard. `operations.component.ts` calls this from a `tap` on
+     * `combineLatest([operationsSubject, taskStatus$])`, and this method feeds
+     * `taskStatus$` — so every poll result re-invoked it. Since `timer(0, …)`
+     * fires its first tick immediately, each call restarted the poll at tick 0:
+     * a self-driving loop paced by round-trip time instead of by
+     * `TASK_POLL_INTERVAL_MS`, i.e. 5-15 requests/second while a job ran. Same id
+     * set therefore means "already tracking" and must not restart anything.
+     */
+    const current = [...this.trackedTaskIds].sort()
+    const tracking =
+      this.pollSubscription !== null && !this.pollSubscription.closed
+    const unchanged =
+      next.length === current.length && next.every((id, i) => id === current[i])
+
+    if (tracking && unchanged) {
+      return
+    }
+
+    this.trackedTaskIds = next
     this.disconnectTaskSocket()
 
     this.pollSubscription = timer(0, TASK_POLL_INTERVAL_MS)

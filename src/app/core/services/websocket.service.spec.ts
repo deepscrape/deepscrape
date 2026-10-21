@@ -98,6 +98,23 @@ describe('WebsocketService', () => {
     service.disconnectTaskSocket();
   }));
 
+  it('should not restart the poll when the same ids are reported again', fakeAsync(() => {
+    // The operations page calls this from a `tap` on
+    // `combineLatest([operationsSubject, taskStatus$])`, and this method feeds
+    // `taskStatus$` — so every poll result re-invoked it. `timer(0, …)` fires
+    // immediately, so an unguarded restart turned the 4 s interval into
+    // round-trip pacing (a self-driving request loop).
+    service.connectAndTrackTasks(['task-1']);
+    tick(0);
+    const afterFirst = crawlApiMock.getTaskStatus.calls.count();
+
+    service.connectAndTrackTasks(['task-1']);
+    tick(0);
+
+    expect(crawlApiMock.getTaskStatus.calls.count()).toBe(afterFirst);
+    service.disconnectTaskSocket();
+  }));
+
   it('should stop polling once every tracked task is terminal', fakeAsync(() => {
     crawlApiMock.getTaskStatus.and.returnValue(of(frame('Failed')));
 

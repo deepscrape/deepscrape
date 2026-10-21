@@ -11,6 +11,17 @@ import { loginHistoryInfo } from '../types'
  */
 const MINUTELY_SERIES_START_MS = Date.UTC(2026, 8, 17)
 
+/**
+ * Most calendar days one custom range may span, inclusive.
+ *
+ * `metrics_daily` holds one document per day, so the custom-range query returns — and
+ * bills — one read per day of span. The date pickers impose no bounds, so a single
+ * 2020→today selection used to request the entire history in one call (~1,700 reads and
+ * ~1,700 chart buckets). 366 is one leap year: it covers every window this dashboard can
+ * render (the widest built-in period is 90 days) and holds the worst case to 366 reads.
+ */
+export const MAX_CUSTOM_RANGE_DAYS = 366
+
 export type AnalyticsPeriod =
   | 'last-5m'
   | 'last-30m'
@@ -243,6 +254,20 @@ export class AnalyticsRangeService {
     }
   }
 
+  /**
+   * Calendar days a `YYYY-MM-DD` window covers, inclusive — the number of `metrics_daily`
+   * documents the range query would read. `null` when either bound is not a date, so an
+   * unparsable pick falls through to the query it always did instead of being refused.
+   */
+  private countRangeDays(startDate: string, endDate: string): number | null {
+    const start = Date.parse(`${String(startDate).slice(0, 10)}T00:00:00Z`)
+    const end = Date.parse(`${String(endDate).slice(0, 10)}T00:00:00Z`)
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      return null
+    }
+    return Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1
+  }
+
   private async buildCustomDateRangeMetrics(
     customStartDate?: string | null,
     customEndDate?: string | null,
@@ -251,6 +276,18 @@ export class AnalyticsRangeService {
     if (!customStartDate || !customEndDate) {
       const fallback = await this.firestoreService.getRangeMetrics('last-7d')
       return this.mapRangeResult('last-7d', fallback)
+    }
+
+    // The only place a day span becomes a query, so the cap holds for every caller.
+    // Refused, not clamped: a truncated window still draws a chart, and that chart would
+    // claim a span it no longer covers. `null` is the shape this method already returns
+    // for "no metrics", so the refusal needs no new result type.
+    const rangeDays = this.countRangeDays(customStartDate, customEndDate)
+    if (rangeDays !== null && rangeDays > MAX_CUSTOM_RANGE_DAYS) {
+      console.warn(
+        `Refusing analytics range ${customStartDate}→${customEndDate}: ${rangeDays} days exceeds the ${MAX_CUSTOM_RANGE_DAYS}-day cap`,
+      )
+      return null
     }
 
     const rows = await this.firestoreService.getMetricsByDateRange(customStartDate, customEndDate)

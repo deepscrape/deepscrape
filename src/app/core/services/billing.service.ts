@@ -81,6 +81,16 @@ export class BillingService {
   // call refreshBilling() after any local mutation to re-fetch.
   private readonly billingRefreshTrigger$ = new BehaviorSubject<number>(0)
 
+  /**
+   * True when the entitlements could not be READ. Distinct from "no plan".
+   *
+   * Without it a cold-start timeout, an offline moment or a transient 5xx was
+   * replaced with `defaultBilling()` — plan 'free', every credit zero — so
+   * `paywallGuard` refused a paying subscriber and the UI could not tell "no plan"
+   * from "couldn't ask". An unknown answer must not block.
+   */
+  private readonly entitlementsUnavailable$ = new BehaviorSubject<boolean>(false)
+
   refreshBilling(): void {
     this.cacheService.clear(this.billingCacheNamespace)
     this.billingRefreshTrigger$.next(this.billingRefreshTrigger$.value + 1)
@@ -92,21 +102,35 @@ export class BillingService {
   ]).pipe(
     switchMap(([firebaseUser]) => {
       if (!firebaseUser) {
+        this.entitlementsUnavailable$.next(false)
         return of(this.defaultBilling())
       }
 
       const cached = this.cacheService.get<string, UserBilling>(this.billingCacheNamespace, firebaseUser.uid)
       if (cached) {
+        this.entitlementsUnavailable$.next(false)
         return of(cached)
       }
 
       return from(this.firestoreService.callFunction<void, { billing?: Partial<UserBilling> }>('getMyEntitlements')).pipe(
         map((entitlements) => this.mergeWithDefault(entitlements?.billing as Partial<UserBilling> | undefined)),
-        tap((billing) => this.cacheService.set(this.billingCacheNamespace, firebaseUser.uid, billing, this.billingCacheTtlMs)),
-        catchError(() => of(this.defaultBilling()))
+        tap((billing) => {
+          this.entitlementsUnavailable$.next(false)
+          this.cacheService.set(this.billingCacheNamespace, firebaseUser.uid, billing, this.billingCacheTtlMs)
+        }),
+        catchError(() => {
+          // Recorded, not swallowed: the fallback below is what the UI shows, and
+          // `canAccessPaidFeatures$` reads the flag so an outage never reads as
+          // "you are on free".
+          this.entitlementsUnavailable$.next(true)
+          return of(this.defaultBilling())
+        })
       )
     }),
-    catchError(() => of(this.defaultBilling())),
+    catchError(() => {
+      this.entitlementsUnavailable$.next(true)
+      return of(this.defaultBilling())
+    }),
     shareReplay({ bufferSize: 1, refCount: true })
   )
 
@@ -165,8 +189,17 @@ export class BillingService {
   }
 
   canAccessPaidFeatures$(): Observable<boolean> {
-    return combineLatest([this.getAccessMode$(), this.isPlatformAdmin$]).pipe(
-      map(([mode, isPlatformAdmin]) => isPlatformAdmin || mode !== 'free')
+    return combineLatest([
+      this.getAccessMode$(),
+      this.isPlatformAdmin$,
+      this.entitlementsUnavailable$,
+    ]).pipe(
+      // `unavailable` fails OPEN: a paying subscriber whose entitlements read
+      // failed must not be bounced to the pricing page. The server still enforces
+      // the plan, so the worst case is a control that answers 402 once.
+      map(([mode, isPlatformAdmin, unavailable]) =>
+        isPlatformAdmin || unavailable || mode !== 'free'
+      )
     )
   }
 
@@ -408,12 +441,19 @@ export class BillingService {
       ...(data.credits || {}),
     }
 
-    if (mergedCredits.purchasedBalance === undefined && data.plan === 'free') {
+    // Test the INCOMING fields, never the merged ones. `fallback.credits` already
+    // defines `purchasedBalance: 0`, so `mergedCredits.purchasedBalance ===
+    // undefined` was never true and the legacy shape this fallback exists for
+    // (`{plan:'free', credits:{balance:40}}`) silently yielded 0 purchased credits --
+    // a paying user lost access and the plans page showed "0 credits".
+    const incomingCredits: Partial<NonNullable<UserBilling['credits']>> = data.credits || {}
+
+    if (incomingCredits.purchasedBalance === undefined && data.plan === 'free') {
       mergedCredits.purchasedBalance = Number(mergedCredits.balance || 0)
       mergedCredits.purchasedReserved = Number(mergedCredits.reserved || 0)
     }
 
-    if (mergedCredits.includedBalance === undefined && data.plan && data.plan !== 'free') {
+    if (incomingCredits.includedBalance === undefined && data.plan && data.plan !== 'free') {
       mergedCredits.includedBalance = Number(mergedCredits.balance || 0)
       mergedCredits.includedReserved = Number(mergedCredits.reserved || 0)
     }

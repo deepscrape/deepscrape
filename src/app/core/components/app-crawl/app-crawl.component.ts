@@ -271,7 +271,7 @@ export class AppCrawlComponent {
           console.log('Crawl task started with id:', task.id)
 
           // process the data return streaming response
-          return this.crawlService.streamTaskResults(task._links.self.href, task.id)
+          return this.crawlService.streamTaskResults(task.id)
         })
       ).subscribe({
         next: (taskResult: CrawlStreamBatch) => {

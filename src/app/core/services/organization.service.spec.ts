@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { of } from 'rxjs';
 
 import { OrganizationService } from './organization.service';
 import { getTestProviders } from 'src/app/testing';
@@ -14,7 +15,7 @@ describe('OrganizationService', () => {
   let authzServiceMock: jasmine.SpyObj<AuthzService>;
 
   beforeEach(() => {
-    authServiceMock = jasmine.createSpyObj('AuthService', [], { token: 'test-token' });
+    authServiceMock = jasmine.createSpyObj('AuthService', [], { token: 'test-token', user$: of(null) });
     authzServiceMock = jasmine.createSpyObj('AuthzService', ['setActiveOrgId'], {
       activeOrgId: null,
     });
@@ -66,6 +67,38 @@ describe('OrganizationService', () => {
     req.flush({ organizations: mockOrgs });
 
     expect(authzServiceMock.setActiveOrgId).toHaveBeenCalledWith('org-1');
+  });
+
+  it('should collapse two concurrent list calls into one request', () => {
+    service.listMyOrganizations().subscribe();
+    service.listMyOrganizations().subscribe();
+
+    const requests = httpMock.match(API_ORGANIZATIONS);
+    expect(requests.length).toBe(1);
+
+    requests[0].flush({ organizations: [{ id: 'org-1' }] });
+  });
+
+  it('should answer a second list call from the cache', () => {
+    service.listMyOrganizations().subscribe();
+    httpMock.expectOne(API_ORGANIZATIONS).flush({ organizations: [{ id: 'org-1' }] });
+
+    let received: { organizations: { id: string }[] } | undefined;
+    service.listMyOrganizations().subscribe((response) => { received = response; });
+
+    httpMock.expectNone(API_ORGANIZATIONS);
+    expect(received?.organizations.length).toBe(1);
+  });
+
+  it('should drop the cached list when a mutation lands', () => {
+    service.listMyOrganizations().subscribe();
+    httpMock.expectOne(API_ORGANIZATIONS).flush({ organizations: [] });
+
+    service.createOrganization('Another').subscribe();
+    httpMock.expectOne(API_ORGANIZATIONS).flush({ id: 'org-2' });
+
+    service.listMyOrganizations().subscribe();
+    httpMock.expectOne(API_ORGANIZATIONS).flush({ organizations: [{ id: 'org-2' }] });
   });
 
   it('should create organization', () => {

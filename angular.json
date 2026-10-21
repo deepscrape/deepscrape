@@ -25,7 +25,7 @@
             ],
             "outputMode": "server",
             "ssr": {
-              "entry": "src/main.server.ts"
+              "entry": "src/server.ts"
             },
             "outputPath": "dist/deepscrape",
             "index": "src/index.html",
@@ -76,7 +76,7 @@
               "serviceWorker": "ngsw-config.json",
               "fileReplacements": [],
               "ssr": {
-                "entry": "src/main.server.ts"
+                "entry": "src/server.ts"
               }
             },
             "development": {

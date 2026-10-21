@@ -30,6 +30,7 @@
  */
 import {onSchedule} from "firebase-functions/v2/scheduler"
 import {logger} from "firebase-functions/logger"
+import {isInsufficientCreditsError} from "../app/billing-credits"
 import {
   billableMinutes,
   isMeterExhausted,
@@ -112,6 +113,7 @@ export const sweepBrowserMeter = onSchedule(
     let unbillable = 0
     let failed = 0
     let capped = 0
+    let stopped = 0
 
     for (const [uid, owned] of groupByOwner(sessions)) {
       // Resolved ONCE per caller: the wallet depends on the caller and not on
@@ -140,53 +142,84 @@ export const sweepBrowserMeter = onSchedule(
       // The cost of that choice, stated rather than hidden: a cap crossed DURING
       // this sweep is acted on by the NEXT one, up to five minutes later. The
       // ceiling has the same granularity, because the block size *is* the cadence.
-      if (await capReached(uid, now)) {
-        for (const {record} of owned) {
-          await expireMeteredSession(uid, record.id, now)
+      const atCap = await capReached(uid, now)
+
+      for (const {record} of owned) {
+        let outOfCredits = false
+        try {
+          // CHARGE FIRST. Both the cap and the ceiling end the session, and
+          // ending it before collecting would forgive the block that just
+          // elapsed -- exactly the outcome the paragraph above promises to
+          // avoid, while the previous `continue` did it. The block is the money
+          // the machine has already cost us.
+          charged += await chargeSessionMeter(uid, record, wallet, now)
+        } catch (error) {
+          if (isInsufficientCreditsError(error)) {
+            // The customer cannot pay for the block that just ran. A retry next
+            // sweep cannot change that, and retrying IS the bug: the throw used
+            // to jump straight past the ceiling check below, so the one state
+            // that most needs a stop -- an empty wallet -- never wrote one, and
+            // the machine ran until someone noticed the Fly bill.
+            outOfCredits = true
+          } else {
+            // Contained on purpose: one caller's wallet must not stop the sweep
+            // for everyone else. The counter is deliberately NOT advanced, so
+            // the next run re-derives the same keys and retries. Because each
+            // key is idempotent at the ledger, that retry cannot charge twice --
+            // which is the only reason leaving the counter behind is safe.
+            failed += 1
+            logger.error("browser meter charge failed", {
+              uid,
+              sessionId: record.id,
+              error: String(error),
+            })
+          }
         }
+
+        // The stop decision runs for EVERY session, including the ones whose
+        // charge threw. It is deliberately not inside the `try`: a stop must not
+        // be able to depend on the charge succeeding, or the ceiling silently
+        // stops applying to whoever is out of money.
+        //
+        // The window is computed with the SAME function the charge used and the
+        // same `now`, so the two cannot disagree about how long the session ran.
+        // A second call to a shared function, not a second copy of the rule.
+        const minutes = billableMinutes(
+          record.createdAt,
+          now,
+          record.idleDeadline,
+        )
+        if (outOfCredits || atCap || isMeterExhausted(minutes)) {
+          try {
+            await expireMeteredSession(uid, record.id, now)
+            if (outOfCredits) {
+              stopped += 1
+            }
+            if (atCap) {
+              capped += 1
+            }
+          } catch (error) {
+            // The stop is a Firestore write like any other and can fail. That is
+            // worth a log line and a failure count, but it must not abandon the
+            // remaining sessions -- the next sweep re-derives the same condition
+            // and tries again.
+            failed += 1
+            logger.error("browser meter stop failed", {
+              uid,
+              sessionId: record.id,
+              error: String(error),
+            })
+          }
+        }
+      }
+
+      if (atCap) {
         // AFTER the stop, never before. The stop is the control and the alert is
         // a courtesy, so a notification that throws must not be able to leave a
         // session running. `alertCapReached` catches its own failures too, which
         // is belt-and-braces on purpose: this is on the path that has already
         // decided a customer is over budget.
         await alertCapReached(uid, now)
-        capped += owned.length
-        continue
-      }
-
-      for (const {record} of owned) {
-        try {
-          charged += await chargeSessionMeter(uid, record, wallet, now)
-
-          // Past the ceiling the meter emits no further keys, so without this the
-          // session keeps running and is billed nothing. That is the ceiling
-          // capping the invoice but not the compute, which is the opposite of
-          // cost control, and a caller looping `keepalive` would ride free.
-          //
-          // The window is computed with the SAME function the charge used and the
-          // same `now`, so the two cannot disagree about how long the session ran.
-          // A second call to a shared function, not a second copy of the rule.
-          const minutes = billableMinutes(
-            record.createdAt,
-            now,
-            record.idleDeadline,
-          )
-          if (isMeterExhausted(minutes)) {
-            await expireMeteredSession(uid, record.id, now)
-          }
-        } catch (error) {
-          // Contained on purpose: one caller's wallet must not stop the sweep
-          // for everyone else. The counter is deliberately NOT advanced, so the
-          // next run re-derives the same keys and retries. Because each key is
-          // idempotent at the ledger, that retry cannot charge twice -- which is
-          // the only reason leaving the counter behind is safe.
-          failed += 1
-          logger.error("browser meter charge failed", {
-            uid,
-            sessionId: record.id,
-            error: String(error),
-          })
-        }
       }
     }
 
@@ -196,6 +229,7 @@ export const sweepBrowserMeter = onSchedule(
       unbillable,
       failed,
       capped,
+      stopped,
     })
   },
 )

@@ -141,11 +141,30 @@ const enforceBudget = async (
   windowSeconds: number,
   message: string,
 ): Promise<void> => {
-  const [count] = await redisEval<[number, number]>(
-    FIXED_WINDOW_INCREMENT,
-    [key],
-    [windowSeconds],
-  )
+  // The counter read is the ONLY part that may fail open. The refusal below is
+  // deliberately outside this try: wrapping the whole body would catch our own
+  // `resource-exhausted` and silently turn the budget into a no-op.
+  let count: number
+  try {
+    const [value] = await redisEval<[number, number]>(
+      FIXED_WINDOW_INCREMENT,
+      [key],
+      [windowSeconds],
+    )
+    count = value
+  } catch (error) {
+    // Fail OPEN, as this helper's docblock has always promised -- and here the
+    // promise is load-bearing rather than convenient: these paths include account
+    // ERASURE, so an Upstash incident must not become a GDPR-erasure outage. The
+    // account-level controls (a verified ID token, a hashed confirmation code)
+    // are what actually protect the path; a Redis blink losing the counter is
+    // survivable, a legal deadline slipping is not.
+    console.error(
+      `CRITICAL: budget check ${key} unavailable, allowing the request:`,
+      error,
+    )
+    return
+  }
 
   if (count > max) {
     throw new HttpsError("resource-exhausted", message)
@@ -1397,6 +1416,50 @@ const collectApiKeySecretPaths = async (uid: string): Promise<string[]> => {
  * @param {Timestamp} now Purge timestamp.
  * @return {Promise<object>} What was removed.
  */
+/**
+ * Machine ids still attached to a live session, read BEFORE the purge destroys them.
+ *
+ * The only way to stop a machine is an authenticated call to arachnefly, and every
+ * machine call in this codebase relays the CALLER's ID token — arachnefly verifies it
+ * against the uid stamped on the machine. A scheduled purger has no caller, and no
+ * service credential exists to stand in for one, so this function cannot suspend what
+ * it finds. It records it instead: erasing the session documents destroys the last
+ * pointer to a running VM, and a pointer nobody wrote down is a machine that bills Fly
+ * forever and appears in no view of the system.
+ * @param {string} uid The account about to be erased.
+ * @return {Promise<string[]>} Machine ids an operator must release, may be empty.
+ */
+async function listLiveMachineIds(uid: string): Promise<string[]> {
+  const machineIds: string[] = []
+  try {
+    const sessions = await db.collection("users").doc(uid).collection("browserSessions").get()
+    for (const doc of sessions.docs) {
+      const data = doc.data() as {machineId?: unknown; state?: unknown}
+      if (typeof data.machineId === "string" && data.machineId && data.state !== "closed") {
+        machineIds.push(data.machineId)
+      }
+    }
+  } catch (error) {
+    // Losing the list must not block an erasure that is past its deadline.
+    console.error(`CRITICAL: could not list machines for deleted account ${uid}:`, error)
+  }
+  return machineIds
+}
+
+/**
+ * Erase one account whose grace window has closed.
+ *
+ * Irreversible, so every step is ordered around what a partial run leaves behind:
+ * credentials and objects are swept best-effort, the subcollections are destroyed
+ * enumerated rather than denylisted, Auth goes last, and the user document is a whole
+ * replacement (never a merge) so a PII field nobody listed cannot survive.
+ *
+ * Running machines are recorded before their last pointer is destroyed — see
+ * `listLiveMachineIds` for why they cannot be stopped from here.
+ * @param {string} uid The account to erase.
+ * @param {Date} now Purge time, used for the audit trail.
+ * @return {Promise<object>} What was deleted, for the batch summary and the audit row.
+ */
 async function purgeOneAccount(uid: string, now: Date): Promise<{
   uid: string
   collectionsDeleted: string[]
@@ -1447,10 +1510,29 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
   // PLATFORM bucket is swept; see `infrastructure/blob-purge.ts` for why a
   // caller's own bucket is left alone.
   let blobsDeleted = 0
+  // Optimistic until a sweep says otherwise, so an account that stored nothing
+  // still records a COMPLETED erasure.
+  let blobsComplete = true
   try {
-    blobsDeleted = await purgeAccountBlobs(uid)
+    const swept = await purgeAccountBlobs(uid)
+    blobsDeleted = swept.deleted
+    blobsComplete = swept.complete
   } catch (error) {
+    // A THROW leaves objects behind just as surely as a truncated sweep, and it
+    // used to be indistinguishable from "nothing to delete": the run carried on
+    // and wrote `purgedAt`, which is precisely what stops anything retrying.
+    blobsComplete = false
     console.error(`CRITICAL: failed to purge blobs for deleted account ${uid}:`, error)
+  }
+
+  // Read the machine ids while the records that name them still exist, and refuse to
+  // let them vanish silently. See `listLiveMachineIds` for why they cannot be stopped
+  // from here.
+  const orphanedMachines = await listLiveMachineIds(uid)
+  if (orphanedMachines.length > 0) {
+    console.error(
+      `CRITICAL: purging ${uid} orphans ${orphanedMachines.length} running machine(s), release them manually: ${orphanedMachines.join(", ")}`
+    )
   }
 
   // Enumerate rather than denylist: any subcollection this account owns that is not
@@ -1485,15 +1567,38 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
 
   // Full replacement, never a merge: this is what guarantees a PII field nobody
   // remembered to list does not survive.
+  // WHO confirmed the deletion, derived rather than assumed. This was a literal
+  // "self" for every erase, so an admin-initiated one was indistinguishable from
+  // a self-service one in the only record that survives. `deletedBy` holds the
+  // acting uid, so when it IS the account being erased the customer acted.
+  const deletedBy = String(userData?.profileStatus?.deletedBy || "")
+  const actor: AccountDeletionActor =
+    deletedBy && deletedBy !== uid ? "admin" : "self"
+
   await userRef.set(buildErasedUserRecord({
     uid,
     now,
-    actor: "self",
-    deletedBy: String(userData?.profileStatus?.deletedBy || "system"),
+    actor,
+    deletedBy: deletedBy || "system",
     reason: userData?.profileStatus?.deleteReason,
     deletionId: String(userData?.profileStatus?.deletionId || ""),
     retained: pickRetained(userData),
   }), {merge: false})
+
+  // A truncated or failed sweep must NOT be recorded as a finished erasure.
+  // `buildErasedUserRecord` stamps `purgedAt` and CLEARS `purgeAfter`, and
+  // `isPurgeDue` requires both that `purgedAt` be absent and that `purgeAfter`
+  // be a past date -- so clearing only `purgedAt` would leave the account
+  // neither purged nor retryable, which is worse than either. Setting
+  // `purgeAfter` to now is what makes the next sweep select it again, and the
+  // purge is retry-safe: an already-deleted subcollection, an absent Auth
+  // record and an absent secret are each handled as success.
+  if (!blobsComplete) {
+    await userRef.set(
+      {profileStatus: {purgedAt: null, purgeAfter: now}},
+      {merge: true},
+    )
+  }
 
   // The audit record is the retained proof that the erasure happened. Its identifying
   // fields exist only to support a restore inside the grace window, so they go now that
@@ -1505,6 +1610,9 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
       collectionsDeleted,
       secretsPurged,
       blobsDeleted,
+      // Durable, not just a log line: this is the only surviving record of machines
+      // whose last pointer was just destroyed.
+      machinesToRelease: orphanedMachines,
       retentionScrubbedAt: Timestamp.fromDate(now),
       originalEmail: null,
       originalUsername: null,

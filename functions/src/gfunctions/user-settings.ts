@@ -55,6 +55,7 @@ import {
 import { aiEndpointFrom } from "../domain/url-guard.domain"
 import {
   type ProviderKeyId,
+  aiKeySecretId,
   availableVendors,
   isPlausibleApiKey,
   isProviderKeyId,
@@ -196,20 +197,6 @@ export const readUserAiEndpoint = async (
   }
   return aiEndpointFrom((entry as { endpoint?: unknown }).endpoint) ?? null
 }
-
-/**
- * The Secret Manager secret id for one user's key for one vendor.
- *
- * Deterministic, so a save and a later read agree without storing the name
- * twice, and scoped by uid so one account's secret is not reachable from
- * another's request. The uid comes from the verified token and never from a
- * request body, which is what makes the scoping real rather than decorative.
- * @param {*} uid
- * @param {*} vendor
- * @return {*}
- */
-const aiKeySecretId = (uid: string, vendor: ProviderKeyId): string =>
-  `ai-key-${uid}-${vendor}`
 
 /** The secret path recorded as metadata, or null for any other shape.
  * @param {*} entry

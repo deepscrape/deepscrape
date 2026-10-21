@@ -194,3 +194,29 @@ describe("switching to the platform bucket actually removes the credential", () 
     assert.match(write, /purgeSecretAndAllRevisions\(priorPath\)/)
   })
 })
+
+describe("the listing cannot hand out another tenant's capability URL", () => {
+  it("filters the shared tier through the exposure predicate", () => {
+    const listStart = handlers.indexOf("export const storageList")
+    const listEnd = handlers.indexOf("export const storagePresign")
+
+    assert.ok(
+      listStart > 0 && listEnd > listStart,
+      "storageList moved or was renamed"
+    )
+
+    const list = handlers.slice(listStart, listEnd)
+
+    assert.match(list, /isExposableSharedUrl\(/)
+
+    // The filter has to run BEFORE the response is composed, or the unfiltered
+    // array is what the caller receives.
+    assert.ok(
+      list.indexOf("isExposableSharedUrl") < list.indexOf("objects:"),
+      "the shared tier is listed before it is filtered"
+    )
+
+    // The user tier is still listed in full: those entries are the caller's.
+    assert.match(list, /\[\.\.\.own, \.\.\.visible\]/)
+  })
+})

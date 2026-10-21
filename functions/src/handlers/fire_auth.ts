@@ -259,7 +259,17 @@ const USERNAME_REGEX = /^[a-zA-Z0-9._-]{2,64}$/
 /**
  * POST /oauth/resolve-identifier
  * Resolves a username or E.164 phone number to the account email.
- * Used by the login flow for non-email identifiers.WS
+ *
+ * THE EMAIL IS DISCLOSED ON PURPOSE, and it must NOT be masked. The client
+ * (`auth.service.ts`, `signInByIdentifier`) pipes this value straight into
+ * `signInWithEmail`, so returning a masked address breaks username and phone
+ * login outright. A later audit may propose exactly that; it is wrong here.
+ *
+ * What it costs: for an anonymous caller this is an account-existence AND
+ * account-email oracle, and its only bound today is `limitedBy(limitAuth)` on
+ * the route. The real fix is proof of ownership -- send a code, or verify the
+ * password in this same request and mint a custom token -- which is a change to
+ * the login flow rather than to this handler. Recorded, not half-built.
  *
  * Body: { username?: string } | { phone?: string }
  * Response 200: { email: string }

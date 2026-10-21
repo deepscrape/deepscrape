@@ -1076,8 +1076,10 @@ export const navigateArguments = (body: unknown): ToolArguments => {
  * adds what it does not (accessibility tree, semantic tree, console, a
  * screenshot, media URLs) for a page the caller is already on.
  *
- * It reads the current page, so it is in `SHARED_UNSAFE_TOOLS` -- see
- * `webrain-tools.domain.ts`, which refuses it on a worker nobody leased. That is
+ * Every `what` except `media` with a caller-supplied `url` reads the current
+ * page, so it is covered by `isPageStateCall` in `webrain-tools.domain.ts`,
+ * which refuses it on a worker nobody leased. It is NOT in
+ * `SHARED_UNSAFE_TOOLS`; an earlier version of this comment said it was. That is
  * also why the session FRAME route asks a session's own machine for its pixels
  * instead of calling this.
  * @param {unknown} body The parsed request body.

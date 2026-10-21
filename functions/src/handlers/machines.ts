@@ -8,8 +8,7 @@ import fetch, { RequestInit } from "node-fetch"
 import { Buffer } from "node:buffer" // Import Buffer for file handling
 import { arachneflyBaseUrl } from "../config/upstreams"
 // import FormData from "form-data" // Import FormData for handling form data
-import { pipeline } from "node:stream"
-import { createGunzip } from "node:zlib"
+import { gunzipSync } from "node:zlib"
 
 // Only allow UUID-like or alphanumeric-dash-underscore ids (adapt as needed)
 const validIdPattern = /^[a-zA-Z0-9_-]{1,64}$/
@@ -91,33 +90,19 @@ class MachinesHandler {
                 throw new Error("API response body is empty")
             }
 
+            // Buffered, not `pipeline(body, res)`. The BFF's Express facade is a
+            // plain object, so `pipeline` threw ERR_INVALID_ARG_TYPE synchronously
+            // there and this route answered 500 on every call. Every sibling on
+            // this class already relays a buffer; this one now matches.
             const contentEncoding = apiResponse.headers.get("content-encoding")
-            res.setHeader("Content-Type", "application/json")
+            const raw = Buffer.from(await apiResponse.arrayBuffer())
+            const body = contentEncoding === "gzip" ? gunzipSync(raw) : raw
 
-            if (contentEncoding === "gzip") {
-                pipeline(
-                    apiResponse.body,
-                    createGunzip(),
-                    res,
-                    (err) => {
-                        if (err && !res.headersSent) {
-                            res.writeHead(500, { "Content-Type": "text/plain" })
-                            res.end("Pipeline error")
-                        }
-                    }
-                )
-            } else {
-                pipeline(
-                    apiResponse.body,
-                    res,
-                    (err) => {
-                        if (err && !res.headersSent) {
-                            res.writeHead(500, { "Content-Type": "text/plain" })
-                            res.end("Pipeline error")
-                        }
-                    }
-                )
-            }
+            res.writeHead(200, {
+                "Content-Type": "application/json",
+                "Content-Length": body.byteLength,
+            })
+            res.end(body)
         } catch (error) {
             // ponytail: `message: String(error)` used to be returned here, and that
             // string embeds the upstream's entire JSON body ({code,

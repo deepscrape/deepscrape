@@ -127,10 +127,9 @@ export const updatePhoneVerificationStatus = async (
     req: Request,
     res: Response
 ) => {
-    const { uid, phoneNumber } = req.body as {
-        uid: string,
-        phoneNumber?: string,
-    }
+    // `phoneNumber` is deliberately NOT read from the body: it is
+    // caller-supplied and proves nothing. See `resolvedPhoneNumber` below.
+    const { uid } = req.body as { uid: string }
 
     try {
         if (!uid) {
@@ -163,12 +162,14 @@ export const updatePhoneVerificationStatus = async (
             return null
         })()
 
+        // Only Firebase-proven sources count: the number linked to the account,
+        // or an MFA phone factor, whose enrollment required an SMS code. The
+        // request body used to be a third source, which let any authenticated
+        // caller mint `phoneVerified: true` and store a number they had never
+        // shown they control. The client cannot vouch for itself here: the server
+        // has no way to tell a completed SMS challenge from a typed-in string.
         const resolvedPhoneNumber =
-            userRecord.phoneNumber ||
-            enrolledPhoneNumber ||
-            (typeof phoneNumber === "string" && phoneNumber.length > 0 ?
-                phoneNumber :
-                null)
+            userRecord.phoneNumber || enrolledPhoneNumber || null
 
         const phoneVerified = !!resolvedPhoneNumber
 

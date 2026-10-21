@@ -1075,7 +1075,11 @@ const sanitizeMetadata = (metadata: unknown): Record<string, string | number | b
   )
 }
 
-export const toClientEvent = (body: unknown, ua: ReturnType<typeof parseUA>): AnalyticsEvent => {
+export const toClientEvent = (
+  body: unknown,
+  ua: ReturnType<typeof parseUA>,
+  verifiedUid?: string,
+): AnalyticsEvent => {
   const raw = (body || {}) as { eventType?: unknown, event?: unknown, userId?: unknown, guestId?: unknown, metadata?: unknown, properties?: unknown }
   return {
     timestamp: Date.now(),
@@ -1083,7 +1087,12 @@ export const toClientEvent = (body: unknown, ua: ReturnType<typeof parseUA>): An
     // `event`/`properties`). Accept either here so a mismatch cannot silently land
     // as `unknown` with empty props — this is the boundary all clients route through.
     eventType: String(raw.eventType ?? raw.event ?? "unknown").replace(/[^\w-]/g, "_").slice(0, 60),
-    userId: typeof raw.userId === "string" ? raw.userId.slice(0, 128) : undefined,
+    // `raw.userId` is deliberately NOT read. This ingress is reachable anonymously
+    // and retention keys identity on `uid || guestId`, so a body-supplied uid let
+    // anyone write `signup_completed` as somebody else -- manufacturing conversions
+    // and cohort members for any account. The verified token is the only source;
+    // no token means no uid, and the event is attributed to the guest identity.
+    userId: verifiedUid ? verifiedUid.slice(0, 128) : undefined,
     guestId: typeof raw.guestId === "string" ? raw.guestId.slice(0, 128) : undefined,
     isBot: ua.isBot,
     botKind: ua.botKind,
@@ -1121,7 +1130,14 @@ const appendClientEvents = async (events: string[]): Promise<number> => {
  */
 export async function analyticsEventHandler(req: Request, res: Response) {
   try {
-    const event = toClientEvent(req.body, parseUA(req.headers["user-agent"] || ""))
+    // The uid comes from the token `bff/event.ts` verified (its `optionalUser`
+    // derive puts it on `req.user`), never from the payload.
+    const verifiedUid = (req as unknown as { user?: { uid?: string } }).user?.uid
+    const event = toClientEvent(
+      req.body,
+      parseUA(req.headers["user-agent"] || ""),
+      verifiedUid,
+    )
     await appendClientEvents([JSON.stringify(event)])
     res.status(200).json({ success: true })
   } catch (error) {
@@ -1147,11 +1163,14 @@ export async function batchAnalyticsEventHandler(req: Request, res: Response) {
       return res.status(413).json({ error: "Batch too large" })
     }
     const ua = parseUA(req.headers["user-agent"] || "")
+    const verifiedUid = (req as unknown as { user?: { uid?: string } }).user?.uid
     /**
      * callback
      * @param {*} event
      */
-    const analyticsEvents = events.map((event) => JSON.stringify(toClientEvent(event, ua)))
+    const analyticsEvents = events.map((event) =>
+      JSON.stringify(toClientEvent(event, ua, verifiedUid))
+    )
     await appendClientEvents(analyticsEvents)
     return res.status(200).json({ success: true, processed: analyticsEvents.length })
   } catch (err) {
@@ -1196,6 +1215,10 @@ async function drainOneChunk(): Promise<number> {
   // Mirrored into the hour bucket: the 30m/1h/24h ranges merge `clientEvents` and
   // `byPage` out of `metrics_hourly`, which the daily-only drain never wrote.
   const hourly: Record<string, Record<string, number>> = {}
+  // Mirrored into the minute bucket too: `last-5m`/`last-30m`/`last-1h` read
+  // `metrics_minutely` and nothing else, so before this the drain's page views
+  // could only appear in a panel that used the hourly series.
+  const minutely: Record<string, Record<string, number>> = {}
 
   for (const entry of pending) {
     const parsed = (typeof entry === "string" ? JSON.parse(entry) : entry) as AnalyticsEvent
@@ -1225,9 +1248,23 @@ async function drainOneChunk(): Promise<number> {
     const backlogged = event.ts.getTime() < Date.now() - 7 * 24 * 60 * 60 * 1000
     const hourKey = toEventHour(event.ts)
     const hour = backlogged ? null : hourly[hourKey] || (hourly[hourKey] = {})
+    // Only the newest hour is worth a minute document: one hour is exactly the
+    // widest minutely window (`last-1h`), so an older minute can never be read
+    // again. Skipping them also bounds this batch — at most 60 extra writes on
+    // top of the facts and day/hour documents, under Firestore's 500 limit.
+    const minuteOfHour = String(event.ts.getUTCMinutes()).padStart(2, "0")
+    const minuteKey = `${hourKey}-${minuteOfHour}`
+    const minute = hour && event.ts.getTime() > Date.now() - 60 * 60 * 1000 ?
+      minutely[minuteKey] || (minutely[minuteKey] = {}) : null
+    /**
+     * Count one dotted key into every grain the event belongs to.
+     * @param {string} key - Dotted counter key, e.g. `clientEvents.page_view`.
+     * @return {void} Nothing; the maps are mutated in place.
+     */
     const bump = (key: string) => {
       day[key] = (day[key] || 0) + 1
       if (hour) hour[key] = (hour[key] || 0) + 1
+      if (minute) minute[key] = (minute[key] || 0) + 1
     }
     // ponytail: bots are kept as facts but excluded from every counter — the same
     // rule as the funnel, so pageviews and client-event counts stay human.
@@ -1251,6 +1288,22 @@ async function drainOneChunk(): Promise<number> {
     batch.set(db.doc(`metrics_hourly/${hourKey}`), Object.fromEntries(
       Object.entries(keys).map(([key, count]) => [key, FieldValue.increment(count)]),
     ), { merge: true })
+  }
+
+  // The reader queries the `datetime` field, not the document id, and builds its
+  // per-bucket chart from `date`/`hour`/`minute`, so all four travel with the
+  // counters. Key format is `YYYY-MM-DD-HH-mm`, the same UTC shape the realtime
+  // triggers write, so a minute can be summed from both writers.
+  for (const [minuteKey, keys] of Object.entries(minutely)) {
+    batch.set(db.doc(`metrics_minutely/${minuteKey}`), {
+      datetime: minuteKey,
+      date: minuteKey.slice(0, 10),
+      hour: Number(minuteKey.slice(11, 13)),
+      minute: Number(minuteKey.slice(14, 16)),
+      ...Object.fromEntries(
+        Object.entries(keys).map(([key, count]) => [key, FieldValue.increment(count)]),
+      ),
+    }, { merge: true })
   }
 
   await batch.commit()

@@ -216,6 +216,21 @@ const requireWebrain = async (
  * knows it was last. Deriving on read removes the coordination entirely: no
  * counter, no transaction, and no race between two workers that each believe
  * they finished the job.
+ *
+ * Counted by DISTINCT url, because rows are APPENDED rather than replaced.
+ * `arrayUnion` discards only a value that is EQUAL to one already present, and a
+ * row carries `ms` and `data`, so a retry of the same target never is equal and
+ * does append. Counting rows therefore counted one retry as a second target, in
+ * both directions: two failed urls plus one duplicate success read as
+ * `failed === total` and reported Failed for a job that had scraped a page, and
+ * a duplicate could carry the row count to `total` while a distinct target was
+ * still missing, settling the job early. `total` counts urls, so the comparison
+ * has to as well.
+ *
+ * One terminal status is STORED rather than derived: an enqueue whose every
+ * publish failed. Nothing was queued, so no row can ever land and the
+ * arithmetic below would answer `In Progress` for ever -- or, with a total of
+ * zero, `Completed`. Neither is what happened, so the stored failure wins.
  * @param {*} record The stored job.
  * @return {*} The status the dashboard should show.
  */
@@ -226,22 +241,164 @@ export const deriveStatus = (
     return "Canceled"
   }
 
-  const landed = record.items?.length ?? 0
-  if (landed < record.total) {
+  if (record.status === "Failed") {
+    return "Failed"
+  }
+
+  // The LAST row for a url is that target's outcome. Array order is append
+  // order, so a retry that succeeded supersedes the failure it replaced.
+  const latest = new Map<string, WebrainJobItem>()
+  for (const item of record.items ?? []) {
+    latest.set(item.url, item)
+  }
+
+  if (latest.size < record.total) {
     return "In Progress"
   }
 
-  const failed = record.items.filter((item) => item.status === "error").length
-  return failed === record.total ? "Failed" : "Completed"
+  let failed = 0
+  for (const item of latest.values()) {
+    if (item.status === "error") {
+      failed += 1
+    }
+  }
+  return failed === latest.size ? "Failed" : "Completed"
+}
+
+/**
+ * The status a job's CLOSING frame carries, or `undefined` when it has none.
+ *
+ * Split out from the streaming handler because the mapping itself was the defect:
+ * every value that was not Canceled or Failed was reported as `completed`, so a
+ * job that had landed 0 of 50 targets announced itself finished. Inline in a
+ * `sseSend` call it can only be tested through a fake response; as a function the
+ * mapping is pinned directly.
+ *
+ * Exhaustive on purpose. A `default` branch would let a status added later
+ * inherit `completed` -- the same failure, silently -- whereas falling through to
+ * `undefined` means the worst case is a missing frame.
+ * @param {WebrainJobStatus} status The derived job status.
+ * @return {*} The frame status, or undefined while the job is unfinished.
+ */
+export const terminalFrameStatus = (
+  status: WebrainJobStatus
+): "canceled" | "error" | "completed" | undefined => {
+  if (status === "Canceled") {
+    return "canceled"
+  }
+  if (status === "Failed") {
+    return "error"
+  }
+  if (status === "Completed") {
+    return "completed"
+  }
+  return undefined
+}
+
+/**
+ * The status a job already finished with, or `undefined` if it is still open.
+ *
+ * A cancel must not relabel finished work, and the old guard asked the wrong
+ * source: it tested `record.status` for `"Completed"` or `"Failed"`, but
+ * `deriveStatus` COMPUTES both on read and nothing stores them. So the
+ * `"Completed"` half could never match, and cancelling a job whose every target
+ * had failed fell through and overwrote a finished job with `"Canceled"`,
+ * permanently -- the one outcome the dashboard can no longer recover.
+ *
+ * The publish failure is the one terminal status that IS stored, and
+ * `deriveStatus` honours it directly, so a total publish failure reads as
+ * Failed rather than as `In Progress` for ever.
+ * @param {*} record The stored job.
+ * @return {*} The finished status, or undefined while the job is open.
+ */
+export const finishedJobStatus = (
+  record: Pick<WebrainJobRecord, "status" | "items" | "total">
+): "Completed" | "Failed" | undefined => {
+  const settled = deriveStatus(record)
+  if (settled === "Completed" || settled === "Failed") {
+    return settled
+  }
+  return undefined
+}
+
+/**
+ * Settles the caller's `/operations` row once the job is finished.
+ *
+ * The row is written once, at enqueue, and the dashboard lists that stored
+ * `status`: the live websocket only overlays tasks it is still tracking, and a
+ * reload drops that set. So a job whose last target landed while the page was
+ * closed stayed `In Progress` there for ever. The status written is the DERIVED
+ * one, so the two surfaces cannot disagree.
+ * @param {string} uid The owner.
+ * @param {string} taskId The job.
+ * @return {*} Nothing.
+ */
+const settleOperations = async (
+  uid: string,
+  taskId: string
+): Promise<void> => {
+  const snapshot = await jobRef(uid, taskId).get()
+  if (!snapshot.exists) {
+    return
+  }
+  const status = deriveStatus(snapshot.data() as WebrainJobRecord)
+  if (status === "In Progress") {
+    return
+  }
+  await operationRef(uid, taskId).set({ status }, { merge: true })
+}
+
+/** What a job says when the queue accepted none of its targets. */
+const QUEUE_FAILED_MESSAGE = "Could not queue the job"
+
+/**
+ * What an enqueue records and answers once every publish has been tried.
+ *
+ * One rejected publish used to be treated as a total one: the job was marked
+ * Failed while the remaining messages were already in flight, and the status
+ * routes -- which derive from the rows those messages land -- then reported
+ * Completed for the same job. How many targets were taken is a different fact
+ * from whether the job was queued, so it has to be counted.
+ * @param {number} total How many targets the caller asked for.
+ * @param {number} queued How many the queue accepted.
+ * @return {*} The status to store, and the message to answer with.
+ */
+export const queueVerdict = (
+  total: number,
+  queued: number
+): { status: WebrainJobStatus; message: string } => {
+  if (queued === 0) {
+    return { status: "Failed", message: QUEUE_FAILED_MESSAGE }
+  }
+  if (queued < total) {
+    return {
+      status: "In Progress",
+      message: `Queued ${queued} of ${total} target(s)`,
+    }
+  }
+  return { status: "In Progress", message: `Queued ${total} target(s)` }
 }
 
 /**
  * Scrapes one target and records it. This is the queued unit of work.
  *
- * `arrayUnion` is the whole idempotency story: a redelivered message appends an
- * identical value, which Firestore discards, so a retry cannot double-count.
+ * `arrayUnion` appends, and that is all it does: it discards a value only when
+ * that value is EQUAL to one already present, and this row carries `ms` and
+ * `data`, so a retry of the same target is never equal and DOES append a second
+ * row for one url. What keeps the verdict right is `deriveStatus` counting
+ * DISTINCT urls, not this write.
+ *
+ * shortcut: the row itself is still duplicated, so a results view can list one
+ * target twice. Collapsing that needs one document per target keyed by the url
+ * (a `set()`, which is idempotent by construction), which changes the stored
+ * shape and every reader of `items` -- a migration, not a fix. The verdict was
+ * the part that could lie to a customer, so that is the part that was fixed.
  * `failed` is deliberately NOT incremented — it is derived on read, because an
  * increment would double on precisely the redelivery this guards against.
+ *
+ * A delivery for a CANCELED job does nothing. Cancel cannot retract a message
+ * that was already published -- this module has no handle on it -- so the
+ * deliveries still arrive, and this is what stops each of them scraping.
  * @param {*} uid The owner.
  * @param {*} taskId The job.
  * @param {*} url One already-validated target.
@@ -253,6 +410,11 @@ export async function runCrawlTarget(
   url: string,
   accessMode: string | undefined
 ): Promise<void> {
+  const opened = await jobRef(uid, taskId).get()
+  if (opened.exists && opened.get("status") === "Canceled") {
+    return
+  }
+
   const call = await webrainTool("webrain_scrape", accessMode, { url }, uid)
 
   // Transient by definition: the worker was unreachable. Nothing is recorded,
@@ -277,6 +439,12 @@ export async function runCrawlTarget(
     },
     { merge: true }
   )
+
+  // Read AFTER the write: the row that completes the batch may be another
+  // worker's, so deciding from a pre-write snapshot would sometimes settle
+  // nothing at all. Several workers arriving together only repeat one idempotent
+  // write.
+  await settleOperations(uid, taskId)
 }
 
 /**
@@ -285,7 +453,8 @@ export async function runCrawlTarget(
  * Called from QStash's failure callback once the retries are exhausted. The row
  * is an ordinary error item, which is what makes the arithmetic work: with it
  * the job reaches its total and `deriveStatus` returns Failed instead of
- * `In Progress` for ever.
+ * `In Progress` for ever. The last such row also settles the dashboard's own
+ * row, which otherwise lists a job that gave up as still running.
  * @param {*} uid The owner.
  * @param {*} taskId The job.
  * @param {*} url The target that never landed.
@@ -309,6 +478,8 @@ export async function recordCrawlFailure(
     },
     { merge: true }
   )
+
+  await settleOperations(uid, taskId)
 }
 
 /**
@@ -319,8 +490,9 @@ export async function recordCrawlFailure(
  * already one surface, so this is the only place the two have to agree.
  *
  * Publishes BEFORE answering: a task id handed out for messages that were never
- * queued is a job that never moves, so a publish failure marks the job Failed
- * and returns 502 rather than leaving the dashboard to wait for ever.
+ * queued is a job that never moves. Every publish is attempted, and the two
+ * outcomes are kept apart: no target queued is a failed job, some queued is a
+ * running job with failed targets -- which is what `queueVerdict` decides.
  * @param {*} uid The owner.
  * @param {*} urls Already-validated targets.
  * @param {*} operationId The caller's operation id, if it sent one.
@@ -390,20 +562,60 @@ const enqueueTargets = async (
     { merge: true }
   )
 
-  try {
+  // `allSettled`, not `all`. `map` starts every publish before either is
+  // awaited, so a rejection never stopped the other messages going out — it
+  // only stopped this function from learning what became of them, which is why
+  // one failed publish was reported as if the whole job had failed.
+  const attempts = await Promise.allSettled(
+    urls.map((url) => publishCrawlTarget({ taskId, uid, url, accessMode }))
+  )
+  const queued = attempts.filter(
+    (attempt) => attempt.status === "fulfilled"
+  ).length
+  const unqueued = urls.filter(
+    (_, index) => attempts[index]?.status === "rejected"
+  )
+
+  if (unqueued.length) {
+    console.error(
+      "webrain-jobs: publish failed for",
+      unqueued.length,
+      "target(s)",
+      attempts.find((attempt) => attempt.status === "rejected")
+    )
+    // A target that was never queued can never land, so it is recorded now:
+    // without the row the job sits short of its total for ever, and the queue
+    // error is displayed as work still in progress.
     await Promise.all(
-      urls.map((url) =>
-        publishCrawlTarget({ taskId, uid, url, accessMode })
+      unqueued.map((url) =>
+        recordCrawlFailure(uid, taskId, url, QUEUE_FAILED_MESSAGE)
       )
     )
-  } catch (error) {
-    console.error("webrain-jobs: publish failed", error)
-    await jobRef(uid, taskId).set(
-      { status: "Failed", message: "Could not queue the job" },
-      { merge: true }
-    )
+  }
+
+  const verdict = queueVerdict(urls.length, queued)
+  if (queued < urls.length) {
+    // Only a job with NOTHING queued is relabelled. A partially queued job is
+    // running, and rewriting the stored status of a running job could undo a
+    // cancel that arrived while these messages were being published.
+    if (queued === 0) {
+      await jobRef(uid, taskId).set(
+        { status: verdict.status, message: verdict.message },
+        { merge: true }
+      )
+      // Nothing will ever land, so this row cannot settle itself.
+      await operationRef(uid, taskId).set(
+        { status: verdict.status },
+        { merge: true }
+      )
+    } else {
+      await jobRef(uid, taskId).set(
+        { message: verdict.message },
+        { merge: true }
+      )
+    }
     res.status(502).json({
-      error: "Could not queue the job",
+      error: verdict.message,
       task_id: taskId,
     })
     return
@@ -414,7 +626,7 @@ const enqueueTargets = async (
     operation_id: operationId ?? taskId,
     provider: "webrain",
     status: "In Progress",
-    message: `Queued ${urls.length} target(s)`,
+    message: verdict.message,
     total: urls.length,
     failed: 0,
   })
@@ -634,28 +846,31 @@ export const webrainJobs = {
       })
     })
 
-    const settled = deriveStatus(record)
-    sseSend(res, {
-      status:
-        settled === "Canceled" ?
-          "canceled" :
-          settled === "Failed" ?
-            "error" :
-            "completed",
-      message: record.message,
-      type: "batch_chunk",
-      chunk_index: String(total),
-      total_chunks: String(total),
-    })
+    // Only a SETTLED job gets a closing frame -- see `terminalFrameStatus`. The
+    // client keeps the last frame it is sent, so reporting an unfinished job as
+    // completed made the lie durable rather than momentary. No closing frame at
+    // all is the honest signal: the per-item chunks above already say what has
+    // landed.
+    const terminal = terminalFrameStatus(deriveStatus(record))
+    if (terminal) {
+      sseSend(res, {
+        status: terminal,
+        message: record.message,
+        type: "batch_chunk",
+        chunk_index: String(total),
+        total_chunks: String(total),
+      })
+    }
     sseDone(res)
   },
 
   /**
    * `PUT /job/:taskId/cancel`.
    *
-   * The job is already finished by the time this can be called — webrain has no
-   * in-flight task to signal — so cancelling is a state change and nothing
-   * more.
+   * Recording the decision is all this route can do directly: webrain has no
+   * in-flight task to signal and a published QStash message cannot be
+   * retracted. What makes the cancel effective is `runCrawlTarget`, which
+   * re-reads the job and skips a delivery for a canceled one.
    * Reporting success for work that already completed would be a lie the
    * dashboard then displays, so the response says which of the two happened.
    * @param {*} req
@@ -681,11 +896,15 @@ export const webrainJobs = {
     }
 
     const record = snapshot.data() as WebrainJobRecord
-    if (record.status === "Completed" || record.status === "Failed") {
+    // Finished work is judged from the DERIVED status -- see
+    // `finishedJobStatus`, which also explains why the stored field could not
+    // answer this question on its own.
+    const finished = finishedJobStatus(record)
+    if (finished) {
       res.status(200).json({
         task_id: taskId,
         canceled: false,
-        status: record.status,
+        status: finished,
         message:
           "The job had already finished; there was nothing in flight to stop",
       })
@@ -698,6 +917,13 @@ export const webrainJobs = {
         message: "Canceled by the user",
         updatedAt: Date.now(),
       },
+      { merge: true }
+    )
+    // The dashboard reads the STORED status after a reload, so the operations
+    // row is settled here too -- a canceled job left `In Progress` there is the
+    // same defect as a completed one that never settles.
+    await operationRef(uid, taskId).set(
+      { status: "Canceled" },
       { merge: true }
     )
     res

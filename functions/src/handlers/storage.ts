@@ -38,6 +38,7 @@ import {
   PRESIGN_TTL_SECONDS,
   SHARED_KEY_PREFIX,
   decideStorageScope,
+  isExposableSharedUrl,
   isReadableObjectKey,
   isSharedObjectKey,
   sanitizeFilename,
@@ -312,7 +313,11 @@ export const storageSave = async (
  *
  * A caller never sees another caller's objects: the user-tier read is scoped by
  * a prefix derived from the VERIFIED uid, and the only other tier listed is the
- * shared one, which is URL-keyed and is public by construction.
+ * shared one. A shared entry belongs to nobody, so its `url` metadata is
+ * another caller's input -- and that input can be a capability URL (a presigned
+ * link, an invite token in a query string). Only the entries
+ * `isExposableSharedUrl` vouches for are listed; the rest stay reachable by key,
+ * which is what the cache is for.
  * @param {Request} req The request.
  * @param {Response} res The response.
  * @return {Promise<void>} Resolves once the response is written.
@@ -339,8 +344,16 @@ export const storageList = async (
       getPlatformBlobStore().list(SHARED_KEY_PREFIX, LIST_LIMIT),
     ])
 
+    // A shared entry was saved by somebody else, and the URL it was saved FROM
+    // can itself be a capability. Listing it would hand the caller a working
+    // link they were never given, so only the entries whose URL carries
+    // nothing capability-shaped are shown.
+    const visible = shared.filter((blob) =>
+      isExposableSharedUrl(blob.custom[META_URL] ?? "")
+    )
+
     res.status(200).json({
-      objects: [...own, ...shared].map(toPublicObject),
+      objects: [...own, ...visible].map(toPublicObject),
     })
   } catch (error) {
     console.error("storage: list failed:", errorLabel(error))

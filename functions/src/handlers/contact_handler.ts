@@ -22,6 +22,7 @@ import {
  * intentionally does NOT require authentication so visitors can reach out.
  * @param {Request} req - Express request object with contact form body (name, email, subject, message, recaptchaToken)
  * @param {Response} res - Express response object
+ * @return {Promise<Response>} 201 when delivered, 424 when the mail failed
  */
 export const submitContact = async (req: Request, res: Response) => {
   try {
@@ -52,10 +53,26 @@ export const submitContact = async (req: Request, res: Response) => {
 
     console.log(`[contact] Submission stored: ${docId} from ${sanitized.email}`)
 
-    // Fire-and-forget email notification — never blocks the response
-    sendContactNotification(sanitized).catch((err) =>
-      console.error("[contact] Background email send failed:", err)
-    )
+    // Await the send. Cloud Run freezes the instance the moment the response
+    // is written, so a floating promise loses the mail under load.
+    const notified = await sendContactNotification(sanitized)
+
+    if (!notified) {
+      // The submission is stored, so this is not a 5xx and nothing is lost.
+      // The visitor is told the truth instead of a success that did not
+      // happen, and the wording makes a resubmission unnecessary.
+      console.error(
+        `[contact] Submission ${docId} stored, notification failed`
+      )
+      return res.status(424).json({
+        success: false,
+        message:
+          "Your message was saved, but our confirmation email could " +
+          "not be sent. Please email support@deepscrape.dev if you " +
+          "need a reply.",
+        id: docId,
+      })
+    }
 
     return res.status(201).json({
       success: true,

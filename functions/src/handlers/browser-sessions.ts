@@ -53,6 +53,7 @@ import { Request, Response } from "express"
 import { bodyOf, uidOf } from "./request-helpers"
 import {
   consumeBillingCredits,
+  isInsufficientCreditsError,
   releaseBillingCredits,
   reserveBillingCredits,
 } from "../app/billing-credits"
@@ -94,6 +95,7 @@ import {
   keepaliveBrowserSession,
   listBrowserSessions,
   readBrowserSessionRecord,
+  shouldRefreshOnWatch,
 } from "../infrastructure/browser-session.store"
 
 /**
@@ -333,22 +335,50 @@ export const browserSessionCreate = async (
     const idempotencyBase = `${uid}:browser:machine:${randomUUID()}`
 
     if (charge) {
-      await reserveBillingCredits({
-        uid: uid,
-        amount: charge.amount,
-        bucket: charge.bucket,
-        ledger: {
-          source: "browser-session",
-          reason: `reserve:${charge.action}`,
-          sessionId: session.id,
-          metadata: {
-            action: charge.action,
-            method: "POST",
-            path: "/browser/session",
+      try {
+        await reserveBillingCredits({
+          uid: uid,
+          amount: charge.amount,
+          bucket: charge.bucket,
+          ledger: {
+            source: "browser-session",
+            reason: `reserve:${charge.action}`,
+            sessionId: session.id,
+            metadata: {
+              action: charge.action,
+              method: "POST",
+              path: "/browser/session",
+            },
+            idempotencyKey: `${idempotencyBase}:reserve`,
           },
-          idempotencyKey: `${idempotencyBase}:reserve`,
-        },
-      })
+        })
+      } catch (error) {
+        // The reserve throws when the balance cannot cover it, and the session
+        // is already written. A record left in `starting` counts against
+        // `caps.dedicated` forever, so it is closed before answering.
+        await closeBrowserSession(uid, session.id, Date.now())
+        console.error(
+          `browser-session: reserve for ${session.id} failed: ${String(error)}`
+        )
+        // 402 is a claim about the customer's wallet, and the client acts on it
+        // globally (the app has a payment-required interceptor). So it is only
+        // true when the BALANCE refused the mutation; an outage must not tell a
+        // funded customer to go and buy credits they do not need.
+        if (!isInsufficientCreditsError(error)) {
+          res.status(500).json({
+            status: "error",
+            code: "reserve_failed",
+            reason: "The reservation could not be taken. Please retry.",
+          })
+          return
+        }
+        res.status(402).json({
+          status: "error",
+          code: "insufficient_credits",
+          reason: "This account cannot cover the cost of a browser machine",
+        })
+        return
+      }
     }
 
     // The caller's OWN token, relayed verbatim. Arachnefly re-verifies it and
@@ -415,18 +445,49 @@ export const browserSessionCreate = async (
       return
     }
 
+    // A THROW here is the SAME outcome as a refusal below, and needs the same
+    // cleanup. Firestore can fail the read or the write, and this call decides
+    // whether the machine that arachnefly just created is ever recorded. Left
+    // to the outer catch, the caller gets 500 while the VM keeps billing: the
+    // reaper reaches machines only through sessions, so nothing would stop it
+    // and the held reservation would never be released.
     const attached = await attachMachine(
       uid,
       session.id,
       deployed.machineId,
       Date.now()
-    )
+    ).catch((error) => {
+      console.error(
+        `browser-session: recording machine ${deployed.machineId} for ` +
+        `${session.id} failed: ${String(error)}`
+      )
+      return undefined
+    })
 
     if (!attached) {
-      // The machine is real and now untracked, so it can be neither billed nor
-      // reaped — the reaper reaches machines only through sessions. Name it in
-      // the log rather than pretend this succeeded; the machine's name is
-      // derived from the session id, so it is findable by hand.
+      // The machine is real and, with the session gone, unrecorded: the reaper
+      // reaches machines only through sessions, so nothing else would ever stop
+      // it. Stop it here, and name it in the log for the record.
+      if (token) {
+        const stopped = await suspendBrowserMachine({
+          baseUrl: arachneflyBaseUrl(),
+          token: token,
+          machineId: deployed.machineId,
+        })
+        if (!stopped.ok) {
+          console.error(
+            `browser-session: machine ${deployed.machineId} for ` +
+            `${session.id} could not be stopped: ${stopped.error}`
+          )
+        }
+      }
+      // The record is still `starting`, and `starting` is a LIVE state: both
+      // `countLive` and `decideLease` count everything that is not `closed`,
+      // so leaving it would spend this caller's `caps.dedicated` slot for
+      // good and every later create would answer 429 with nothing to clear
+      // it. Closed BEFORE the release below, because that release can throw
+      // and a throw must not be the reason the record was never closed.
+      await closeBrowserSession(uid, session.id, Date.now())
       if (charge) {
         await releaseBillingCredits({
           uid: uid,
@@ -456,24 +517,75 @@ export const browserSessionCreate = async (
     }
 
     if (charge) {
-      await consumeBillingCredits({
-        uid: uid,
-        amount: charge.amount,
-        bucket: charge.bucket,
-        releaseReserved: true,
-        ledger: {
-          source: "browser-session",
-          reason: `consume:${charge.action}`,
-          sessionId: session.id,
-          metadata: {
-            action: charge.action,
-            method: "POST",
-            path: "/browser/session",
-            statusCode: 201,
+      try {
+        await consumeBillingCredits({
+          uid: uid,
+          amount: charge.amount,
+          bucket: charge.bucket,
+          releaseReserved: true,
+          ledger: {
+            source: "browser-session",
+            reason: `consume:${charge.action}`,
+            sessionId: session.id,
+            metadata: {
+              action: charge.action,
+              method: "POST",
+              path: "/browser/session",
+              statusCode: 201,
+            },
+            idempotencyKey: `${idempotencyBase}:consume`,
           },
-          idempotencyKey: `${idempotencyBase}:consume`,
-        },
-      })
+        })
+      } catch (error) {
+        // The machine is already attached, so it is stopped BEFORE the close:
+        // the reaper skips `closed` records, and a closed session holding a
+        // running VM is a machine nobody would ever look at again.
+        if (token) {
+          await suspendBrowserMachine({
+            baseUrl: arachneflyBaseUrl(),
+            token: token,
+            machineId: deployed.machineId,
+          })
+        }
+        // The reservation is held at this point, and nothing was delivered, so
+        // it is released. Its own failure is logged, not propagated: a refused
+        // release must not turn this into the 500 it is replacing.
+        try {
+          await releaseBillingCredits({
+            uid: uid,
+            amount: charge.amount,
+            bucket: charge.bucket,
+            ledger: {
+              source: "browser-session",
+              reason: `release:${charge.action}`,
+              sessionId: session.id,
+              metadata: {
+                action: charge.action,
+                method: "POST",
+                path: "/browser/session",
+                statusCode: 402,
+                machineId: deployed.machineId,
+              },
+              idempotencyKey: `${idempotencyBase}:release`,
+            },
+          })
+        } catch (releaseError) {
+          console.error(
+            `browser-session: release for ${session.id} failed after a ` +
+            `failed consume: ${String(releaseError)}`
+          )
+        }
+        await closeBrowserSession(uid, session.id, Date.now())
+        console.error(
+          `browser-session: consume for ${session.id} failed: ${String(error)}`
+        )
+        res.status(402).json({
+          status: "error",
+          code: "insufficient_credits",
+          reason: "This account cannot cover the cost of a browser machine",
+        })
+        return
+      }
     }
 
     res.status(201).json({status: "ok", session: attached})
@@ -731,6 +843,11 @@ const frameRefused = (
     }
   }
 
+  // Delete before setting so the key moves to the BACK of the insertion order:
+  // `set` on an existing key keeps its original position, which made the most
+  // frequently polled session the first one evicted -- and eviction forgets its
+  // pace, so the session that actually pays the fps cap got a free frame.
+  lastFrameAtMs.delete(key)
   lastFrameAtMs.set(key, nowMs)
   return false
 }
@@ -781,6 +898,14 @@ export const browserSessionFrame = async (
       return
     }
 
+    // A closed session still names its machine, and the observe call auto-starts
+    // it — so polling a session the caller ended would wake a suspended VM for
+    // free, and the reaper skips `closed` records.
+    if (record.state === "closed") {
+      notFound(res)
+      return
+    }
+
     if (!record.machineId) {
       res.status(409).json({
         error: "This session has no machine to observe",
@@ -804,6 +929,20 @@ export const browserSessionFrame = async (
         code: "frame_too_soon",
       })
       return
+    }
+
+    // Watching IS activity. Only `keepalive` used to push the idle deadline out, so
+    // a live view being actively watched died at 15:00 and the documented flow
+    // simply stopped. The rule, and the throttle that keeps it to two writes per
+    // idle window, live in `shouldRefreshOnWatch`.
+    if (shouldRefreshOnWatch(record, Date.now())) {
+      try {
+        await keepaliveBrowserSession(uid, id, Date.now())
+      } catch (error) {
+        // The frame is the response the caller asked for; a failed refresh of the
+        // deadline must not cost them it.
+        console.error(`browser-session: keeping ${id} alive failed: ${String(error)}`)
+      }
     }
 
     const frame = await observeMachineFrame({
@@ -885,6 +1024,13 @@ export const browserSessionTool = async (
     // caller's answers 404 without a machine ever being asked to act.
     const record = await readBrowserSessionRecord(uid, id)
     if (!record) {
+      notFound(res)
+      return
+    }
+
+    // Same reason as the frame route: a closed session still names its machine,
+    // and driving it would wake a VM the caller already gave up.
+    if (record.state === "closed") {
       notFound(res)
       return
     }

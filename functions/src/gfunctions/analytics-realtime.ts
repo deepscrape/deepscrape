@@ -345,9 +345,19 @@ export const onGuestCreated = onDocumentCreated(
     // of these out of `metrics_hourly` for the 30m/1h/24h periods, so a
     // hand-maintained subset there silently blanked 12 panels while 7d/30d/90d
     // (read from `metrics_daily`) looked fine.
-    // ponytail: bounded by construction — a day is a fresh `metrics_daily` doc and an
-    // hour is a fresh `metrics_hourly` doc, so one field per unique IP/ASN/… is capped.
-    // The unbounded risk is the 90-day aggregate, which capBreakdown trims.
+    // ponytail: the per-value facets (browser, device, OS, language, channel,
+    // referrer, landing path) are bounded by their own vocabularies. `byIP` is
+    // NOT, and the old note here claimed the whole map was "bounded by
+    // construction" because a day is a fresh document. A day is fresh; a day's
+    // distinct addresses are not -- tens of thousands is ordinary traffic, and
+    // Firestore caps a document at 1 MiB, at which point THIS batch fails whole
+    // and takes `newGuests`, `activeGuests` and every funnel counter with it, not
+    // merely the IP card. The same field on `metrics_summary/dashboard` is worse:
+    // that document is merged into forever and is the dashboard's root singleton.
+    // `capBreakdown` trims only what lands in the 90-day `metrics_range`
+    // aggregate; it does not bound these writes. The real fix is per-(day, IP)
+    // documents read with orderBy('count','desc').limit(n) -- see the note on
+    // `IP_BREAKDOWN_CAP` -- and it is a shape change to three readers.
     const dimensionCounters: Record<string, FieldValue> = {
       // A missing value interpolated into a dotted path lands as a field
       // literally named `byBrowser.undefined`, so every key needs a fallback.
@@ -741,41 +751,46 @@ export const backfillDashboardSummary = onSchedule({
  * 5 0 * * *
  */
 export const computeDailyTrends = onSchedule("5 0 * * *", async () => {
-  const today = new Date()
-  const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000)
-  const todayStr = today.toISOString().split("T")[0]
+  // Compare the two most recent COMPLETE days. Reading "today" at 00:05 divided
+  // five minutes of traffic by a full day, so every growth number on the
+  // dashboard was a fabricated -100%.
+  const dayBefore = new Date(Date.now() - 48 * 60 * 60 * 1000)
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
+  const dayBeforeStr = dayBefore.toISOString().split("T")[0]
   const yesterdayStr = yesterday.toISOString().split("T")[0]
 
   try {
-    // Get yesterday's and today's metrics
-    const [yesterdayDoc, todayDoc] = await Promise.all([
+    // Get the two most recent complete days' metrics
+    const [dayBeforeDoc, yesterdayDoc] = await Promise.all([
+      db.doc(`metrics_daily/${dayBeforeStr}`).get(),
       db.doc(`metrics_daily/${yesterdayStr}`).get(),
-      db.doc(`metrics_daily/${todayStr}`).get(),
     ])
 
+    const dayBeforeData = dayBeforeDoc.data() as MetricsDaily | undefined
     const yesterdayData = yesterdayDoc.data() as MetricsDaily | undefined
-    const todayData = todayDoc.data() as MetricsDaily | undefined
 
-    // Calculate trends (% change from yesterday)
-    const calculateGrowth = (today: number, yesterday: number): number => {
-      if (yesterday === 0) return today > 0 ? 100 : 0
-      return Math.round(((today - yesterday) / yesterday) * 100)
+    // Calculate trends (% change of the last complete day over the one before it)
+    const calculateGrowth = (latest: number, previous: number): number => {
+      if (previous === 0) return latest > 0 ? 100 : 0
+      return Math.round(((latest - previous) / previous) * 100)
     }
 
-    const todayGuests = todayData?.newGuests || 0
-    const yesterdayGuests = yesterdayData?.newGuests || 0
-    const todayUsers = todayData?.newUsers || 0
-    const yesterdayUsers = yesterdayData?.newUsers || 0
-    const todayLogins = todayData?.totalLogins || 0
-    const yesterdayLogins = yesterdayData?.totalLogins || 0
-    const todayConversion = todayData?.conversionRate || 0
-    const yesterdayConversion = yesterdayData?.conversionRate || 0
+    const latestGuests = yesterdayData?.newGuests || 0
+    const previousGuests = dayBeforeData?.newGuests || 0
+    const latestUsers = yesterdayData?.newUsers || 0
+    const previousUsers = dayBeforeData?.newUsers || 0
+    const latestLogins = yesterdayData?.totalLogins || 0
+    const previousLogins = dayBeforeData?.totalLogins || 0
+    const latestConversion = yesterdayData?.conversionRate || 0
+    const previousConversion = dayBeforeData?.conversionRate || 0
 
     const trends = {
-      guestsGrowth: calculateGrowth(todayGuests, yesterdayGuests),
-      usersGrowth: calculateGrowth(todayUsers, yesterdayUsers),
-      loginsGrowth: calculateGrowth(todayLogins, yesterdayLogins),
-      conversionGrowth: calculateGrowth(todayConversion, yesterdayConversion),
+      guestsGrowth: calculateGrowth(latestGuests, previousGuests),
+      usersGrowth: calculateGrowth(latestUsers, previousUsers),
+      loginsGrowth: calculateGrowth(latestLogins, previousLogins),
+      conversionGrowth: calculateGrowth(latestConversion, previousConversion),
+      comparedDay: yesterdayStr,
+      baselineDay: dayBeforeStr,
     }
 
     // Update dashboard summary with trends
@@ -1293,7 +1308,27 @@ async function computeRangeMetric(rangeId: string, days: number) {
 /**
  * Cohort retention from the raw facts.
  *
- * Identity = `uid || guestId`, cohort = the first day that identity was seen.
+ * Identity = `uid || guestId`. The cohort is the earliest day that identity has
+ * an event on INSIDE the read window below — NOT its first-ever visit.
+ *
+ * That distinction is load-bearing and was previously mis-stated here as "the
+ * first day that identity was seen". A visitor whose first visit predates the
+ * window is filed into their earliest day *within* it, so a returning user
+ * inflates a recent cohort's `size` and its `d1`.
+ *
+ * What bounds the error, and why the window is not simply widened: the window
+ * can only be as long as the raw facts survive, and `ANALYTICS_EVENTS` is
+ * trimmed at `ANALYTICS_EVENTS_RETENTION_DAYS`, so widening past that reads
+ * nothing. It is also capped by `RETENTION_EVENT_LIMIT`, and the query has no
+ * `orderBy`, so the LIMIT — not the window — decides how many days are really
+ * covered. Raising the window at a fixed limit therefore costs more reads
+ * without buying correctness.
+ *
+ * The correct fix is a durable per-identity `firstSeenAt` written once at first
+ * contact, which is a schema addition plus a backfill and is deliberately not
+ * invented here. Until then this metric is "first activity inside the retained
+ * window", and anything that reads it as cohort retention is reading it wrong.
+ *
  * Bots are excluded — crawlers do not come back. A cell is `null` (not 0) while
  * its window has not elapsed yet, so the grid never fakes a retention drop.
  */

@@ -1447,6 +1447,9 @@ export const getMyLoginSessionStatus = onCall(
           active: false,
           revoked: true,
           revokedAt: revocationData.revokedAt,
+          // A revoked session has no meaningful expiry: it is already dead, and the
+          // cache carries only the revocation stamp.
+          expiresAt: null,
         }
       }
 
@@ -1458,6 +1461,7 @@ export const getMyLoginSessionStatus = onCall(
           active: false,
           revoked: true,
           revokedAt: null,
+          expiresAt: null,
           message: "Session not found",
         }
       }
@@ -1843,17 +1847,37 @@ export const cleanupExpiredSessions = onSchedule(
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
       const thirtyDaysAgoTs = Timestamp.fromDate(thirtyDaysAgo)
 
-      // Find revoked sessions older than 30 days
-      const snapshot = await db
-        .collection("loginSessions")
-        .where("revokedAt", "<", thirtyDaysAgoTs)
-        .limit(100)
-        .get()
+      // TWO queries: Firestore cannot OR across fields, and NEITHER shape matched the
+      // old single `revokedAt < 30d` filter. A plain logout writes `active:false` +
+      // `signedOutAt` and never `revokedAt`; an expired session keeps `revokedAt: null`.
+      // So the sweep only ever deleted explicitly revoked rows, while every login
+      // writes two documents -- roughly 730 per daily user per year.
+      const nowTs = Timestamp.fromDate(new Date())
+      const [revokedSnap, expiredSnap] = await Promise.all([
+        db
+          .collection("loginSessions")
+          .where("revokedAt", "<", thirtyDaysAgoTs)
+          .limit(100)
+          .get(),
+        db
+          .collection("loginSessions")
+          .where("expiresAt", "<", nowTs)
+          .limit(100)
+          .get(),
+      ])
+
+      // One Map, so a session that is BOTH revoked and expired is deleted once.
+      const doomed = new Map(
+        revokedSnap.docs.map((doc) => [doc.id, doc] as const),
+      )
+      for (const doc of expiredSnap.docs) {
+        doomed.set(doc.id, doc)
+      }
 
       let deletedCount = 0
       const batch = db.batch()
 
-      snapshot.docs.forEach((doc) => {
+      for (const doc of doomed.values()) {
         batch.delete(doc.ref)
         deletedCount++
 
@@ -1862,9 +1886,9 @@ export const cleanupExpiredSessions = onSchedule(
         const sessionId = doc.id
         const userSessionRef = db.doc(`users/${userId}`).collection("sessions").doc(sessionId)
         batch.delete(userSessionRef)
-      })
+      }
 
-      if (snapshot.size > 0) {
+      if (deletedCount > 0) {
         await batch.commit()
         console.log(`✅ Cleaned up ${deletedCount} expired sessions`)
       } else {
@@ -2490,14 +2514,13 @@ export const verifyAndTrustDevice = onCall(
    * @param {*} request
    */
   async (request) => {
-    const { userId, code, deviceId, deviceName, sessionId, mfaVerified } = validateCallableData(
+    const { userId, code, deviceId, deviceName, sessionId } = validateCallableData(
       z.object({
         userId: z.string().min(1).max(128),
         code: z.string().min(1).max(32),
         deviceId: z.string().min(1).max(256),
         deviceName: z.string().max(128).default(""),
         sessionId: z.string().max(256).optional(),
-        mfaVerified: z.boolean().optional(),
       }),
       request.data
     )
@@ -2542,8 +2565,15 @@ export const verifyAndTrustDevice = onCall(
         throw new Error("Verification code was generated for a different session. Please request a new code.")
       }
 
-      // If MFA was verified on the client (SMS path), skip code check
-      const isMfaVerified = mfaVerified === true && verificationData.method === "sms"
+      // The body's `mfaVerified` was caller-controlled and proved nothing: an
+      // attacker holding only the password could send `true` and walk away with a
+      // 90-day trusted device. `firebase.sign_in_second_factor` is signed by
+      // Firebase and only appears after a real second-factor sign-in, which is the
+      // only attestation this path may accept.
+      const secondFactorClaim =
+        (auth.token as { firebase?: { sign_in_second_factor?: string } })?.firebase
+          ?.sign_in_second_factor
+      const isMfaVerified = Boolean(secondFactorClaim) && verificationData.method === "sms"
 
       if (!isMfaVerified) {
         // ponytail: the Firestore attempt counter that used to live here could not

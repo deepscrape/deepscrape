@@ -188,11 +188,16 @@ export const generateWebAuthnRegistrationOptions = onCall(
 
       const options = await generateRegistrationOptions(opts)
 
-      // Store the challenge temporarily in Firestore for verification
+      // Store the challenge temporarily in Firestore for verification.
+      //
+      // No `type` field: the ceremony is decided by the verify call, and both
+      // `verifyRegistrationResponse` and `verifyAuthenticationResponse` read it
+      // from `clientDataJSON.type` and reject a mismatch there. A stored copy was
+      // written here and never read, which read as though the check existed in
+      // this file.
       await db.collection("users").doc(userId).collection("webauthn_challenges").doc("current").set({
         challenge: options.challenge,
         createdAt: Timestamp.now(),
-        type: "registration",
       })
 
       return { success: true, options }
@@ -356,7 +361,6 @@ export const generateWebAuthnAuthenticationOptions = onCall(
         await db.collection("users").doc(userId).collection("webauthn_challenges").doc("current").set({
           challenge: options.challenge,
           createdAt: Timestamp.now(),
-          type: "authentication",
         })
 
         return { success: true, options }

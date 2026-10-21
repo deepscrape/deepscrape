@@ -6,10 +6,29 @@ import {parseUA} from "../infrastructure/ua-parser"
 
 const GOOGLEBOT = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
 
+test("toClientEvent takes the uid from the VERIFIED token, never the body", () => {
+  const spoofed = {
+    eventType: "signup_completed",
+    userId: "victim-uid",
+    guestId: "g-1",
+    metadata: {ok: true, count: 5, long: "x".repeat(500), nested: {a: 1}, list: [1, 2], nothing: null},
+  }
+
+  // The body's uid is ignored: this ingress is reachable anonymously, and a
+  // body-supplied uid let anyone manufacture a conversion as somebody else.
+  const anonymous = toClientEvent(spoofed, parseUA(""))
+  assert.equal(anonymous.userId, undefined)
+  // The guest id stays, because it IS the anonymous identity by design.
+  assert.equal(anonymous.guestId, "g-1")
+
+  // A verified token wins, and the spoofed body uid cannot override it.
+  const verified = toClientEvent(spoofed, parseUA(""), "real-uid")
+  assert.equal(verified.userId, "real-uid")
+})
+
 test("toClientEvent flattens and bounds client metadata at the trust boundary", () => {
   const event = toClientEvent({
     eventType: "crawl.started",
-    userId: "u1",
     metadata: {
       ok: true,
       count: 5,
@@ -21,7 +40,6 @@ test("toClientEvent flattens and bounds client metadata at the trust boundary", 
   }, parseUA(""))
 
   assert.equal(event.eventType, "crawl_started")
-  assert.equal(event.userId, "u1")
   assert.equal(event.metadata?.ok, true)
   assert.equal(event.metadata?.count, 5)
   assert.equal(String(event.metadata?.long).length, 200)

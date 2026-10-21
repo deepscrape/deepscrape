@@ -42,7 +42,19 @@ import { onSchedule } from "firebase-functions/v2/scheduler"
 import { functionsEnvJson } from "../config/env"
 import { MONITOR_DRAIN_BATCH } from "../domain/monitors.domain"
 import { checkMonitor } from "../infrastructure/monitor-check"
-import { claimDueMonitors } from "../infrastructure/monitor.store"
+import {
+  claimDueMonitors,
+  releaseUncheckedMonitors,
+} from "../infrastructure/monitor.store"
+
+/**
+ * Wall-clock budget for the checking loop.
+ *
+ * The function itself is killed at 300 s, and each check is bounded but they
+ * add up. Stopping short of the kill is what makes the release below possible:
+ * a killed run cannot hand its remaining claims back.
+ */
+const MONITOR_DRAIN_BUDGET_MS = 240_000
 
 /**
  * Checks every monitor whose turn it is, up to the per-run bound.
@@ -93,8 +105,18 @@ export const drainDueMonitors = onSchedule(
 
     console.log(`monitor drain: checking ${claimed.length} monitor(s)`)
 
-    for (const monitor of claimed) {
-      await checkMonitor(monitor)
+    const deadline = now + MONITOR_DRAIN_BUDGET_MS
+    for (let index = 0; index < claimed.length; index += 1) {
+      // One slow page would otherwise consume the run and leave every later
+      // monitor claimed-but-unchecked, pushed out by a whole interval.
+      if (Date.now() >= deadline) {
+        await releaseUncheckedMonitors(claimed.slice(index), now)
+        console.warn(
+          `monitor drain: budget spent, released ${claimed.length - index}`
+        )
+        return
+      }
+      await checkMonitor(claimed[index])
     }
   }
 )

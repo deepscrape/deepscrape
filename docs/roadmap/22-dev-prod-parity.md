@@ -88,6 +88,12 @@ reached something that is not the BFF.
 The only origin whose `/api` reaches the BFF is **4200**, because `src/proxy.conf.json` forwards
 `/api`, `/event` and `/oauth` to `127.0.0.1:8080`. Without `ng serve` running there is no such origin.
 
+If 5000 is wanted, the answer is **`ng serve --port 5000`, not the hosting emulator**: it is the same
+dev server and the same proxy, and `5000` is already in `bff/security.ts`'s `ALLOWED_ORIGINS` and in
+`billingAllowedOrigins`. Run it with `--only auth,firestore,storage,functions,pubsub` so the hosting
+emulator does not claim the port. That is a flag, not a config change — and it is the only way to get
+one origin locally.
+
 ## The five shared backends, measured 2026-10-21
 
 | Backend | Any dev branch in code? | What dev therefore reaches | Separate dev resource that ALREADY exists |

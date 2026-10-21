@@ -53,7 +53,7 @@ of the diff, never about how much damage a wrong one does.
 
 | Do | Audit # | Size | Risk | What | Proof / blocker |
 |---|---|---|---|---|---|
-| 1 | 58 | — | money | **Not a defect.** `decideLease` does compare one `liveSessions` field against both caps, but its only meaningful caller passes `countLive(snapshot, input.mode)`, which counts **only that mode** — so three BYO sessions cannot block the dedicated machine. Cosmetic leftover: the parameter name is what made this look like a bug; `liveSessionsForMode` would say it. | `browser-session.store.ts:404-417`, `domain/browser-session.domain.ts:111-143`. Moved to *Refused*. |
+| 1 | 58 | S | money | **Fixed 2026-10-21 — after one wrong verdict here.** `decideLease` compares a single `liveSessions` number against both caps. The count *inside* `createBrowserSession` is per mode, so the first read of this said "not a defect". It is: the **pre-flight in `browserSessionCreate`** passed `listBrowserSessions(uid).length`, which counts both modes — three free BYO sessions refused the dedicated machine the caller pays for. The fix is `countLiveForMode(live, mode)` in the domain, so both call sites share one rule. | `domain/browser-session.domain.ts` (`countLiveForMode`), `handlers/browser-sessions.ts:241`. Gates: functions build 0, lint 0 errors, **976 tests / 967 pass / 0 fail**, two new specs. |
 | 2 | 120 | S | trust boundary | **Half fixed 2026-10-21.** The BFF now emits `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin` on every response — raw `Response` handlers included, which is the case a hook usually misses — and `Strict-Transport-Security` in production only, because HSTS from localhost pins the developer's browser to https with no way back. **CSP stays Hosting's:** its own comment in the file records that a nonce policy here would block the CSR shell, so the remaining gap is a CSP for a direct `.run.app` request, which needs a policy chosen deliberately. | `bff/security.ts` `onAfterHandle`; `bff/security.spec.ts` asserts all four, and that HSTS is absent without `PRODUCTION`. Gates: bff tsc 0, 83 tests 0 fail. |
 | 3 | 60 | M/H | money | `handlers/browser-sessions.ts` has **no spec** — attach/close/keepalive, which is where a stranded machine or a double charge would come from. | Blocked on a harness, not on effort: the module builds the Admin SDK at import, so it needs an emulator or a seam. |
 | 4 | 89 | S + **choice** | user data | The service worker activates on `VERSION_READY` and reloads immediately, destroying unsaved state mid-crawl or mid-checkout. | `ngsw-update.service.ts` — 28 lines, so the code is small; the choice is not mine. Not reloading strands old assets, so prompt-vs-idle-reload is the owner's call. |
@@ -121,13 +121,12 @@ Recorded so they are not re-attempted. Each was read in source.
 | 126, 127 | No `dataGroups` and `/index.html` is mandatory; the codemods are manual and referenced by no CI job. |
 | 137, 138 | Exporting `trackGuest` double-counts every registration. Four analytics helpers are wired by their spec — deleting them broke the suite. |
 | 124 | **Latent, not a cost.** No service calls Meilisearch: the name appears **only under `docs/`** (5 files) and in no `functions/`, `bff/` or `src/` file. `deploy/meilisearch/fly.toml` is undeployed infrastructure with no client, so no request pays the `fra` round trip today. Re-open the day a search client is written — and put it beside webrain, not in `fra`. |
-| 58 | **Not a defect** *(re-proved 2026-10-21)*. The shared counter looked real: `decideLease` compares one `liveSessions` field against `caps.byo` and `caps.dedicated`. But the caller passes `countLive(snapshot, input.mode)`, and `countLive` increments only when `record.mode === mode` — so a BYO request counts BYO sessions and a dedicated request counts dedicated ones. No customer is blocked by the other mode's sessions. The only thing left is the parameter's name, which is why this read as a bug. |
 
 ## Closed in this campaign
 
 Numbers only; the paragraphs were stale and are in git history.
 
-§1 BFF `13 14 15 16 17 18 19 21` · §2 billing `22 23 24 25 26 27 28 29 30 31 34` ·
+§1 BFF `13 14 15 16 17 18 19 21` · §2 billing `22 23 24 25 26 27 28 29 30 31 34 58` ·
 §3 auth `36 37 38 39 40 41 42 44 45 46 51 81` · §4 sessions `55 57 63` ·
 §5 crawl/storage `70 71 72 73 76 78 79 80` · §6 Angular core `82 83 84 85 86 88 90 91 92 93 94 95(redaction)` ·
 §7 features `96 97 98 100 101 102 103 104 106 107 109 110 111 112` ·

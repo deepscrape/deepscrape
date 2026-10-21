@@ -7,10 +7,12 @@ This is the optimization counterpart to `20-must-fix.md`. That file is a **saved
 correctness and security defects. This one asks a different question: **what does one request
 cost us, in milliseconds and in euros, and what is unnecessary in it?**
 
-Everything here is read from source. **Nothing was profiled, built or executed** — `grep`,
-`glob` and PowerShell all fail in this session with `Sandboxing is enabled but not supported
-on this platform`, so there is no `ng build`, no `bun test`, no `gcloud run services describe`.
-Every number is therefore labelled:
+Everything here is read from source. **Status corrected 2026-10-21:** the 2026-10-20 session below
+ran in a sandbox where `grep`, `glob` and PowerShell all failed, so it could not build, test or
+profile anything. That is no longer true — in a working terminal on 2026-10-21 the **functions** and
+**Angular** gates ran clean (results in §11 and §12) and the applied edits were committed on `next`
+in ten focused commits. The **BFF** was not run, nothing was profiled, no bundle was measured, and
+no preview deploy happened. Read every number below as still labelled:
 
 | Label | Meaning |
 |---|---|
@@ -669,8 +671,17 @@ For O4 specifically, the verification is not a test — it is: `bun run build`, 
 
 ## §11 Not checked
 
-- **Nothing was executed.** `grep`, `glob` and PowerShell all fail with the Windows sandbox error
-  in this session, so there is no build, no test, no lint, no profile and no `gcloud describe`.
+- **Superseded 2026-10-21 for the app and functions.** Those gates ran, and passed:
+
+  | Gate | Result |
+  |---|---|
+  | `functions`: build / lint / test | 0 / 0 errors (8 pre-existing warnings) / 974 tests, 965 pass, 0 fail, 9 skipped |
+  | `app` `tsc --noEmit -p tsconfig.app.json` | 0 |
+  | `app` `bun run build` | 0, 14 routes prerendered — the only template and SSR gate |
+  | `app` Karma | 900 / 900 |
+
+  Still not checked: **`bff` `tsc` / `bun test`**, any profile, any measured bundle size, and
+  `gcloud run services describe`.
 - **Cloud Run revision settings are read from the deploy commands, not from the live service.** If
   the console was edited, the commands are not authoritative.
 - **No bundle was measured.** The 110+ chunk count comes from the existing `dist/` listing; the
@@ -687,12 +698,17 @@ For O4 specifically, the verification is not a test — it is: `bun run build`, 
 
 ---
 
-## §12 Unverified changes register
+## §12 Gate register — run 2026-10-21
 
-Every edit below is on disk, uncommitted, and **has never been typechecked, built, or run**. They
-are grouped by the gate that can prove them. Run §10 in a working terminal and treat any failure
-under "Gate" as a potential regression from this session — the files are listed so the diff is
-bisectable, not because they are believed correct.
+This register used to say every edit below was uncommitted and had never been typechecked, built or
+run. It was committed on `next` in ten focused commits, and the gates it asked for were run:
+functions build/lint/974 tests, app `tsc`, app `bun run build` (14 routes prerendered), Karma
+900/900. **A row under a gate that passed is closed, not a live risk** — the per-file tables are
+kept only as a bisect map for the next regression.
+
+The tables that are **still open**: the `bff` one (`bun x tsc --noEmit` / `bun test` never ran) and
+"no gate available" (workflow YAML and `.dockerignore` have no local gate; they fail loudly on
+deploy or not at all).
 
 ### Gate: `cd functions && bun x tsc --noEmit && bun run lint && bun run test`
 

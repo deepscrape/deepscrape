@@ -27,7 +27,8 @@ you can actually check.
 | `15-chat-write-tools.md` | Phase 9 — **plan, not built** | the approval seam the chat needs before it may act, which tools to expose by blast radius, what breaks at a thousand users |
 | `17-mcp-capability-surface.md` | Phase 10 — **plan, not built** | publishing the platform's tools as an MCP server so the customer's own agent is the client — composability with no new execution surface, and why embedding the Copilot SDK is the wrong answer |
 | `12-service-orchestration-and-layer-inventory.md` | Phase 7 | **the answer sheet**: what exists in all four layers, which service owns what, and the four design pieces still missing |
-| `21-optimizations.md` | cross-cutting | **latency, cost, duplicate work and shrink** — what one request actually costs, what is unnecessary in it, and the zero-to-scale flag plan |
+| `20-must-fix.md` | cross-cutting — **defect ledger** | open / verify / decision / refused rows and a dated gate table; status re-verified 2026-10-21. Do not work it in numeric order |
+| `21-optimizations.md` | cross-cutting | **latency, cost, duplicate work and shrink** — what one request actually costs, what is unnecessary in it, and the zero-to-scale flag plan. Phases A–B applied and gated 2026-10-21; O2, O4 and O21 still need a real deploy or a measured build |
 
 Companion decision record: `docs/ADR-2026-10-BROWSER-SESSIONS.md`.
 

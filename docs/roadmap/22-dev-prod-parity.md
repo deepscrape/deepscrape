@@ -170,17 +170,27 @@ missing capability rather than a stale build.
 | Where | Version | Can paint? |
 |---|---|---|
 | `browser-session:local` (what the platform deploys) | **0.2.3** | yes |
-| host `webrain install obscura` output | **0.1.11** | **no** |
-| `h4ckf0r0day/obscura:latest` as pulled here | 0.1.11 (stale) | no |
-| Docker Hub `latest` / `0.2.5` | 0.2.5 | yes |
+| host `webrain install obscura` | was 0.1.11, now **0.2.5** ✅ | yes |
+| `h4ckf0r0day/obscura:latest` | was 0.1.11 stale, now **0.2.5** (same digest as `:0.2.5`) ✅ | yes |
 
-Two consequences worth keeping. `webrain doctor` reports **✅** for the host's 0.1.11 binary — the
-engine is *present*, which is not the question a frame path needs answered, so a version check is what
-actually gates frames. And 0.2.5 **refuses to bind CDP on a non-loopback address without
-`OBSCURA_CDP_TOKEN` of at least 32 bytes** (`refusing to expose CDP without authentication`); 0.1.x had
-no such guard. That only affects a setup that points `CDP_URL` at Obscura — the platform reaches
-Obscura through webrain, never through its CDP port — but it makes "just publish 9222" impossible now,
-which is the correct direction.
+**Neither stale install upgrades itself.** `webrain install obscura` prints
+*"Obscura already installed"* and exits — there is no upgrade flag. The fix is to delete
+`%LOCALAPPDATA%\webrain\browsers\obscura-v<version>` and re-run it, which downloads the current
+release (65.6 MB for 0.2.5 against 54 MB for 0.1.11 — the difference is the paint engine). Docker has
+the same trap: a `latest` tag that is months old stays stale until `docker pull` is run again.
+
+Two consequences worth keeping. `webrain doctor` reports **✅** for an engine that cannot paint — the
+engine is *present*, which is not the question a frame path needs answered, so only a **version**
+check gates frames. The build block in `deploy/browser-session/Dockerfile` already runs
+`"$obscura_bin" --version` and accepts whatever it prints; making that a floor is one line and turns
+"silently baked a non-rendering engine" into a red build:
+`printf '%s\n' 0.2.0 "$("$obscura_bin" --version | awk '{print $2}')" | sort -V -C`.
+Second: 0.2.5 **refuses to bind CDP on a non-loopback address without `OBSCURA_CDP_TOKEN` of at least
+32 bytes** (`refusing to expose CDP without authentication`); 0.1.x had no such guard, which is why an
+unauthenticated `--host 0.0.0.0` used to work. That only affects a setup that points `CDP_URL` at
+Obscura — the platform reaches Obscura through webrain, never through its CDP port — and it makes
+"just publish 9222" impossible, which is the correct direction. For containerised CDP in dev, Chromium
+is the simpler source.
 
 
 

@@ -13,6 +13,7 @@ import {
   BROWSER_KINDS,
   SESSION_CAPS,
   cdpSecretId,
+  countLiveForMode,
   decideCdpUrl,
   decideLease,
   frameIntervalMs,
@@ -346,5 +347,32 @@ describe("frameTooSoon", () => {
     // An off-by-one here would halve or double the real cap.
     assert.equal(frameTooSoon("paid", frameIntervalMs("paid")), false)
     assert.equal(frameTooSoon("paid", frameIntervalMs("paid") - 1), true)
+  })
+})
+
+describe("countLiveForMode", () => {
+  const session = (
+    mode: "byo" | "dedicated",
+    state: "starting" | "ready" | "suspended" | "closed" = "ready",
+  ) => ({mode, state})
+
+  it("does not let one mode's sessions block the other mode's cap", () => {
+    // The defect this guards: three BYO sessions refused the dedicated machine
+    // the caller pays for, because the pre-flight counted both modes together.
+    const sessions = [session("byo"), session("byo"), session("byo")]
+
+    assert.equal(countLiveForMode(sessions, "byo"), 3)
+    assert.equal(countLiveForMode(sessions, "dedicated"), 0)
+  })
+
+  it("ignores a closed session in either mode", () => {
+    const sessions = [
+      session("dedicated"),
+      session("dedicated", "closed"),
+      session("byo", "closed"),
+    ]
+
+    assert.equal(countLiveForMode(sessions, "dedicated"), 1)
+    assert.equal(countLiveForMode(sessions, "byo"), 0)
   })
 })

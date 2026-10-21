@@ -60,6 +60,7 @@ import {
 import { env } from "../config"
 import { arachneflyBaseUrl } from "../config/upstreams"
 import {
+  countLiveForMode,
   decideLease,
   frameTooSoon,
   machineChargeFor,
@@ -236,9 +237,11 @@ export const browserSessionCreate = async (
       tier: tier,
       mode: mode,
       kind: kind,
-      // `listBrowserSessions` already omits `closed`, which is exactly the set
-      // `decideLease` counts as live — so the count needs no fixing up here.
-      liveSessions: live.length,
+      // Per MODE, not the total: the caps are `{dedicated: 1, byo: 3}`, so a
+      // total let three BYO sessions refuse the dedicated machine the caller
+      // pays for. `listBrowserSessions` omits `closed` already; the helper
+      // restates that rule so this cannot drift from `createBrowserSession`.
+      liveSessions: countLiveForMode(live, mode),
       // The endpoint is configured BY this request when `mode` is `byo` and the
       // body carries one, so a first-time BYO caller is not refused for the
       // thing they are in the middle of supplying. `parseCreateRequest` has

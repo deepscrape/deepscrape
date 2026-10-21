@@ -108,6 +108,30 @@ export type LeaseDecision = {ok: true} | {ok: false; reason: LeaseRefusal}
  * @param {LeaseRequest} request Tier, mode, kind, and current usage.
  * @return {LeaseDecision} Allowed, or the one reason it is not.
  */
+/** The two fields the per-mode cap needs, and nothing a caller could over-read. */
+type LiveSession = Pick<BrowserSessionPublic, "mode" | "state">
+
+/**
+ * How many live sessions a caller holds for ONE mode.
+ *
+ * The caps are per mode (`{dedicated: 1, byo: 3}`), so a combined total is the
+ * wrong number to test them against: the pre-flight in `browserSessionCreate`
+ * passed `listBrowserSessions(...).length`, which counts both modes — so three
+ * free BYO sessions refused the dedicated machine the caller pays for.
+ * `createBrowserSession` never had the bug because it counts inside the
+ * transaction per mode; both now use this one rule.
+ * @param {ReadonlyArray<LiveSession>} sessions The caller's sessions.
+ * @param {SessionMode} mode The mode the request is for.
+ * @return {number} Live sessions in that mode.
+ */
+export const countLiveForMode = (
+  sessions: ReadonlyArray<LiveSession>,
+  mode: SessionMode,
+): number =>
+  sessions.filter(
+    (session) => session.state !== "closed" && session.mode === mode,
+  ).length
+
 export const decideLease = (request: LeaseRequest): LeaseDecision => {
   if (!BROWSER_KINDS.includes(request.kind)) {
     return {ok: false, reason: "unsupported-kind"}

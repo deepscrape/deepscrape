@@ -169,6 +169,19 @@ const resolveStripeSecret = (secret: string | undefined) => {
         return candidate
     }
 
+    // Not production => the TEST pair. A dev env's publishable key and every
+    // `price_` id belong to the test account, so selecting the live secret here
+    // builds a session Stripe rejects for missing prices — or, worse, charges a
+    // real card when the ids happen to be live. Falls through to the production
+    // name when no test secret is configured, and `getStripe` then refuses a live
+    // key rather than using it.
+    if (!env.IS_PRODUCTION) {
+        const fromTest = env.STRIPE_SECRET_KEY_TEST?.trim()
+        if (fromTest) {
+            return fromTest
+        }
+    }
+
     const fromEnv = env.STRIPE_SECRET_KEY?.trim()
     if (fromEnv) {
         return fromEnv
@@ -181,9 +194,22 @@ export const getStripeWebhookSecret = (secret:string | undefined) => {
     try {
         const stripeWebhookKey =
             secret as string | undefined
-        return stripeWebhookKey ||
-            env.STRIPE_WEBHOOK_SECRET ||
-            ""
+
+        if (stripeWebhookKey) {
+            return stripeWebhookKey
+        }
+
+        // Same mode rule as the API key: `stripe listen` prints a TEST signing
+        // secret, so verifying a local delivery with the live one fails as a
+        // signature mismatch that looks like a bug in the handler.
+        if (!env.IS_PRODUCTION) {
+            const fromTest = env.STRIPE_WEBHOOK_SECRET_TEST?.trim()
+            if (fromTest) {
+                return fromTest
+            }
+        }
+
+        return env.STRIPE_WEBHOOK_SECRET || ""
     } catch {
         return env.STRIPE_WEBHOOK_SECRET || ""
     }

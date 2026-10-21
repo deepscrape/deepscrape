@@ -394,6 +394,15 @@ const getEnv = () => {
     ADMIN_EMAILS: parseEnvList(getConfigValue("ADMIN_EMAILS")),
     STRIPE_SECRET_KEY: getConfigValue("STRIPE_SECRET_KEY"),
     STRIPE_WEBHOOK_SECRET: getConfigValue("STRIPE_WEBHOOK_SECRET"),
+    // The TEST-mode pair, declared here so dev can select it by MODE instead of
+    // requiring the same secret to be pasted a second time under the production
+    // name. `functions/.env.local` already carries both, and the publishable key
+    // and every `price_` id in a dev env belong to the same test account, so a
+    // process that picks the live secret builds a session whose prices are not
+    // in that account. Read by `resolveStripeSecret` / `getStripeWebhookSecret`
+    // when `PRODUCTION` is not true.
+    STRIPE_SECRET_KEY_TEST: getConfigValue("STRIPE_SECRET_KEY_TEST"),
+    STRIPE_WEBHOOK_SECRET_TEST: getConfigValue("STRIPE_WEBHOOK_SECRET_TEST"),
     STRIPE_PUBLIC_KEY: getConfigValue("STRIPE_PUBLIC_KEY"),
     STRIPE_PRICE_STARTER_PAYG: getConfigValue("STRIPE_PRICE_STARTER_PAYG"),
     STRIPE_PRICE_STARTER_MONTHLY: getConfigValue("STRIPE_PRICE_STARTER_MONTHLY"),

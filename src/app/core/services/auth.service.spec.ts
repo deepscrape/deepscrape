@@ -136,5 +136,34 @@ describe('AuthService', () => {
     expect(await firstValueFrom(service.user$)).toBeNull();
     expect(await firstValueFrom(service.isAuthStateResolved)).toBe(false);
   });
+
+  it('runs the login once for every subscriber, not once per subscriber', async () => {
+    const user = makeUser();
+    firestoreMock.authState.and.returnValue(of(user));
+    firestoreMock.getUserData.and.resolveTo(profile());
+
+    // A cold load subscribes twice: AppComponent, then authGuard.
+    const [first, second] = await Promise.all([
+      firstValueFrom(service.isAuthenticated()),
+      firstValueFrom(service.isAuthenticated()),
+    ]);
+
+    expect(first.isAuthenticated).toBe(true);
+    expect(second.user?.uid).toBe('uid-1');
+    expect(firestoreMock.getUserData).toHaveBeenCalledTimes(1);
+    expect(user.getIdTokenResult).toHaveBeenCalledTimes(1);
+    expect(heartbeatMock.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes a transient failure to the caller instead of signing the user out', async () => {
+    const user = makeUser();
+    firestoreMock.authState.and.returnValue(of(user));
+    firestoreMock.getUserData.and.rejectWith(new Error('network down'));
+
+    await expectAsync(firstValueFrom(service.isAuthenticated())).toBeRejected();
+
+    // The token was cached before the read failed; a transient error must not undo it.
+    expect(service.token).toBe('tok-1');
+  });
 });
 

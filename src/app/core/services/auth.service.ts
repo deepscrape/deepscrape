@@ -35,6 +35,7 @@ import { API_AUTH_FIREBASE } from '../variables';
 import { cleanAndParseJSON, handleError } from '../functions';
 import { throwError } from 'rxjs/internal/observable/throwError';
 import { switchMap } from 'rxjs/internal/operators/switchMap';
+import { shareReplay } from 'rxjs/internal/operators/shareReplay';
 import { firstValueFrom, of, pipe, timestamp } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HeartbeatService } from './heartbeat.service';
@@ -208,8 +209,27 @@ export class AuthService {
     return role === 'admin'
   }
 
+  private authSnapshot$?: Observable<{ isAuthenticated: boolean, user: Users & { currProviderData: UserInfo | null } | null }>
+
   isAuthenticated(): Observable<{ isAuthenticated: boolean, user: Users & { currProviderData: UserInfo | null } | null }> {
-    return this.fireService.authState().pipe(
+    return this.authSnapshot()
+  }
+
+  /**
+   * The one login chain, shared by every caller.
+   *
+   * Unshared, each subscriber re-ran the whole login: a Firestore profile
+   * read, a forced `getIdTokenResult(true)` and the session callable. So a cold
+   * load of a protected page paid it twice (`AppComponent` and `authGuard`) and
+   * the two chains raced on the same `BehaviorSubject`.
+   * `refCount: false` keeps the chain subscribed for the app's life, which is
+   * what a mirror of `authState()` wants: a guard subscribing again must read
+   * the last snapshot, not restart the login.
+   * @return {Observable<{ isAuthenticated: boolean, user: Users & { currProviderData: UserInfo | null } | null }>} The shared snapshot.
+   */
+  private authSnapshot(): Observable<{ isAuthenticated: boolean, user: Users & 
+    { currProviderData: UserInfo | null } | null }> {
+    const shared = this.authSnapshot$ ??= this.fireService.authState().pipe(
       map(user => ({ isAuthenticated: !!user, user })),
       switchMap(async isAuthData => {
         const { isAuthenticated, user } = isAuthData;
@@ -261,7 +281,16 @@ export class AuthService {
 
         const userData = await this.fireService.getUserData(user.uid) as Users; // Firestore data
 
-        if (!userData) throw new Error('No user data found');
+        if (!userData) {
+          // Signed in with no profile document: a real "no account" answer, so
+          // it stays a sign-out. A FAILED read is a different case and reaches
+          // the catchError below, which no longer treats it as one.
+          this.authStateResolved.next(false)
+          this.userSubject.next(null)
+          this.token = undefined
+          this.isAdmin = false
+          return { isAuthenticated: false, user: null }
+        }
 
         const getTokenResult = await user.getIdTokenResult(true) // Force-refresh token so newly set claims are available on first login
 
@@ -295,14 +324,17 @@ export class AuthService {
         return { isAuthenticated: true, user: this.userSubject.value }
       }),
       catchError((error) => {
+        // A transient failure is not a sign-out. This branch used to clear the
+        // token, the user and the resolved flag, so one failed profile read
+        // logged the customer out of a session that was still valid. The error
+        // now reaches the caller, which fails the navigation instead of
+        // claiming the account is gone.
         console.error('Error in isAuthenticated:', error);
-        this.authStateResolved.next(false)
-        this.userSubject.next(null);
-        this.token = undefined;
-        this.isAdmin = false;
-        return of({ isAuthenticated: false, user: null })
-      })
+        return throwError(() => error)
+      }),
+      shareReplay({ bufferSize: 1, refCount: false }),
     )
+    return shared
   }
   get isAuthStateResolved() {
     return this.authStateResolved.asObservable();

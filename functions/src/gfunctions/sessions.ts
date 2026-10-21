@@ -2226,6 +2226,12 @@ export const sendDeviceVerificationCode = onCall(
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
       const expiresAtTs = Timestamp.fromDate(expiresAt)
 
+      // Dev only: the emulator has no mailbox, Resend refuses `example.com`, and Firebase
+      // Admin cannot send SMS - so this log is the only way to read the code locally.
+      if (!env.IS_PRODUCTION) {
+        console.log(`[device-verification] ${effectiveMethod} code for ${userId}: ${verificationCode}`)
+      }
+
       // Store verification attempt in Firestore
       const verificationRef = db.collection("device_verifications").doc()
       const verificationData: Record<string, unknown> = {

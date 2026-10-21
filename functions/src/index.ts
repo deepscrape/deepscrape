@@ -87,6 +87,7 @@ export const submitEnterprisePlanRequest = stripe.submitEnterprisePlanRequest
 export const validateStripeCatalog = stripe.validateStripeCatalog
 export const createCheckoutSession = stripe.createCheckoutSession
 export const createBillingPortalSession = stripe.createBillingPortalSession
+export const listMyPaymentMethods = stripe.listMyPaymentMethods
 export const resumeSubscriptionCancellation = stripe.resumeSubscriptionCancellation
 export const verifyCheckoutSession = stripe.verifyCheckoutSession
 export const getBillingUsage = stripe.getBillingUsage

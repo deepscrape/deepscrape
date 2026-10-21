@@ -2574,6 +2574,54 @@ export const createBillingPortalSession = onCallv2(
   }
 )
 
+/**
+ * Lists the caller's saved cards straight from Stripe.
+ *
+ * `users/{uid}/payment_methods` is a webhook-fed mirror, so it stays empty whenever the
+ * `payment_method.attached` event was never delivered - every emulator session, and any
+ * account whose card predates the mirror - and the page then said "no cards" for a
+ * customer Stripe showed cards for. Stripe is the source of truth here.
+ * @param {CallableRequest} req Callable request; the uid comes from the verified token.
+ * @return {Promise<{methods: Array<{id: string, brand: string | null, last4: string | null, expMonth: number | null, expYear: number | null, billingDetails: string | null}>}>} The caller's cards.
+ */
+export const listMyPaymentMethods = onCallv2(
+  { secrets: stripeSecrets, enforceAppCheck: false },
+  async (req) => {
+    const secret: string | undefined = stripeSecrets.find(
+      (entry) => entry.name === "STRIPE_SECRET_KEY" || entry.name === "STRIPE_TEST_SECRET_KEY"
+    )?.value()
+    const stripe = getStripe(secret)
+    const userId = req.auth?.uid
+    if (!userId) {
+      throw new HttpsError("unauthenticated", "User must be authenticated")
+    }
+
+    // No customer means no cards, and minting one from a read would be a side effect.
+    const userSnap = await db.doc(`users/${userId}`).get()
+    const customerId = (userSnap.data() as Users | undefined)?.stripeId
+    if (!customerId) {
+      return { methods: [] }
+    }
+
+    const list = await stripe.paymentMethods.list({
+      customer: customerId,
+      type: "card",
+      limit: 20,
+    })
+
+    return {
+      methods: list.data.map((paymentMethod) => ({
+        id: paymentMethod.id,
+        brand: paymentMethod.card?.brand || null,
+        last4: paymentMethod.card?.last4 || null,
+        expMonth: paymentMethod.card?.exp_month ?? null,
+        expYear: paymentMethod.card?.exp_year ?? null,
+        billingDetails: paymentMethod.billing_details?.name || null,
+      })),
+    }
+  }
+)
+
 export const resumeSubscriptionCancellation = onCallv2(
   { secrets: stripeSecrets, enforceAppCheck: false },
   async (req) => {

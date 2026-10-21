@@ -5,8 +5,7 @@ import { TranslateModule } from '@ngx-translate/core'
 import {
   BehaviorSubject, catchError, combineLatest, from, map, Observable, of, shareReplay, switchMap,
 } from 'rxjs'
-import { collection, collectionData, Firestore, query } from '@angular/fire/firestore'
-import { AuthService, BillingService, WindowToken } from 'src/app/core/services'
+import { AuthService, BillingService, FirestoreService, WindowToken } from 'src/app/core/services'
 
 interface SavedPaymentMethod {
   id: string
@@ -26,7 +25,7 @@ interface SavedPaymentMethod {
 })
 export class PaymentMethodsComponent {
   private readonly authService = inject(AuthService)
-  private readonly firestore = inject(Firestore)
+  private readonly firestoreService = inject(FirestoreService)
   private readonly billingService = inject(BillingService)
   private readonly window: Window = inject(WindowToken)
 
@@ -42,16 +41,19 @@ export class PaymentMethodsComponent {
       }
 
       const pmUid = user.uid
-      const pmCollection = collection(this.firestore, `users/${pmUid}/payment_methods`)
-      const pmQuery = query(pmCollection)
-      return (collectionData(pmQuery, { idField: 'id' }) as Observable<SavedPaymentMethod[]>).pipe(
-        // Do NOT swallow this silently. An earlier `catchError(() => of([]))` turned a
-        // permission-denied (no nested rules block for this subcollection) into the
-        // "No payment methods saved" empty state, which hid the cause and cost two rounds
-        // of remote debugging. The uid is logged with it so a path/uid mismatch is
-        // distinguishable from a denied read.
+      // Stripe, not Firestore: the `payment_methods` subcollection is a webhook-fed mirror
+      // and is empty whenever that event was never delivered, which read as "no cards" for
+      // an account Stripe shows cards for. Reading it here also threw
+      // "Expected type '_Query', but it was: a custom _CollectionReference object".
+      return from(
+        this.firestoreService.callFunction<
+          Record<string, never>,
+          { methods: SavedPaymentMethod[] }
+        >('listMyPaymentMethods', {}),
+      ).pipe(
+        map((response) => response?.methods ?? []),
         catchError((error: unknown) => {
-          console.error(`[paymentmethods] read of users/${pmUid}/payment_methods failed`, error)
+          console.error(`[paymentmethods] listMyPaymentMethods for ${pmUid} failed`, error)
           return of([])
         }),
       )

@@ -1976,6 +1976,11 @@
     "WARNING": "Your session ends in {{minutes}} minutes. Save your work."
   },
   "DEVICE_VERIFICATION": {
+    "PHONE_SETUP_TITLE": "No phone number on this account",
+    "PHONE_SETUP_HINT": "SMS needs a number saved on your account. Add one and we will text you a code to confirm it.",
+    "PHONE_SETUP_PLACEHOLDER": "Phone number (international format)",
+    "PHONE_ADD_BUTTON": "Add phone and send code",
+    "PHONE_INVALID": "Enter the number in international format, like +306912345678.",
     "TITLE": "Verify this device",
     "LOGIN_SUB": "This sign-in needs one additional verification step before continuing.",
     "ACTION_SUB": "You need to verify your device to",

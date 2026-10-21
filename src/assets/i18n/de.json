@@ -1976,6 +1976,11 @@
     "WARNING": "Ihre Sitzung endet in {{minutes}} Minuten. Speichern Sie Ihre Arbeit."
   },
   "DEVICE_VERIFICATION": {
+    "PHONE_SETUP_TITLE": "Keine Telefonnummer in diesem Konto",
+    "PHONE_SETUP_HINT": "Für SMS muss eine Nummer im Konto gespeichert sein. Füge eine hinzu, wir senden dir einen Code zur Bestätigung.",
+    "PHONE_SETUP_PLACEHOLDER": "Telefonnummer (internationales Format)",
+    "PHONE_ADD_BUTTON": "Nummer hinzufügen und Code senden",
+    "PHONE_INVALID": "Gib die Nummer im internationalen Format ein, z. B. +306912345678.",
     "TITLE": "Dieses Gerät verifizieren",
     "LOGIN_SUB": "Diese Anmeldung erfordert vor dem Fortfahren einen zusätzlichen Verifizierungsschritt.",
     "ACTION_SUB": "Sie müssen Ihr Gerät verifizieren, um",

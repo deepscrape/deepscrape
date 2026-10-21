@@ -39,6 +39,8 @@ export interface SendVerificationCodeResult {
   hasPhoneNumber?: boolean
   hasMfaEnabled?: boolean
   sessionId?: string | null
+  /** The caller asked for SMS but the account has no phone number to send it to. */
+  smsUnavailable?: boolean
 }
 
 @Injectable({

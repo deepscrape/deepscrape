@@ -40,9 +40,15 @@ export class DeviceVerificationRouteComponent implements OnInit, OnDestroy {
   readonly mfaVerificationId = signal<string | null>(null)
   readonly showMfaInput = signal(false)
   readonly isMfaSending = signal(false)
+  readonly phoneSetupRequired = signal(false)
+  readonly isLinkingPhone = signal(false)
 
   codeInput = ''
   deviceName = ''
+  /** Number typed into the setup field when the account has none. */
+  phoneNumberInput = ''
+  /** The OTP box is completing a phone enrolment, not re-authenticating a known factor. */
+  private pendingPhoneEnrollment = false
 
   private countdownIntervalId: ReturnType<typeof setInterval> | null = null
   private currentUserId = ''
@@ -138,6 +144,15 @@ export class DeviceVerificationRouteComponent implements OnInit, OnDestroy {
       const result = await this.deviceVerification.sendVerificationCode(this.currentUserId, method, this.sessionId())
 
       if (!result.success) {
+        // SMS was asked for and there is no number to send it to. Offer the field instead
+        // of the silent email downgrade that made the channel switch look dead.
+        if (result.smsUnavailable) {
+          this.verificationSent.set(false)
+          this.phoneSetupRequired.set(true)
+          this.infoMessage.set(this.translate.instant('DEVICE_VERIFICATION.PHONE_SETUP_HINT'))
+          return
+        }
+
         this.snackbarService.showSnackbar(result.message || this.translate.instant('DEVICE_VERIFICATION.SEND_FAILED'), SnackBarType.error, '', 5000)
         return
       }
@@ -233,6 +248,52 @@ export class DeviceVerificationRouteComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * Add a phone number to an account that has none (Google/GitHub sign-in), then reuse the
+   * OTP box to prove it. The number links through Auth MFA enrolment; the user document is
+   * written by the server because `phoneNumber`/`phoneVerified` are protected fields.
+   */
+  async addPhoneForSms(): Promise<void> {
+    const phoneNumber = this.phoneNumberInput.trim()
+    if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
+      this.snackbarService.showSnackbar(
+        this.translate.instant('DEVICE_VERIFICATION.PHONE_INVALID'),
+        SnackBarType.error,
+        '',
+        5000,
+      )
+      return
+    }
+
+    this.isLinkingPhone.set(true)
+    this.infoMessage.set('')
+
+    try {
+      const recaptchaVerifier = new RecaptchaVerifier(
+        this.fireAuth,
+        'mfa-recaptcha-container',
+        { size: 'invisible' },
+      )
+
+      const verificationId = await this.authService.startPhoneMfaEnrollment(phoneNumber, recaptchaVerifier)
+
+      this.mfaVerificationId.set(verificationId)
+      this.pendingPhoneEnrollment = true
+      this.phoneSetupRequired.set(false)
+      this.showMfaInput.set(true)
+      this.infoMessage.set(
+        this.translate.instant('DEVICE_VERIFICATION.SMS_SENT_PREFIX') +
+        `${phoneNumber.slice(0, -4)}****` +
+        this.translate.instant('DEVICE_VERIFICATION.SMS_SENT_SUFFIX'),
+      )
+    } catch (error) {
+      console.error('Failed to start phone enrolment:', error)
+      this.infoMessage.set(this.translate.instant('DEVICE_VERIFICATION.SMS_FAILED'))
+    } finally {
+      this.isLinkingPhone.set(false)
+    }
+  }
+
+  /**
    * Complete the phone MFA challenge with the user-entered OTP,
    * then trust the device via the backend (skipping custom code check).
    */
@@ -249,9 +310,26 @@ export class DeviceVerificationRouteComponent implements OnInit, OnDestroy {
       // Complete Firebase phone verification
       const credential = PhoneAuthProvider.credential(this.mfaVerificationId()!, otp)
 
-      // Reauthenticate to prove phone ownership
       const firebaseUser = this.fireAuth.currentUser
-      if (firebaseUser) {
+      if (this.pendingPhoneEnrollment) {
+        // A number that is not on the account yet. `reauthenticateWithCredential` rejects
+        // that, so it is completed as an enrolment and then persisted by the server.
+        await this.authService.completePhoneMfaEnrollment(
+          this.mfaVerificationId()!,
+          otp,
+          'Device verification',
+        )
+        if (firebaseUser) {
+          await firstValueFrom(this.authService.updatePhoneVerificationStatus(
+            firebaseUser.uid,
+            true,
+            this.phoneNumberInput.trim() || undefined,
+          ))
+          await this.authService.refreshUserData(firebaseUser.uid)
+        }
+        this.pendingPhoneEnrollment = false
+      } else if (firebaseUser) {
+        // Reauthenticate to prove phone ownership
         await reauthenticateWithCredential(firebaseUser, credential)
       }
 

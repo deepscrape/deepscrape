@@ -2217,12 +2217,37 @@ export const sendDeviceVerificationCode = onCall(
         throw new Error("No email found on account. Add an email first.")
       }
 
+      // An explicit SMS request with nothing to send to: the account has neither a phone
+      // number nor an enrolled phone factor, so there is nowhere to deliver a code. The
+      // client turns `smsUnavailable` into a phone-number field instead of a dead end.
+      if (method === "sms" && !hasPhoneNumber && !hasPhoneMfa) {
+        return {
+          success: false,
+          smsUnavailable: true,
+          method: "email",
+          message: "No phone number on this account. Add one to use SMS.",
+          expiresAt: null,
+          deliveryStatus: "sent" as const,
+          hasPhoneNumber: false,
+          hasMfaEnabled,
+          sessionId: sessionId || null,
+        }
+      }
+
       if (effectiveMethod === "sms" && !hasPhoneNumber && !hasPhoneMfa) {
         throw new Error("No phone number or phone MFA factor found. Add phone number or enable MFA first.")
       }
 
-      // Generate 6-digit verification code
-      const verificationCode = randomInt(100000, 1000000).toString()
+      // Firebase test phone numbers (`signIn.phoneNumber.testPhoneNumbers` in the Identity
+      // Platform project config, set under Authentication -> Sign-in method -> Phone ->
+      // "Phone numbers for testing") apply only to Firebase's own phone flows, and the Auth
+      // emulator ignores them and exposes the codes it mints at
+      // `/emulator/v1/projects/{projectId}/verificationCodes`. This callable mints and
+      // compares its own code in `verifyAndTrustDevice`, so it cannot borrow either source;
+      // outside production it uses a fixed 6-digit code instead.
+      const verificationCode = env.IS_PRODUCTION ?
+        randomInt(100000, 1000000).toString() :
+        "123456"
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
       const expiresAtTs = Timestamp.fromDate(expiresAt)
 

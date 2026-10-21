@@ -69,6 +69,60 @@ place that needed code was the queue destination, because that was the only one 
 **successfully** — every other divergence here is either loud at boot (`[storage-backend]`) or
 inert (`createNoopRedis`).
 
+## Running all four processes at once (dev)
+
+`npm run serve` starts **two** of the four. There is no single command, so this is the arrangement
+that works. Ports are from `firebase.dev.json` and are not free choices — the client hard-codes
+5001/8081/9099/9199 in `firestore.service.ts` and `app.config.ts`.
+
+| # | Process | Command | Port | Must be up because |
+|---|---|---|---|---|
+| 1 | Emulators | `cd functions && npm run serve` | 5001/8081/9099/9199/5000/4000/8085 | Auth, Firestore, Storage, callables |
+| 2 | BFF | `cd bff && bun run start` | **8080** | every client `/api`, `/event`, `/oauth` call |
+| 3 | Angular | `npm start` | **4200** | the UI (`prbuild:dev` regenerates `environment.ts`) |
+| 4 | webrain (docker) | `docker run -p 9223:9223 …` | 9223 | `/api/scrape`, `/api/search`, jobs |
+| — | arachnefly | `go run .` with `PORT=8082` | **8082** | any machine or browser-session route |
+
+`src/proxy.conf.json` sends `/api`, `/event` and `/oauth` to `http://127.0.0.1:8080`, and the
+client addresses everything relatively (`API_BASE_URL = '/api'`), so **the browser never needs the
+BFF's origin** — only the dev server does. `bff/security.ts:96` allows
+`localhost:4200`, `127.0.0.1:4200` and `localhost:5000` when not production; any other origin is
+rejected.
+
+### The three env files, and why there are three
+
+`root/.env.dev` is read at **build time** by `prbuild:dev` and becomes `environment.ts`.
+`bff/.env.dev` is read by the **BFF process**. `functions/.env` is read by the **functions
+emulator**. The BFF and the emulator do *not* share a file even though they run the same handler
+code — and that is the trap: **`bff/.env.dev` must repeat every server-side variable**, because
+`functions/src/config/env.ts` reads `process.env` of whichever process imported it.
+
+| Surface | File | Variables that matter in dev |
+|---|---|---|
+| client | `root/.env.dev` | `PRODUCTION=false`, **`EMULATORS=true`**, `PROJECT_ID`, `API_KEY`, `AUTH_DOMAIN`, `DATABASE_URL`, `STORAGE_BUCKET`, `MESSAGING_SENDER_ID`, `APP_ID`, `MEASUREMENT_ID`, `RECAPTCHA_KEY`, `STRIPE_PUBLIC_KEY` (test) |
+| BFF | `bff/.env.dev` | `PRODUCTION=false`, `PORT=8080`, `DB_NAME=easyscrape`, **`FIRESTORE_EMULATOR_HOST=127.0.0.1:5001`**, **`FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`**, `GCLOUD_PROJECT=libnet-d76db`, `COOKIE_SECRET`, `CSRF_COOKIE_SECRET`, `APP_ORIGIN=http://127.0.0.1:8080`, `API_ARACHNEFLY_URL=http://127.0.0.1:8082`, `WEBRAIN_MCP_URL`, `STORAGE_BUCKET`, `UPSTASH_*` (→ `crawldev`) |
+| emulator | `functions/.env` | the same server-side list **minus the two emulator hosts** (the emulator sets those itself) |
+
+Two gotchas in that table, both measured:
+
+- **`FIREBASE_AUTH_EMULATOR_HOST` is load-bearing twice.** It is what points the Admin SDK at the
+  Auth emulator, and it is what lets `firebase-admin` accept the emulator's unsigned `alg:none`
+  tokens. `bff/security.ts:74` refuses to boot when it is set together with `PRODUCTION=true`,
+  so leaving it in a production env is a start-up failure rather than a silent auth bypass.
+- **`APP_ORIGIN` must be set to this machine.** With the default, `publishCrawlTarget` now refuses
+  (row 1) — before that it silently queued production work.
+
+### What to fix in the tables above
+
+| # | Mismatch | Evidence | Fix |
+|---|---|---|---|
+| A | **arachnefly's dev default collides with the BFF.** `upstreams.ts` resolves arachnefly to `http://localhost:8080` outside production, which is the port the BFF itself binds. | `config/upstreams.ts` vs `bff/server.ts` | Run arachnefly with `PORT=8082` and set `API_ARACHNEFLY_URL=http://127.0.0.1:8082` (what `bff/.env.dev.example` already says). Otherwise the BFF calls itself and answers 404. |
+| B | **The two examples disagree on the webrain port.** `functions/.env.example` says 9223 and explains `webrain mcp --http 9223`; `bff/.env.dev.example` says 9333. | both example files | One number, matching what docker publishes. Check with `docker ps --format "{{.Ports}}"`. A wrong port presents as "search is broken", not as a config error. |
+| C | **`bff/.env.dev.example` had no emulator hosts.** | the file, before this change | Three placeholders added: the two hosts plus `GCLOUD_PROJECT`. Without them the BFF falls back to ADC and talks to **production Firestore and Auth** while the browser is on the emulator. |
+| D | **`npm run serve` never starts the BFF** | `package.json` scripts | Three terminals, or one `dev` script that runs all four. Not added: it needs a process runner. |
+| E | **Storage needs GCP credentials even in dev** — unless Tigris is used. `admin.storage()` cannot use the Storage emulator, so `staging.libnet-d76db.appspot.com` requires `gcloud auth application-default login`. | `firebase-blob-store.ts` | Either accept the ADC login, or set `TIGRIS_BUCKET` in dev: the S3 path needs only the key pair, no GCP credentials at all. |
+
+
 
 ## What is NOT a parity problem (checked, so it is not re-opened)
 

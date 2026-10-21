@@ -128,6 +128,18 @@ const app = new Elysia({ aot: true })
       })
     }
 
+    // An unregistered `/api/*` path is not a page. The api group 404s these on its own,
+    // but that group only claims the routes it declares — anything it never claimed falls
+    // through to this catch-all and was answered with the 86KB shell and a 200, so a
+    // client asking for JSON got HTML and no error. `api.spec.ts` asserts the 404 against
+    // the sub-app, which is exactly why this hole stayed open and visible only in logs.
+    if (pathname === '/api' || pathname.startsWith('/api/')) {
+      return new Response(JSON.stringify({ error: 'not_found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
     const shell = Bun.file(shellPath)
     if (await shell.exists()) {
       return new Response(shell, { headers: { 'Content-Type': 'text/html' } })

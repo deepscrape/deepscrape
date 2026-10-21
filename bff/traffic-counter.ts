@@ -52,16 +52,18 @@ const countServedRequest = async (): Promise<void> => {
 export const trafficCounterPlugin = (count: () => Promise<void> = countServedRequest): Elysia =>
   new Elysia({ name: 'traffic-counter' }).onAfterHandle(
     { as: 'global' },
-    async ({ set }) => {
+    ({ set }) => {
       if (Number(set.status ?? 200) >= 400) {
         return
       }
 
-      try {
-        await count()
-      } catch (error) {
+      // Deliberately NOT awaited. Elysia does not flush the response until
+      // `onAfterHandle` resolves, so awaiting a Redis round trip here added
+      // ~20-30 ms to every served request for a counter that has a one-day
+      // resolution and is read once a day by `computeActiveUsersNow`.
+      void count().catch((error) => {
         // A Redis hiccup must never become a failed response.
         console.error('[bff] traffic counter failed', error)
-      }
+      })
     },
   )

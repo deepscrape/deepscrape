@@ -81,8 +81,16 @@ if (isProd && process.env['FIREBASE_AUTH_EMULATOR_HOST']) {
 const CSRF_SECRET_COOKIE = '_csrf_secret'
 const CSRF_COOKIE = '_csrf'
 
-/** Non-browser callers: machine / webhook / health endpoints are exempt from CSRF. */
-const CSRF_IGNORED_PATH_PREFIXES = ['/event', '/status', '/oauth', '/services/contact']
+/**
+ * Non-browser callers: machine / webhook / health endpoints are exempt from CSRF.
+ *
+ * `/api/jobs/` is the QStash delivery surface. QStash has no cookie jar, so it
+ * cannot echo `csrf-token`, and the `upstash-signature` on the request is the
+ * only authentication those routes take. Without this entry every delivery was
+ * answered 403 before the handler ran — so no queued crawl ever started, and the
+ * failure callback was 403 as well, leaving the job `In Progress` for ever.
+ */
+const CSRF_IGNORED_PATH_PREFIXES = ['/event', '/status', '/oauth', '/services/contact', '/api/jobs/']
 const CSRF_IGNORED_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 const ALLOWED_ORIGINS = isProd
@@ -152,9 +160,17 @@ const parseCookies = (header: string | null): Record<string, string> => {
   for (const part of (header ?? '').split(';')) {
     const separator = part.indexOf('=')
     if (separator > 0) {
-      out[part.slice(0, separator).trim()] = decodeURIComponent(
-        part.slice(separator + 1).trim(),
-      )
+      const raw = part.slice(separator + 1).trim()
+      // `decodeURIComponent` throws `URIError` on a stray `%`, and this runs in
+      // the global `onBeforeHandle` — so `Cookie: x=%` was a remote 500 on
+      // demand, for every route including the shell. A malformed cookie is a
+      // meaningless cookie: keep the raw bytes and let the signature checks
+      // reject them.
+      try {
+        out[part.slice(0, separator).trim()] = decodeURIComponent(raw)
+      } catch {
+        out[part.slice(0, separator).trim()] = raw
+      }
     }
   }
 

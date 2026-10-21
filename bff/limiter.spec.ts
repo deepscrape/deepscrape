@@ -137,3 +137,68 @@ describe('limiter behaviour', () => {
     expect(c.set.headers['RateLimit-Remaining']).toBe('99')
   })
 })
+
+describe('auth limiter fails closed in production', () => {
+  /** Run `fn` with PRODUCTION forced, restoring the previous value after.
+   * @param {*} value The PRODUCTION value to force.
+   * @param {*} fn The assertions to run under it.
+   * @return {*} Nothing.
+   */
+  const withProduction = async (
+    value: 'true' | 'false',
+    fn: () => Promise<void>,
+  ): Promise<void> => {
+    const previous = process.env['PRODUCTION']
+    process.env['PRODUCTION'] = value
+    try {
+      await fn()
+    } finally {
+      // Not `delete`: this env map is typed non-optional. An empty string is not
+      // 'true', so the check reads it as "not production" either way.
+      process.env['PRODUCTION'] = previous ?? ''
+    }
+  }
+
+  test('allows sign-in outside production, where there is no Redis', async () => {
+    // The regression this guards: failing closed unconditionally breaks every
+    // local and emulator login, which is how a security fix gets reverted.
+    await withProduction('false', async () => {
+      expect(await createLimiter(null, false, true)(ctx())).toBeUndefined()
+    })
+  })
+
+  test('refuses with a retryable 503 when there is no counter at all', async () => {
+    await withProduction('true', async () => {
+      const res = await createLimiter(null, false, true)(ctx())
+
+      expect(res?.status).toBe(503)
+      expect(res?.headers.get('Retry-After')).toBe('30')
+      // JSON, because these routes have a client that parses the body.
+      expect(((await res!.json()) as { error: string }).error).toBe(
+        'service-unavailable',
+      )
+    })
+  })
+
+  test('refuses when the counter throws, instead of allowing brute force', async () => {
+    await withProduction('true', async () => {
+      const res = await createLimiter(stub(new Error('redis down')), false, true)(
+        ctx(),
+      )
+
+      expect(res?.status).toBe(503)
+    })
+  })
+
+  test('leaves non-auth limiters fail-open even in production', async () => {
+    // I3: the spend cap fails closed, the rate limiter fails open. Only auth is
+    // allowed to invert, so a Redis outage must never 503 ordinary traffic.
+    await withProduction('true', async () => {
+      const c = ctx()
+      const limit = createLimiter(stub(new Error('redis down')))
+
+      expect(await limit(c)).toBeUndefined()
+      expect(c.set.status).toBeUndefined()
+    })
+  })
+})

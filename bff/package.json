@@ -11,7 +11,7 @@
     "docker:image": "docker build -f ../Dockerfile -t deepscrape-bff:local ..",
     "docker:local": "bun run docker:image && docker run --rm -p 8099:8080 deepscrape-bff:local",
     "docker:push": "bun run docker:image && docker tag deepscrape-bff:local us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest && docker push us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest",
-    "deploy:cloud": "bun run docker:push && gcloud run deploy deepscrape-bff --image us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest --region us-central1 --allow-unauthenticated --port 8080 --memory 512Mi --cpu 1 --min-instances 1 --set-env-vars PRODUCTION=true --set-secrets FUNCTIONS_ENV_JSON=FUNCTIONS_ENV_JSON:latest,FIRE_SERVICE_ACCOUNT_KEY=FIRE_SERVICE_ACCOUNT_KEY:latest --quiet"
+    "deploy:cloud": "bun run docker:push && gcloud run deploy deepscrape-bff --image us-central1-docker.pkg.dev/libnet-d76db/deepscrape/deepscrape-bff:latest --region us-central1 --allow-unauthenticated --port 8080 --memory 512Mi --cpu 1 --min-instances 1 --max-instances 10 --concurrency 40 --cpu-boost --set-env-vars PRODUCTION=true --set-secrets FUNCTIONS_ENV_JSON=FUNCTIONS_ENV_JSON:latest,FIRE_SERVICE_ACCOUNT_KEY=FIRE_SERVICE_ACCOUNT_KEY:latest --quiet"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",

@@ -35,6 +35,18 @@ describe('bff page serving', () => {
     expect(await res.text()).not.toContain('<app-root')
   })
 
+  // Observed in production logs: `/.env` probes answered 404, but extensionless probes
+  // like `/userfiles?path=../../.env` and every unregistered `/api/*` answered 200 + the
+  // 86KB shell. A 200 tells a scanner to keep going, and tells a JSON client its typo'd
+  // endpoint succeeded.
+  test('an unregistered /api path is 404 JSON, never the shell', async () => {
+    const res = await get('/api/fs/read?path=/app/.env')
+
+    expect(res.status).toBe(404)
+    expect(res.headers.get('content-type')).toContain('application/json')
+    expect(await res.text()).not.toContain('<app-root')
+  })
+
   // The live scanner burst: every one of these answered 200 + the shell before
   // the guard covered probe shapes, which is why the scan never stopped.
   test('probe shapes match the guard, real routes do not', () => {
@@ -79,5 +91,41 @@ describe('bff page serving', () => {
     expect(res.status).toBe(404)
     expect(res.headers.get('content-type')).toContain('text/plain')
     expect(await res.text()).not.toContain('<app-root')
+  })
+})
+
+/**
+ * The COMPOSED app, not a bare `new Elysia().use(api)` mount.
+ *
+ * Every `/api` spec mounted the router alone, so the global `onBeforeHandle`
+ * never ran — which is why a CSRF hook that 403'd every QStash delivery, and a
+ * cookie parse that 500'd on a stray `%`, both passed the suite.
+ */
+describe('bff composed app guards', () => {
+  const post = (path: string, headers: Record<string, string> = {}) =>
+    app.handle(
+      new Request(`http://localhost${path}`, {
+        method: 'POST',
+        headers,
+        body: '{}',
+      }),
+    )
+
+  test('a QStash delivery reaches its handler instead of being CSRF-403d', async () => {
+    // QStash has no cookie jar, so there is no `csrf-token` header to echo. While
+    // `/api/jobs/` was not exempt, every queued crawl burned its retries against a
+    // 403 and the job sat `In Progress` for ever with the credits already taken.
+    const res = await post('/api/jobs/crawl/worker')
+
+    expect(res.status).toBe(401)
+  })
+
+  test('a malformed cookie is a 4xx, never a 500 on demand', async () => {
+    // `decodeURIComponent('')` throws `URIError` on a stray `%`, and the parse
+    // runs inside the global hook: one anonymous request used to break it.
+    const res = await post('/api/orgs', { cookie: 'x=%' })
+
+    expect(res.status).toBeGreaterThanOrEqual(400)
+    expect(res.status).toBeLessThan(500)
   })
 })

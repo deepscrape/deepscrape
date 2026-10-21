@@ -164,23 +164,88 @@ const perm = <R extends AuthResource>(
 const api = new Elysia({ name: 'api' })
 
 /**
- * `isJwtAuth` first, matching the order `functions/src/server.ts` mounted the
- * router: the limiter sits at the mount too, but it is an Elysia handler (it
- * writes `ctx.set`), so it wraps the chain in `h` instead of living in it.
+ * Every authenticated chain: the JWT link, then the caller's own middleware.
  * @param {*} items
  * @return {*}
  */
 const guard = (items: ExpressMiddleware[]) => [jwt, ...items]
 
+/**
+ * The tier limiter, run as a LINK of the chain instead of around it.
+ *
+ * Wrapping the chain put it before `isJwtAuth` — the link that sets `req.user` —
+ * so `ctx.user` was always undefined and every caller was bucketed `free` by IP.
+ * A paying account never saw its 300–2000 budget, colleagues behind one NAT
+ * shared a single free budget, and a job polling its own status could exhaust
+ * it. It now runs on the identity the chain just resolved.
+ *
+ * It writes through the bridged `res`, so a block finalises exactly like any
+ * other middleware response and the reservation machinery sees the status.
+ * @param {*} ctx The bridge context, for the original web `Request`.
+ * @return {*} An Express-style middleware that limits once the caller is known.
+ */
+const limitAfterAuth = (ctx: BridgeContext): ExpressMiddleware => {
+  // Typed here and cast at the boundary: `ExpressMiddleware` declares `next` as
+  // `never` (the bridge calls it positionally), which is uncallable in the body.
+  const middleware = async (
+    req: { user?: { uid?: string; role?: unknown } },
+    rawRes: unknown,
+    next: () => void,
+  ): Promise<void> => {
+    const sink = {
+      headers: {} as Record<string, string | number>,
+      status: undefined as number | string | undefined,
+    }
+
+    const blocked = await limitFunction({
+      request: ctx.request,
+      set: sink,
+      user: req.user,
+    } as never)
+
+    if (!blocked) {
+      next()
+      return
+    }
+
+    const bridged = rawRes as {
+      status: (code: number) => unknown
+      setHeader: (name: string, value: string) => unknown
+      json: (payload: unknown) => unknown
+    }
+
+    bridged.status(blocked.status)
+    for (const [name, value] of Object.entries(sink.headers)) {
+      bridged.setHeader(name, String(value))
+    }
+
+    const isJson = (blocked.headers.get('Content-Type') ?? '').includes('json')
+    bridged.json(isJson ? await blocked.json() : { error: 'rate-limited' })
+  }
+
+  return middleware as unknown as ExpressMiddleware
+}
+
+/**
+ * Wrap a ported chain.
+ *
+ * `isJwtAuth` first, matching the order `functions/src/server.ts` mounted the
+ * router, then the limiter on the resolved identity, then the rest. Chains that
+ * do not authenticate (`/status`, `/services/contact`) keep the limiter at the
+ * FRONT: they are the most abusable of all and had IP metering before.
+ * @param {*} items
+ * @return {*}
+ */
 const h =
   (items: ExpressMiddleware[]) =>
   async (ctx: BridgeContext): Promise<Response> => {
-    const blocked = await limitFunction(ctx as never)
-    if (blocked) {
-      return blocked
-    }
+    const after = items[0] === jwt ? 1 : 0
 
-    return runChain(ctx, items)
+    return runChain(ctx, [
+      ...items.slice(0, after),
+      limitAfterAuth(ctx),
+      ...items.slice(after),
+    ])
   }
 
 // ── organizations ────────────────────────────────────────────────────────────
@@ -703,7 +768,7 @@ api.put(
   h(guard([paid, perm('crawl', 'execute'), webrainJobs.cancelTask])),
 )
 api.put(
-  '/api/crawl/job/:tempTaskId/cancel',
+  '/api/crawl/job/:taskId/cancel',
   h(guard([paid, perm('crawl', 'execute'), webrainJobs.cancelTask])),
 )
 

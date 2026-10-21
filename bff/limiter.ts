@@ -156,6 +156,45 @@ const blockedPage = (status: 403 | 429, retryAfterSec: number): string => {
 `
 }
 
+/** Paths whose client parses a body, so a block must reach them as JSON. */
+const JSON_BLOCK_PREFIXES = ['/api/', '/oauth/']
+
+/**
+ * The block body, shaped for whoever is reading it.
+ *
+ * A browser navigation gets the styled page. `/api` and `/oauth` get JSON: those
+ * callers go through `res.json()` and an HTML 429 surfaces as an unparseable
+ * error instead of a retryable status, which is how a throttled poll looks like
+ * a crash.
+ * @param {403|429} status 403 for a deny-list hit, 429 for a rate limit.
+ * @param {number} retryAfterSec Seconds the caller should wait.
+ * @param {string} pathname Request path, to pick the shape.
+ * @return {Response} The block response.
+ */
+const blockResponse = (
+  status: 403 | 429,
+  retryAfterSec: number,
+  pathname: string,
+): Response =>
+  JSON_BLOCK_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+    ? new Response(
+        JSON.stringify({
+          error: status === 403 ? 'forbidden' : 'rate-limited',
+          message: `Too many requests. Retry after ${retryAfterSec}s.`,
+        }),
+        {
+          status,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(retryAfterSec),
+          },
+        },
+      )
+    : new Response(blockedPage(status, retryAfterSec), {
+        status,
+        headers: { 'Content-Type': 'text/html' },
+      })
+
 type LimitContext = {
   request: Request
   set: {
@@ -169,19 +208,62 @@ type LimitContext = {
 export type Limiter = (ctx: LimitContext) => Promise<Response | undefined>
 
 /**
+ * Production check for the fail-closed decision, read at call time.
+ *
+ * Deliberately not the module-level `isProd`: that is frozen at import, so a
+ * security switch keyed on it cannot be asserted in a test and cannot follow an
+ * env established after the module loads. One property read on an auth request
+ * is a fine price for a decision that is provable.
+ * @return {boolean} True when running in production.
+ */
+const inProduction = (): boolean => process.env['PRODUCTION'] === 'true'
+
+/**
+ * The response when an AUTH limiter cannot decide.
+ *
+ * Only the auth limiters use this; everywhere else stays fail-open. I3 says a
+ * rate limit must never take the site down, and that is right for a crawler or a
+ * page view. Auth is the one exception worth inverting: with no counter,
+ * `/oauth/verify-login` and `/resolve-identifier` are unmetered password and
+ * enumeration oracles, so an outage that stops new sign-ins is cheaper than one
+ * that lets credential stuffing proceed at network speed.
+ *
+ * JSON, not `blockedPage`: these are API endpoints whose client parses a body,
+ * and an HTML 503 would surface as an unparseable error instead of a retry.
+ * @return {Response} A 503 the client can retry.
+ */
+const unavailable = (): Response =>
+  new Response(
+    JSON.stringify({
+      error: 'service-unavailable',
+      message: 'Sign-in is temporarily unavailable. Try again shortly.',
+    }),
+    {
+      status: 503,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': '30' },
+    },
+  )
+
+/**
  * Built as a factory so the failing and blocking paths are testable without a
  * live Redis — pass a stub `limit()`.
  * @param {*} limiter
  * @param {*} tieredByRole
- * @return {*}
+ * @param {*} failClosed Refuse when the counter cannot be read, IN PRODUCTION
+ *   ONLY. Auth routes pass true; nothing else may.
+ * @return {*} A `Limiter`.
  */
 export const createLimiter = (
   limiter: Ratelimit | null,
   tieredByRole = false,
+  failClosed = false,
 ): Limiter =>
   async function check(ctx: LimitContext): Promise<Response | undefined> {
     if (!limiter) {
-      return undefined
+      // No counter at all — unconfigured or unusable Upstash credentials. An
+      // auth route must refuse rather than run wide open. Outside production
+      // this stays permissive so local dev and the emulator work without Redis.
+      return failClosed && inProduction() ? unavailable() : undefined
     }
 
     const { pathname } = new URL(ctx.request.url)
@@ -224,23 +306,36 @@ export const createLimiter = (
       // `set.status` shipped the block page as HTTP 200.
       ctx.set.status = status
 
-      return new Response(blockedPage(status, retryAfterSec), {
-        status,
-        headers: { 'Content-Type': 'text/html' },
-      })
+      return blockResponse(status, retryAfterSec, pathname)
     } catch (error) {
-      // Fail OPEN, matching the Express limiter's `catch { next() }`. A Redis or
-      // Upstash outage must degrade to "unlimited", never to "site down" — a 500
-      // on every page request is a far worse failure than a missed throttle.
-      // Logged so it stays visible instead of silently unthrottled.
-      console.error('bff: rate limit check failed, allowing request', error)
+      // Fail OPEN by default, matching the Express limiter's `catch { next() }`.
+      // A Redis or Upstash outage must degrade to "unlimited", never to "site
+      // down" — a 500 on every page request is a far worse failure than a missed
+      // throttle. Logged so it stays visible instead of silently unthrottled.
+      //
+      // The auth limiters invert this in production: an un-decidable auth check
+      // is a brute-force window, so it refuses (see `unavailable`). Dev and the
+      // emulator have no Redis, so they keep the permissive path.
+      console.error('bff: rate limit check failed', error)
+
+      if (failClosed && inProduction()) {
+        return unavailable()
+      }
 
       return undefined
     }
   }
 
 export const limitEvent = createLimiter(eventLimiter)
-export const limitAuth = createLimiter(authLimiter)
+/**
+ * The ONLY fail-closed limiter. Every route mounting it is an auth endpoint
+ * whose cheapness is the attack: guessing a password, enumerating an email or a
+ * phone number, or spending SMS budget.
+ */
+export const limitAuth = createLimiter(authLimiter, false, true)
 export const limitFunction = createLimiter(functionLimiter, true)
 
-export { authLimiter, eventLimiter, functionLimiter, resolveTier }
+// No limiter re-exports: nothing imported them, and an export that no module
+// reads is an invitation to reach around `limitAuth`/`limitFunction` and skip the
+// fail-closed policy. `resolveTier` stays because a spec exercises the mapping.
+export { resolveTier }

@@ -308,6 +308,21 @@ export const createBridge = (
       return res
     },
     /**
+     * set
+     *
+     * Express's alias for `setHeader`, and not optional: `browserSessionFrame`
+     * ends with `res.set("Cache-Control", "no-store")`. Without this method that
+     * call threw inside the handler's try, its own catch answered 500, and the
+     * live-view route could never respond at all.
+     * @param {string} key The header name.
+     * @param {unknown} value The header value.
+     * @return {*} This response, for chaining.
+     */
+    set(key: string, value: unknown) {
+      state.headers[key] = String(value)
+      return res
+    },
+    /**
      * flushHeaders
      *
      * Express sends the headers here. We cannot, because the Response is built
@@ -471,6 +486,17 @@ export const toResponse = (state: BridgedResponse): Response => {
     })
 
     return new Response(body, { status: state.status, headers })
+  }
+
+  // Bytes must not go through JSON.stringify. A PNG Buffer became
+  // `{"type":"Buffer","data":[137,80,...]}` while labelled `Content-Type:
+  // image/png`, which is the second half of why the live-view frame route could
+  // not serve an image.
+  if (state.body instanceof Uint8Array) {
+    return new Response(new Uint8Array(state.body), {
+      status: state.status,
+      headers,
+    })
   }
 
   const payload =

@@ -136,7 +136,15 @@ const oauth = (handler: ExpressHandler, ...guards: Guard[]) =>
 export const oauthRoutes = new Elysia({ name: 'oauth' })
   .get(
     '/oauth/provider/email/:email',
-    oauth(checkUserEmailForDifferentProvider as unknown as ExpressHandler),
+    // The strict limiter, matching its phone twin below. Under the general budget
+    // alone this was an UNLIMITED account-existence oracle: an email in, and
+    // whether it exists (plus its provider list) straight out. That is the input
+    // a credential-phishing page needs, which is why the phone half was moved to
+    // POST + `limitAuth` and this half was missed.
+    oauth(
+      checkUserEmailForDifferentProvider as unknown as ExpressHandler,
+      limitedBy(limitAuth),
+    ),
   )
   .post('/oauth/resolve-identifier', oauth(resolveIdentifier, limitedBy(limitAuth)))
   .post(

@@ -433,11 +433,21 @@ for (const [suffix, where] of orphanSuffixes) {
   console.log(`  ${suffix}  <- ${where}`);
 }
 
-// This list is a GATE, unlike the three above. Those compare spellings and can
-// disagree harmlessly; a suffix with no route is a request that WILL 404, which is
-// the defect this file exists to prevent. The three above stay advisory so a false
-// alarm cannot train the next reader to ignore a real one.
-if (orphanSuffixes.length > 0) {
+// TWO client-side lists are GATES: a client method path with no route, and a
+// suffix appended to a dynamic segment with no route, are both requests that WILL
+// 404 — the defect this file exists to prevent. The frame route shipped dead this
+// way while every other check was green.
+//
+// `orphanMethods` joined the gate on 2026-10-20. It was advisory on the argument
+// that a false alarm trains the next reader to ignore a real one, but the
+// measurement contradicts that: it reports 0 of 27 today, so it can only fire on a
+// genuine regression — and "the docstring's own examples land in orphanMethods"
+// was the audit's point.
+//
+// `ROUTES WITH NO CLIENT` stays ADVISORY and must: 6 routes are legitimately
+// client-less (webrain callbacks, paths the client computes), so gating it would
+// fail every build for a state that is correct.
+if (orphanSuffixes.length > 0 || orphanMethods.length > 0) {
   process.exitCode = 1;
 }
 

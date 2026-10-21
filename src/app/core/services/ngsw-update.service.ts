@@ -19,8 +19,16 @@ export class NgswUpdateService {
   }
 
    private activateUpdate() {  
-    this.swUpdate.activateUpdate()  
-      .then(() => this.document.location.reload())  
+    this.swUpdate.activateUpdate()
+      // Activate now, reload only when nobody is looking: a reload in front of
+      // the user destroys a half-typed checkout or an unsaved crawl setup, and
+      // someone else's deploy must not be able to do that. Activation alone is
+      // safe — the new assets are served from the next navigation onwards.
+      .then(() => {
+        if (this.document.visibilityState === 'hidden') {
+          this.document.location.reload();
+        }
+      })
       .catch((error) => {  
         console.error('Failed to activate service worker update:', error);  
       });  

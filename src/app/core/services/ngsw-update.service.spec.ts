@@ -14,7 +14,7 @@ describe('NgswUpdateService', () => {
     versionUpdates: Subject<any>;
     activateUpdate: jasmine.Spy;
   };
-  let documentMock: { location: { reload: jasmine.Spy } };
+  let documentMock: { location: { reload: jasmine.Spy }; visibilityState: string };
 
   beforeEach(() => {
     swUpdateMock = {
@@ -24,6 +24,7 @@ describe('NgswUpdateService', () => {
     };
     documentMock = {
       location: { reload: jasmine.createSpy('reload') },
+      visibilityState: 'hidden',
     };
 
     TestBed.configureTestingModule({
@@ -49,6 +50,20 @@ describe('NgswUpdateService', () => {
 
     expect(swUpdateMock.activateUpdate).toHaveBeenCalled();
     expect(documentMock.location.reload).toHaveBeenCalled();
+  });
+
+  it('activates without reloading while the user is looking at the page', async () => {
+    // The defect this guards: a deploy by someone else reloaded the page in
+    // front of a user mid-checkout, destroying what they had typed.
+    documentMock.visibilityState = 'visible';
+    swUpdateMock.isEnabled = true;
+    service = new NgswUpdateService(TestBed.inject(SwUpdate), TestBed.inject(DOCUMENT));
+
+    swUpdateMock.versionUpdates.next({ type: 'VERSION_READY' });
+    await Promise.resolve();
+
+    expect(swUpdateMock.activateUpdate).toHaveBeenCalled();
+    expect(documentMock.location.reload).not.toHaveBeenCalled();
   });
 
   it('should not activate update when service worker updates are disabled', () => {

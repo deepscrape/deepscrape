@@ -29,6 +29,7 @@ you can actually check.
 | `12-service-orchestration-and-layer-inventory.md` | Phase 7 | **the answer sheet**: what exists in all four layers, which service owns what, and the four design pieces still missing |
 | `20-must-fix.md` | cross-cutting — **defect ledger** | open / verify / decision / refused rows and a dated gate table; status re-verified 2026-10-21. Do not work it in numeric order |
 | `21-optimizations.md` | cross-cutting | **latency, cost, duplicate work and shrink** — what one request actually costs, what is unnecessary in it, and the zero-to-scale flag plan. Phases A–B applied and gated 2026-10-21; O2, O4 and O21 still need a real deploy or a measured build |
+| `22-dev-prod-parity.md` | cross-cutting | **where dev and production are different systems** — the Fly org literal, emulator/callable split-brain, two databases in one page, and the mail/SMS gaps. Sorted easiest-first, with probes for what is not yet measured |
 
 Companion decision record: `docs/ADR-2026-10-BROWSER-SESSIONS.md`.
 

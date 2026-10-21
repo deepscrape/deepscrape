@@ -67,6 +67,7 @@ crawlagent **20** (pool claim/release, contexts, sessions, janitor, WebRTC), BFF
 | Change | Goes in | Never |
 |---|---|---|
 | Customer-facing HTTP route | `bff/api.ts` | `functions/src/infrastructure/syncaiapi.ts` — its table is never mounted |
+| Authorization inside a callable | `request.auth.uid` checks, or `resolveActorSessionAccess` when it is privileged | `requirePermission` — it is bound to an Express request and a callable has none |
 | Logic the BFF runs | `functions/src/handlers/*.ts` | assuming the Functions host reaches it |
 | Browser tool exposure | `functions/src/domain/webrain-tools.domain.ts` | inline in a handler |
 | Fly machine lifecycle | arachnefly `interfaces/handlers/` | the Angular app |

@@ -1431,31 +1431,35 @@ const collectApiKeySecretPaths = async (uid: string): Promise<string[]> => {
  * @return {Promise<object>} What was removed.
  */
 /**
- * Machine ids still attached to a live session, read BEFORE the purge destroys them.
+ * Move every live browser session's `idleDeadline` into the past so the reaper disposes of
+ * its machine on the next tick.
  *
- * The only way to stop a machine is an authenticated call to arachnefly, and every
- * machine call in this codebase relays the CALLER's ID token — arachnefly verifies it
- * against the uid stamped on the machine. A scheduled purger has no caller, and no
- * service credential exists to stand in for one, so this function cannot suspend what
- * it finds. It records it instead: erasing the session documents destroys the last
- * pointer to a running VM, and a pointer nobody wrote down is a machine that bills Fly
- * forever and appears in no view of the system.
+ * Suspending needs an authenticated arachnefly call carrying the owner's ID token, and a
+ * scheduled purger has no caller. `idleDeadline` is the lever this repo already uses for
+ * exactly that (see `expireMeteredSession`), so the purge hands the machines over instead
+ * of destroying the only pointer to them. The session documents are therefore left in
+ * place for the reaper to close.
  * @param {string} uid The account about to be erased.
- * @return {Promise<string[]>} Machine ids an operator must release, may be empty.
+ * @return {Promise<string[]>} Machine ids now queued for the reaper, may be empty.
  */
-async function listLiveMachineIds(uid: string): Promise<string[]> {
+async function expireSessionsForReaper(uid: string): Promise<string[]> {
   const machineIds: string[] = []
   try {
     const sessions = await db.collection("users").doc(uid).collection("browserSessions").get()
+    const now = Date.now()
     for (const doc of sessions.docs) {
       const data = doc.data() as {machineId?: unknown; state?: unknown}
-      if (typeof data.machineId === "string" && data.machineId && data.state !== "closed") {
-        machineIds.push(data.machineId)
+      if (typeof data.machineId !== "string" || !data.machineId || data.state === "closed") {
+        continue
       }
+      // A deadline at or before `now` is due; `0` means "no expiry" to the reaper, so a
+      // past epoch is the only value that works for a tier that never set one.
+      await doc.ref.set({idleDeadline: now - 1}, {merge: true})
+      machineIds.push(data.machineId)
     }
   } catch (error) {
     // Losing the list must not block an erasure that is past its deadline.
-    console.error(`CRITICAL: could not list machines for deleted account ${uid}:`, error)
+    console.error(`CRITICAL: could not expire browser sessions for deleted account ${uid}:`, error)
   }
   return machineIds
 }
@@ -1539,13 +1543,12 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
     console.error(`CRITICAL: failed to purge blobs for deleted account ${uid}:`, error)
   }
 
-  // Read the machine ids while the records that name them still exist, and refuse to
-  // let them vanish silently. See `listLiveMachineIds` for why they cannot be stopped
-  // from here.
-  const orphanedMachines = await listLiveMachineIds(uid)
+  // Hand the machines over before anything that points at them disappears, and keep the
+  // session documents: they are the reaper's only route to the VM.
+  const orphanedMachines = await expireSessionsForReaper(uid)
   if (orphanedMachines.length > 0) {
-    console.error(
-      `CRITICAL: purging ${uid} orphans ${orphanedMachines.length} running machine(s), release them manually: ${orphanedMachines.join(", ")}`
+    console.log(
+      `Handed ${orphanedMachines.length} machine(s) from ${uid} to the reaper: ${orphanedMachines.join(", ")}`
     )
   }
 
@@ -1556,6 +1559,9 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
     const collections = await userRef.listCollections()
     for (const collectionRef of collections) {
       if (RETENTION_SUBCOLLECTIONS.includes(collectionRef.id)) continue
+      // Already handed to the reaper: deleting it now would destroy the last pointer to a
+      // machine that is still running.
+      if (collectionRef.id === "browserSessions" && orphanedMachines.length > 0) continue
       await db.recursiveDelete(collectionRef)
       collectionsDeleted.push(collectionRef.id)
     }

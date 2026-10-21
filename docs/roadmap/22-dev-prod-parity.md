@@ -159,6 +159,29 @@ has to say `WEBRAIN_HTTP_ADDR=0.0.0.0:9223`, which in turn **requires** `WEBRAIN
 same string as `WEBRAIN_MCP_TOKEN` in the BFF and the emulator, or every call is a 401 that reads as
 "search is broken".
 
+### The Obscura version decides whether frames exist at all (measured 2026-10-21)
+
+This was got wrong once, so it is written down with the numbers. Obscura's **paint engine arrived in
+0.2.0** — the README says so outright ("Native rendering is here. No Chromium required."). A 0.1.x
+binary answers `Page.captureScreenshot` with
+`"Page.captureScreenshot is not supported by Obscura: no layout or paint engine"`, which reads like a
+missing capability rather than a stale build.
+
+| Where | Version | Can paint? |
+|---|---|---|
+| `browser-session:local` (what the platform deploys) | **0.2.3** | yes |
+| host `webrain install obscura` output | **0.1.11** | **no** |
+| `h4ckf0r0day/obscura:latest` as pulled here | 0.1.11 (stale) | no |
+| Docker Hub `latest` / `0.2.5` | 0.2.5 | yes |
+
+Two consequences worth keeping. `webrain doctor` reports **✅** for the host's 0.1.11 binary — the
+engine is *present*, which is not the question a frame path needs answered, so a version check is what
+actually gates frames. And 0.2.5 **refuses to bind CDP on a non-loopback address without
+`OBSCURA_CDP_TOKEN` of at least 32 bytes** (`refusing to expose CDP without authentication`); 0.1.x had
+no such guard. That only affects a setup that points `CDP_URL` at Obscura — the platform reaches
+Obscura through webrain, never through its CDP port — but it makes "just publish 9222" impossible now,
+which is the correct direction.
+
 
 
 ## What is NOT a parity problem (checked, so it is not re-opened)

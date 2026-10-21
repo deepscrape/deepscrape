@@ -106,6 +106,13 @@ const redis: Redis = upstashRestEnabled ? new Redis({
     token: upstashToken,
 }) : createNoopRedis()
 
+// Named once per process, like `[storage-backend]`. The no-op answers "OK" to
+// every command, so without this line a dev process looks like a working one
+// and "the rate limit never fires here" gets chased as a defect.
+if (!upstashRestEnabled) {
+    console.info("[redis-backend] none -- cache, limits and presence are no-ops")
+}
+
 /**
  * Run a Lua script through the shared client.
  *

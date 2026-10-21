@@ -38,6 +38,10 @@ works but is needlessly hostile in dev).
 | 8 | **Two databases in one page** | correctness | M | The client reads the emulator directly; every `/api/*` read hits the BFF's own Firestore. `firebase.dev.json` sets `"database": "easyscrape"`, and the client asks for `easyscrape` explicitly, so the *names* agree — what does not is which process is on the emulator. | One startup line in `bff/server.ts` naming the Firestore it opened (emulator host present / absent). Turns a silent mismatch into a visible one. |
 | 9 | **No single command brings dev up** | improvement | M | `npm run serve` = `build:dev` + `firebase emulators:start`, and it does **not** start the BFF; `bff/package.json` `start` runs it separately with `bff/.env.dev`. `firebase.dev.json` rewrites hosting to a static `index.csr.html`, so only `/api` reaches the BFF — meaning a dev who starts one process gets a UI whose every API call fails, and there is no message saying why. | One documented `dev` script that runs all three (Angular dev server, emulators, BFF). Not done here: it needs a process runner, and the env file it depends on is not in the repo. |
 | 10 | **`emailVerified` may differ by path** | probe | S | The combined profile ORs the Firebase flag with a custom claim (`buildCombinedUserData`); the emulator's behaviour for claims written by a blocking function differs (it writes the user record twice). | Probe: verify one user in each and compare `getTokenResult().claims`. No fix until the result is known. |
+| 11 | **Dev artifacts land in the production bucket** | correctness | S | `resolveBucketName()` falls back to `${GCP_PROJECT_ID}.appspot.com` when `STORAGE_BUCKET` is unset, so the default target is the **production** bucket. Worse than untidy: `decideStorageScope` keys the `shared` scope by **URL**, so a dev instance populating it writes a body fetched from the dev machine's network position into the cache production customers read. | **No code.** `STORAGE_BUCKET=staging.libnet-d76db.appspot.com` — measured to exist with `gcloud storage buckets list` — and a second Tigris bucket for `TIGRIS_BUCKET`. The `[storage-backend]` line at boot already names which one answered. |
+| 12 | **A dev process on the production Redis** | correctness | S | `upstreams.ts` has a dev branch for arachnefly, crawl4ai and webrain; **Upstash and Tigris have none** — they resolve to whatever env says, and the key builders carry no environment prefix. A dev process on the production database takes production worker leases, shares rate-limit buckets, and drains the production analytics queue. | **No code.** The account already holds two databases — `crawlcache` and `crawldev` — so dev points `UPSTASH_REDIS_REST_URL`/`_TOKEN` at `crawldev`. Verified with `redis_database_list_databases`. |
+| 13 | **No Redis configured is a silent no-op, by design** | not a bug | — | `createNoopRedis` answers `"OK"`, `0`, `null` to every modelled command so callers fall through to Firestore. Leases still fail closed (a real holder string is required), but rate limits, presence and the analytics FIFO silently do nothing. | Nothing to fix. Recorded so "the dev rate limit never fires" is not chased as a defect. |
+| 14 | **Two storage systems in one page in dev** | not a bug | — | Client avatars use the **client** Storage SDK (`uploadFileToStorage` → `uploads/{uid}/{name}`), which the emulator honours on :9199. Server artifacts go through the **Admin** SDK, which has no emulator and reaches GCS/Tigris directly. | Expected. Noted because "my upload works but the artifact does not" is the same page talking to two backends. |
 
 ## Where a code lives vs where the code runs (measured 2026-10-21)
 
@@ -48,6 +52,22 @@ works but is needlessly hostile in dev).
 
 That table is the single most useful thing in this document. A bare `ng serve` is a
 production client, and nothing in the UI says so.
+
+## The five shared backends, measured 2026-10-21
+
+| Backend | Any dev branch in code? | What dev therefore reaches | Separate dev resource that ALREADY exists |
+|---|---|---|---|
+| Firestore | yes — named database, plus the emulator | the emulator on the client; its own process on the BFF | `easyscrape` (same name both sides) |
+| GCS (the artifact fallback) | **no** | `libnet-d76db.appspot.com` | `staging.libnet-d76db.appspot.com` |
+| Tigris (the artifact default) | **no** | whatever `TIGRIS_BUCKET` names | none found — one bucket per environment to create |
+| Upstash Redis | **no** | whatever the REST URL and token name | `crawldev` (plus `crawlcache`) |
+| QStash | destination only, and only since row 1 | the production worker URL, now **refused** | `qstash-cli dev` |
+
+The conclusion that matters: **the platform is fully parameterised already.** Dev/prod
+separation for storage and Redis is two configuration values per surface, not code. The one
+place that needed code was the queue destination, because that was the only one that failed
+**successfully** — every other divergence here is either loud at boot (`[storage-backend]`) or
+inert (`createNoopRedis`).
 
 
 ## What is NOT a parity problem (checked, so it is not re-opened)
@@ -62,11 +82,13 @@ production client, and nothing in the UI says so.
 
 ## Verification order
 
-Rows 1–2 are done and gated. Next by value per line of code: **9** (one script, removes the
-"why does nothing work locally" class entirely), then **3 + 4 together** (they are the same
-edit — one return contract plus one log line), then **5** (four lines, deletes a widget),
-then **6** (one line, but it needs an arachnefly deploy). Row 7 is a log line. Row 8 is a log
-line. Row 10 is a probe before anyone writes a fix.
+Rows 1–2 are done and gated. **Next are 11 and 12, because they are two env values and zero
+code** — a dev database already exists (`crawldev`) and a staging bucket already exists, so
+the work is naming them in the dev env file. Then **9** (one script, removes the "why does
+nothing work locally" class), then **3 + 4 together** (same edit — one return contract plus
+one log line), then **5** (four lines, deletes a widget), then **6** (one line, needs an
+arachnefly deploy). Rows 7 and 8 are a log line each. Row 10 is a probe before anyone writes
+a fix. Rows 13 and 14 are recorded so they are not investigated twice.
 
 What this document deliberately does not do: no probe was run against a live emulator in
 this pass, so every "works in dev" claim above is either quoted from source or from the

@@ -318,7 +318,12 @@ jobs:
         run: npx firebase-tools ext:list --project ${{ env.FIREBASE_PROJECT_ID }} --json
 
       - name: Deploy Firebase Functions
-        if: needs.detect_changes.outputs.functions == 'true'
+        # Push to main only. This workflow also runs on `pull_request`, and this
+        # step deploys the PRODUCTION project with `--force` — so any same-repo PR
+        # (the job's only gate is `head.repo.full_name == github.repository`, which
+        # blocks forks, not branches) shipped backend code before review, and
+        # `--force` deleted functions absent from that PR's build.
+        if: needs.detect_changes.outputs.functions == 'true' && github.event_name == 'push'
         working-directory: ./functions
         run: npx firebase-tools deploy --only functions --project ${{ env.FIREBASE_PROJECT_ID }} --force
         env:

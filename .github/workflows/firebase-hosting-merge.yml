@@ -131,8 +131,10 @@ jobs:
       # Build Angular App in production mode
       - name: Build Angular App
         # The BFF image embeds dist/deepscrape/browser (Dockerfile COPY), so a
-        # bff-only change still needs the Angular build.
-        if: needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.hosting == 'true' || needs.detect_changes.outputs.bff == 'true'
+        # bff-only change still needs the Angular build — and so does a
+        # functions-only change, because the image step below runs on
+        # `functions == 'true'` too and would hit a missing `dist/`.
+        if: needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.hosting == 'true' || needs.detect_changes.outputs.bff == 'true' || needs.detect_changes.outputs.functions == 'true'
         run: bun run build
         env:
           PRODUCTION: true
@@ -189,6 +191,9 @@ jobs:
             --port 8080 \
             --memory 512Mi --cpu 1 \
             --min-instances 1 \
+            --max-instances 10 \
+            --concurrency 40 \
+            --cpu-boost \
             --set-env-vars PRODUCTION=true \
             --set-secrets FUNCTIONS_ENV_JSON=FUNCTIONS_ENV_JSON:latest,FIRE_SERVICE_ACCOUNT_KEY=FIRE_SERVICE_ACCOUNT_KEY:latest \
             --quiet
@@ -202,14 +207,12 @@ jobs:
       # deploy step below.
       - name: Deploy to Firebase Hosting
         if: needs.detect_changes.outputs.angular == 'true' || needs.detect_changes.outputs.hosting == 'true'
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: ${{ env.FIREBASE_PROJECT_ID }}
-          channelId: live
-          entryPoint: "."
-          expires: "never"
+        # The CLI, not action-hosting-deploy: `firebase.json` declares THREE
+        # hosting configs (targets marketing/dashboard/console) and a channel
+        # deploy can only address ONE site — the action has no `target` input, so
+        # without it, it deploys nothing. `--only hosting` fans out across every
+        # target. Auth comes from GOOGLE_APPLICATION_CREDENTIALS, exported above.
+        run: npx firebase-tools deploy --only hosting --project "$FIREBASE_PROJECT_ID" --non-interactive
         env:
           PRODUCTION: true
           EMULATORS: "false"
@@ -230,6 +233,16 @@ jobs:
           JINAAI_API_KEY: ${{ secrets.JINAAI_API_KEY }}
           API_CRAWL4AI_URL: ${{ vars.API_CRAWL4AI_URL }}
           API_ARACHNEFLY_URL: ${{ vars.API_ARACHNEFLY_URL }}
+
+      # Rules, indexes and Storage rules live in git but had no deploy path at
+      # all — the only callers were manual `package.json` scripts. A merged rule
+      # change was green in CI and never reached the database, and an undeployed
+      # collection-group index answers FAILED_PRECONDITION, which the admin
+      # sessions page renders as "no sessions" (an operator reading "idle" while
+      # customers are billed). Runs on every merge because these files are the
+      # source of truth and a merge is the only moment they can change.
+      - name: Deploy Firestore rules, indexes and Storage rules
+        run: npx firebase-tools deploy --only firestore:rules,firestore:indexes,storage --project "$FIREBASE_PROJECT_ID" --non-interactive
 
       - name: Prepare functions .env for deploy analysis
         run: |

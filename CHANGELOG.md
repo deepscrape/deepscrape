@@ -1,3 +1,10 @@
+# [0.9.0-beta.25](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.24...v0.9.0-beta.25) (2026-10-22)
+
+
+### Bug Fixes
+
+* **crawl:** post the crawl4ai provider at the path crawlagent serves ([7604d85](https://github.com/deepscrape/deepscrape/commit/7604d8505ce5eb50b1a6364e2ca71a5dd1156f94))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

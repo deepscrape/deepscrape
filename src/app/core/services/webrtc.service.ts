@@ -107,8 +107,10 @@ export class WebRtcService {
     this[EVENT.CONNECTING]();
 
     try {
-      // First establish WebSocket connection (similar to base.ts)
-      const wsUrl = `${serverBase.replace(/^http(s)?:\/\//, 'ws$1://')}?password=${encodeURIComponent(password)}&username=${encodeURIComponent(displayName)}`; // ?token=${jwtToken}
+      // First establish WebSocket connection (similar to base.ts). Credentials go in the
+      // query string because neko's own upgrade handler reads them there; no ID token ever
+      // does -- a URL lands in proxy and CDN logs and a token in one is replayable.
+      const wsUrl = `${serverBase.replace(/^http(s)?:\/\//, 'ws$1://')}?password=${encodeURIComponent(password)}&username=${encodeURIComponent(displayName)}`;
       this.connectToWebSocket(wsUrl);
 
       // Wait for the PROVIDE event which will contain ICE servers
@@ -134,53 +136,6 @@ export class WebRtcService {
       return this.sessionId;
     } catch (error) {
       console.error('Failed to establish WebRTC connection:', error);
-      this.close();
-      throw error;
-    }
-  }
-  
-  /**
-   * Attempt to reconnect to an existing session
-   * @param serverBase Base URL of the server
-   * @param jwtToken JWT authentication token
-   * @param sessionId The session ID to reconnect to
-   */
-  public async reconnect(serverBase: string, jwtToken: string, sessionId: string) {
-    if (this.socketOpen) {
-      console.warn('WebSocket connection already exists');
-      return;
-    }
-
-    if (!this.supported) {
-      throw new Error('WebRTC is not supported in this browser');
-    }
-
-    try {
-      console.log(`Attempting to reconnect to session ${sessionId}`);
-      this[EVENT.RECONNECTING]();
-
-      // Connect to WebSocket with session ID
-      const wsUrl = `${serverBase.replace(/^http(s)?:\/\//, 'ws$1://')}/ws/${sessionId}?token=${jwtToken}`;
-      this.connectToWebSocket(wsUrl);
-
-      // Wait for connection to be established
-      await firstValueFrom(this.connectionStatusSubject$.pipe(
-        filter(status => status === true),
-        take(1),
-        timeout(10000),
-        catchError(error => {
-          throw new Error('Timed out waiting for WebSocket reconnection');
-        })
-      ));
-
-      this.sessionId = sessionId;
-      
-      // The server should automatically recreate the WebRTC connection via the
-      // SIGNAL.PROVIDE event, which our handlers will process
-      
-      return sessionId;
-    } catch (error) {
-      console.error('Failed to reconnect to session:', error);
       this.close();
       throw error;
     }

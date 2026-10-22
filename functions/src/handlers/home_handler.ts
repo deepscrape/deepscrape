@@ -74,6 +74,15 @@ export const statusCheck = async (req: Request, res: Response) => {
                 restClient: isRedisEnabled,
                 rateLimitStore: rateLimitStoreName(),
             },
+            // Presence only, never the value: the three browser-session
+            // settings that fail SILENTLY when a deploy forgets them. An
+            // empty URL is a transport error, an empty token a 401, an empty
+            // image refuses every session. This tells wired from deployed.
+            browser: {
+                engineUrl: env.WEBRAIN_MCP_URL !== "",
+                engineToken: env.WEBRAIN_MCP_TOKEN !== "",
+                machineImage: env.BROWSER_MACHINE_IMAGE !== "",
+            },
         })
     } catch (error) {
         console.error("Error in statusCheck:", error)

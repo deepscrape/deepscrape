@@ -58,7 +58,7 @@ of the diff, never about how much damage a wrong one does.
 | 3 | 60 | M | money | **Half fixed 2026-10-21 — and the blocker recorded here was wrong.** Importing `handlers/browser-sessions.ts` works under `tsx` with no credentials (measured: `IMPORT_OK`), so "builds the Admin SDK at import" was never the obstacle. What needs an emulator is the **I/O**: `db` is imported straight from `app/config` and called inside the store functions, and there is no injection seam. The decisions that run *before* any I/O are now pinned, and neither had a spec: `refusalFor` (every reason answers a 4xx with a sentence; quota is 429, a byo request with no endpoint is 403 — collapsing them is what makes a support ticket) and `parseCreateRequest` (bad mode, unknown engine **at runtime**, and an absent/blank/trimmed `cdpUrl`). | `domain/browser-session.domain.ts`; **7 new specs**. Gates: functions build 0, lint 0 errors, **983 tests / 974 pass / 0 fail**. Remaining: attach/close/keepalive behaviour, which still needs an emulator or a seam. |
 | 4 | 89 | S | user data | **Fixed 2026-10-21, with the conservative half of the choice.** The worker still activates immediately, so the next navigation gets the new assets, but the page reloads **only while the tab is hidden** — someone else's deploy can no longer wipe a half-typed checkout in front of the user. The better end state is prompt-then-reload, and it stays open: it needs a string in five locales plus a snackbar action. | `ngsw-update.service.ts`; the spec asserts reload-when-hidden and **no** reload-when-visible. Gates: app tsc 0, `bun run build` 0 (14 routes prerendered), Karma **903**. |
 | 5 | 67 | H | correctness | A retry appends a second row for one target, and `deriveStatus` mixes row counts with URL counts. | One document per target keyed by `sha1(url)` — schema change plus migration. |
-| 6 | 87 | H | security | The full ID token rides in the WebSocket URL (`?token=`), so it lands in proxy/CDN logs and is replayable. | `webrtc.service.ts:111`, `:163`. Needs a transport change (subprotocol or first-frame auth) plus whatever terminates the socket. |
+| 6 | 87 | H | security | **Fixed 2026-10-22 — the leak was dead code.** `reconnect()` was the only place that put an ID token in a URL (`/ws/:id?token=`), and **nothing called it** — `connect()` is the only entry the live viewer uses. Deleting the method removes the leak with no transport change. The `?token=` on the `connect` path was already only a comment. What remains is neko's own `password=`/`username=` query pair, which neko's upgrade handler requires: that is server-side auth to build, not a client fix. | `src/app/core/services/webrtc.service.ts` (`reconnect` deleted). Gates: app tsc 0, `bun run build` 0 (14 routes prerendered), Karma 904/904. |
 | 7 | 134 | H | cost | `byIP.<raw address>` is uncapped on `metrics_daily`, `metrics_hourly` and the dashboard singleton; near 1 MiB the **whole batch** fails. | Three readers depend on the shape, so it is a schema change. |
 
 ### Verified as nice-to-have — do not start these next
@@ -74,6 +74,9 @@ are recorded so nobody re-derives them into a defect.
 
 Verify-only rows cost a lookup rather than a change — see *Needs re-deriving from source* below.
 #50 is the one that cannot be settled here at all: it needs the deployed `FUNCTIONS_ENV_JSON`.
+Since 2026-10-22 that question is a `curl`, not a secret read: `GET /api/status` reports the
+presence (never the value) of `WEBRAIN_MCP_URL`, `WEBRAIN_MCP_TOKEN` and `BROWSER_MACHINE_IMAGE`
+as `browser.engineUrl` / `engineToken` / `machineImage`.
 
 ## Decisions — not mine to take
 

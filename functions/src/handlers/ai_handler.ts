@@ -76,8 +76,12 @@ const toHeaderValue = (value: string | string[] | undefined, fallback = ""): str
 }
 
 export const crawl4aiCore = async (req: Request, res: Response) => {
-    // const decodedUrl = decodeURIComponent(url) // decode the URL
-    const apiUrl = `${env.API_CRAWL4AI_URL}/crawl`
+    // `crawlagent` mounts its crawl router at `/api/v1/crawl` (`server.py`), and
+    // the route it lands on is `crawl.reader` -- the jina-reader shape this
+    // function reads below (`{data: {title, url, usage, content}}`). This used to
+    // post to `/crawl`, which exists nowhere in that service: every crawl4ai crawl
+    // 404'd and the provider was effectively dead.
+    const apiUrl = `${env.API_CRAWL4AI_URL}/api/v1/crawl/`
     const { urls, priority } = req.body
 
     // ponytail: the crawler agent egresses on our behalf and nothing downstream

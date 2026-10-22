@@ -74,9 +74,13 @@ are recorded so nobody re-derives them into a defect.
 
 Verify-only rows cost a lookup rather than a change — see *Needs re-deriving from source* below.
 #50 is the one that cannot be settled here at all: it needs the deployed `FUNCTIONS_ENV_JSON`.
-Since 2026-10-22 that question is a `curl`, not a secret read: `GET /api/status` reports the
+Since 2026-10-22 that question is a `curl`, not a secret read: `GET /status` reports the
 presence (never the value) of `WEBRAIN_MCP_URL`, `WEBRAIN_MCP_TOKEN` and `BROWSER_MACHINE_IMAGE`
-as `browser.engineUrl` / `engineToken` / `machineImage`.
+as `browser.engineUrl` / `engineToken` / `machineImage`. **The path is `/status`, not
+`/api/status`** — it and `/services/contact` are the two public routes the api group carries,
+every other route spells its own `/api/...`. Verified in production the same day:
+`https://deepscrape.dev/status` answers `production=true`, `trustProxy=true`,
+`rateLimitStore=redis`; the `browser` block appears only after the next deploy.
 
 ## Decisions — not mine to take
 

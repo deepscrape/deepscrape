@@ -11,22 +11,46 @@ import { HttpErrorResponse } from '@angular/common/http'
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop'
 import { MatIcon } from '@angular/material/icon'
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
+import { concat, switchMap, takeWhile, timer } from 'rxjs'
+import { Router, RouterModule } from '@angular/router'
 import {
   SERP_DEFAULTS,
   SERP_ENGINE_OPTIONS,
   SERP_LIMITS,
+  CrawlOperation,
+  JobResult,
   SerpEnvelope,
   SerpErrorEnvelope,
   SerpEngine,
   SerpRequest,
   SerpResponse,
 } from '../../types'
-import { SearchService } from '../../services'
+import { CrawlOperationStatus } from '../../enum'
+import { AuthService, CrawlAPIService } from '../../services'
 import { StinputComponent } from '../stinput/stinput.component'
 import { DropdownComponent } from '../dropdown/dropdown.component'
 import { RadioToggleComponent } from '../radiotoggle/radiotoggle.component'
 import { SerpResultsComponent } from '../serp-results/serp-results.component'
 import { ResultEnvelopeState } from '../result-envelope/result-envelope.component'
+
+/**
+ * How often a queued search is re-read.
+ *
+ * The same cadence the tools panel and the operation page use: this mode is a
+ * VIEWER of work that runs server-side, so each read only answers "has it
+ * landed?".
+ */
+const JOB_POLL_MS = 2000
+
+/** The statuses after which nothing about the job can change. */
+const JOB_TERMINAL: readonly CrawlOperationStatus[] = [
+  CrawlOperationStatus.COMPLETED,
+  CrawlOperationStatus.FAILED,
+  CrawlOperationStatus.CANCELED,
+]
+
+/** The tool id `TOOL_JOB_ROUTES` knows this mode by. */
+const SERP_JOB_TOOL = 'serp'
 
 /**
  * The structured-search playground mode.
@@ -51,6 +75,7 @@ import { ResultEnvelopeState } from '../result-envelope/result-envelope.componen
   selector: 'app-search',
   imports: [
     ReactiveFormsModule,
+    RouterModule,
     MatIcon,
     TranslateModule,
     StinputComponent,
@@ -65,9 +90,29 @@ import { ResultEnvelopeState } from '../result-envelope/result-envelope.componen
 export class AppSearchComponent {
   @HostBinding('class') classes = 'flex items-center flex-col relative w-full'
 
-  private readonly searchService = inject(SearchService)
+  private readonly auth = inject(AuthService)
+  private readonly crawl = inject(CrawlAPIService)
+  private readonly router = inject(Router)
   private readonly translate = inject(TranslateService)
   private readonly destroyRef = inject(DestroyRef)
+
+  /**
+   * The caller, for the `/operations` row this mode files.
+   *
+   * A signal rather than the `route.snapshot.data['user']` the page-level
+   * surfaces use: this component is a playground MODE and has no route data of
+   * its own, so the auth stream is the only source that is true for it.
+   */
+  private readonly user = toSignal(this.auth.user$)
+
+  /**
+   * The job this search was queued as, once the queue has accepted it.
+   *
+   * Exposed so the mode can say where the answer goes: the point of queueing is
+   * that the user may leave, and a run they cannot find again is worse than one
+   * that died with the tab.
+   */
+  readonly jobId = signal<string | null>(null)
 
   /** Exposed for the template so the fields advertise the engine's own bounds. */
   readonly limits = SERP_LIMITS
@@ -147,11 +192,24 @@ export class AppSearchComponent {
   }
 
   /**
-   * Run the search.
+   * Run the search as a QUEUED JOB.
    *
    * Touches the form rather than throwing when it is invalid, so the field
    * errors appear where the shared input controls already render them instead
    * of a separate banner.
+   *
+   * Why queued and not called directly: this mode called `POST /api/serp`,
+   * which lived exactly as long as this tab. Switching playground mode
+   * destroyed the component and aborted the request, so the answer was gone and
+   * nothing recorded that the search had been made -- which is also why Search
+   * was the only mode with nothing in `/operations`. One unit of work on the
+   * queue fixes both: the run outlives the tab, and the row is readable from the
+   * list and from its own page.
+   *
+   * The request body is still `SerpRequest`; the queue's own mapper
+   * (`serpArguments`, via `TOOL_JOB_ROUTES.serp`) is the same one the direct
+   * route uses, so a queued search and a direct one cannot take different
+   * arguments.
    */
   submit(): void {
     if (this.queryControl.invalid || this.limitControl.invalid) {
@@ -162,12 +220,33 @@ export class AppSearchComponent {
 
     this.searchState.set('loading')
     this.errorMessage.set('')
+    this.jobId.set(null)
 
-    this.searchService
-      .search(this.buildRequest())
-      .pipe(takeUntilDestroyed(this.destroyRef))
+    this.crawl
+      .enqueueTool(
+        SERP_JOB_TOOL,
+        { ...this.buildRequest() },
+        this.operationRow(),
+      )
+      .pipe(
+        switchMap(task => {
+          this.jobId.set(task.id)
+          // Read once IMMEDIATELY, then poll. A search can finish before the
+          // first timer tick, and an immediate read is also what makes a fast
+          // engine feel like a request rather than a wait.
+          return concat(
+            this.crawl.getJobResult(task.id),
+            timer(JOB_POLL_MS, JOB_POLL_MS).pipe(
+              switchMap(() => this.crawl.getJobResult(task.id)),
+            ),
+          ).pipe(
+            takeWhile(result => !JOB_TERMINAL.includes(result.status), true),
+          )
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
-        next: envelope => this.applyEnvelope(envelope),
+        next: result => this.applyJobResult(result),
         error: error => this.applyFailure(error),
       })
   }
@@ -187,6 +266,80 @@ export class AppSearchComponent {
     this.response.set(null)
     this.errorMessage.set('')
     this.searchState.set('idle')
+  }
+
+  /**
+   * The `/operations` row this search should leave behind.
+   *
+   * The server owns everything it can know better -- `id`, `task_id`,
+   * `created_At`, `status`, and `author.uid` from the credential -- and merges
+   * this row underneath them. So only what it cannot know is sent: that this
+   * was a serp call. `urls` is left empty on purpose; the server fills it with
+   * the call's own label (`serp · <query>`), which is what the list renders.
+   *
+   * `urlPath` is this component's own url, so the row can say where it was
+   * started from.
+   * @return {CrawlOperation} The row to send.
+   */
+  private operationRow(): CrawlOperation {
+    const user = this.user()
+
+    return {
+      type: 'playground',
+      author: {
+        uid: user?.uid ?? '',
+        displayName: user?.currProviderData?.displayName || 'anonymous',
+      },
+      name: SERP_JOB_TOOL,
+      created_At: Date.now(),
+      scheduled_At: Date.now(),
+      urls: [],
+      status: CrawlOperationStatus.READY,
+      urlPath: this.router.url,
+    }
+  }
+
+  /**
+   * Fold one job snapshot into the view.
+   *
+   * A snapshot with no rows yet is a call the queue has accepted but not run,
+   * so nothing is set and the mode keeps its loading state rather than painting
+   * an empty answer. The LAST row wins: the stored array is append-only and a
+   * redelivered target leaves two.
+   *
+   * The job's row carries the worker's raw `webrain_serp` payload in `data`,
+   * which is the same `SerpResponse` the direct route returned, so the results
+   * view is unchanged by the move to the queue.
+   * @param {JobResult} result One read of the job.
+   * @return {void}
+   */
+  private applyJobResult(result: JobResult): void {
+    const item = result.items[result.items.length - 1]
+
+    if (!item) {
+      return
+    }
+
+    const query = this.queryControl.value.trim()
+
+    if (item.status === 'ok') {
+      this.applyEnvelope({
+        provider: 'webrain',
+        status: 'ok',
+        query,
+        data: item.data as SerpResponse,
+        tokens: item.tokens?.est_tokens,
+        ms: item.ms,
+      })
+      return
+    }
+
+    this.applyEnvelope({
+      provider: 'webrain',
+      status: 'error',
+      query,
+      error: item.message || (this.translate.instant('SEARCH.FAILED') as string),
+    })
   }
 
   /**

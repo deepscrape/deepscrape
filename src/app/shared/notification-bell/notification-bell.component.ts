@@ -9,7 +9,11 @@ import { RippleDirective } from 'src/app/core/directives/ripple.directive';
 import { AuthService } from 'src/app/core/services/auth.service';
 import { NotificationCenterService, NotificationKind } from 'src/app/core/services/notification-center.service';
 
-const KIND_META: Record<NotificationKind, { icon: string; circle: string; ring: string }> = {
+/**
+ * How each notification kind looks. Exported because the `/alerts` page renders
+ * the same rows; a second copy there would drift the moment a kind is added.
+ */
+export const KIND_META: Record<NotificationKind, { icon: string; circle: string; ring: string }> = {
   crawl: { icon: 'travel_explore', circle: 'bg-cyan-100 dark:bg-cyan-500/20', ring: 'text-cyan-700 dark:text-cyan-300' },
   billing: { icon: 'credit_card', circle: 'bg-rose-100 dark:bg-rose-500/20', ring: 'text-rose-700 dark:text-rose-300' },
   security: { icon: 'gpp_maybe', circle: 'bg-rose-100 dark:bg-rose-500/20', ring: 'text-rose-700 dark:text-rose-300' },
@@ -22,6 +26,7 @@ type ServerAlert = {
   title?: string;
   message?: string;
   type?: string;
+  link?: string;
   createdAt?: { toDate?: () => Date };
 };
 
@@ -105,7 +110,7 @@ export class NotificationBellComponent {
             kind: alert.type === 'warning' || alert.type === 'error' ? 'security' : 'info',
             title: alert.title || 'Notification',
             body: alert.message,
-            link: '/settings/security',
+            link: alert.link || '/settings/security',
           });
         }
       }, () => undefined);

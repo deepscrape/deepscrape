@@ -31,38 +31,14 @@
   @if (runMode() === 'scrape') {
   <!-- select CrawlPack or press the link to create one -->
   <div class="relative flex flex-row flex-wrap items-center justify-end gap-4 mb-2">
-    @if(!crawlConfigPack.length) {
-      <a
-        [routerLink]="['/crawlpack']"
-        class="text-lg gap-1 hover:bg-blue-600/[0.5] focus:bg-blue-900/[0.8] bg-blue-600/[.8] text-gray1 dark:text-gray-100 dark:hover:text-gray-300 font-medium py-2 px-4 duration-300 rounded-full transition-colors">
-        {{ 'CRAWL.SETUP_CONFIGURATION' | translate }}
-        <span class="text-red-400">*</span>
-      </a>
-      }@else {
-      <app-radiotoggle
-        class="flex-grow"
-        [control]="stream | formControl"
-      [title]="'CRAWL.STREAM' | translate"></app-radiotoggle>
-      <div class="flex gap-3 my-2">
-        @if (crawlpack) {
-          <button
-            [title]="'CRAWL.SHOW_JSON_CONFIG' | translate"
-            type="button"
-            (click)="openJsonFormat($event, crawlPackSelector.value?.code)"
-            class="text-sm px-2 py-1 rounded-xl dark:text-gray-100 hover:bg-green-400/80 text-gray-300 bg-gray-600/10 border border-gray-400/30 hover:border-green-400/30 w-fit font-normal">
-            JSON
-          </button>
-        }
-      </div>
-
-      <app-dropdown
-        class="md:min-w-60"
-        [options]="crawlConfigPack"
-        [control]="crawlPackSelector | formControl"
-        [padding]="'p-2'"
-        [dropDownName]="'CRAWL.SELECT_PACK' | translate"
-      (select)="onDropDownSelected($event)"></app-dropdown>
-    }
+    <app-radiotoggle
+      class="flex-grow"
+      [control]="stream | formControl"
+    [title]="'CRAWL.STREAM' | translate"></app-radiotoggle>
+    <!-- The crawl-pack picker and its "setup configuration *" link were removed
+         with the pack requirement: the job body is the URL list plus
+         `operation_data`, so a pack changed nothing here -- and the link pointed
+         at the retired editor while marking the choice required. -->
   </div>
   }
 
@@ -295,6 +271,37 @@
       </button>
     </div>
   </div>
+  <!--
+    Schedule instead of run. A scheduled run is a PLAN, not a queue entry: the
+    row lands in `/operations` with `status: Scheduled` and `scheduled_At`, and
+    the dispatcher claims it when that time arrives -- so this button writes a
+    document and nothing else, and the form stays usable.
+  -->
+  @if (canSchedule()) {
+    <div class="w-full flex flex-wrap items-center justify-end gap-2 mt-2">
+      @if (scheduledFor()) {
+        <p class="text-xs text-cyan-700 dark:text-cyan-300" role="status">
+          {{ 'OPERATION_DETAIL.SCHEDULED_AT' | translate }} {{ scheduledFor() }}
+        </p>
+      } @else {
+        <input
+          type="datetime-local"
+          [value]="scheduleAt()"
+          (input)="scheduleAt.set($any($event.target).value)"
+          [attr.aria-label]="'OPERATION_DETAIL.SCHEDULED_AT' | translate"
+          class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray6 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7 dark:text-white" />
+        <button
+          type="button"
+          [disabled]="scheduling() || scheduleAt() === '' || submitButton.value"
+          (click)="scheduleCrawl()"
+          class="inline-flex items-center gap-1 rounded-full bg-cyan-600/[.12] px-3 py-1.5 text-xs font-medium text-cyan-800 transition-colors hover:bg-cyan-600/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-cyan-300">
+          <mat-icon class="!h-4 !w-4 text-base leading-4" aria-hidden="true">schedule</mat-icon>
+          {{ 'OPERATIONS.ACT_SCHEDULE' | translate }}
+        </button>
+      }
+    </div>
+  }
+
   <!--
     What the next run costs, directly under the button that spends it. The number
     is the SERVER's (`GET /api/pricing/estimate`), read from the same table the

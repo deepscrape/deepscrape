@@ -7,7 +7,7 @@ import { of } from 'rxjs';
 import { AppCrawlComponent } from './app-crawl.component';
 import { CrawlOperationStatus } from '../../enum';
 import { CrawlPack } from '../../types';
-import { AuthService, CrawlAPIService, FirestoreService, OperationStatusService, SnackbarService, WebrainToolsService } from '../../services';
+import { AuthService, BillingService, CrawlAPIService, CrawlStoreService, FirestoreService, OperationStatusService, SnackbarService, WebrainToolsService } from '../../services';
 import { PricingRatesService } from '../../services/pricing-rates.service';
 import { getTestProviders } from 'src/app/testing';
 
@@ -50,6 +50,18 @@ describe('AppCrawlComponent', () => {
   } as unknown as PricingRatesService;
 
   const operationStatusStub = {} as OperationStatusService;
+  /**
+   * The scheduler's two dependencies.
+   *
+   * `storeCrawlOperation` is an Observable the component subscribes to; `of()`
+   * fires it immediately so a scheduling spec does not need a live Firestore.
+   */
+  const crawlStoreStub = {
+    storeCrawlOperation: () => of(undefined),
+  } as unknown as CrawlStoreService;
+  const billingStub = {
+    canAccessPaidFeatures$: () => of(true),
+  } as unknown as BillingService;
   const snackbarServiceStub = { showSnackbar: jasmine.createSpy('showSnackbar') } as unknown as SnackbarService;
   const cdrStub = {
     markForCheck: jasmine.createSpy('markForCheck'),
@@ -66,6 +78,9 @@ describe('AppCrawlComponent', () => {
         // below is that the component READS the estimate, and a live HTTP call
         // would leave an unflushed request behind instead.
         { provide: PricingRatesService, useValue: pricingServiceStub },
+        // `canSchedule` reads the entitlement through this, so the component
+        // cannot be constructed without it.
+        { provide: BillingService, useValue: billingStub },
       ],
     });
 
@@ -75,6 +90,7 @@ describe('AppCrawlComponent', () => {
         authServiceStub,
         firestoreServiceStub,
         crawlServiceStub,
+        crawlStoreStub,
         operationStatusStub,
         snackbarServiceStub,
         cdrStub,
@@ -125,7 +141,9 @@ describe('AppCrawlComponent', () => {
     expect(payload.urls).toEqual(['https://single.dev']);
   });
 
-  it('should stop submit when crawl pack selection is default', () => {
+  it('should submit with no crawl pack selected', () => {
+    // Packs can no longer be created (the editor is retired) and the job body does
+    // not read one, so a default selection must not block the run.
     spyOn(component, 'crawlEnqueue');
 
     component.urls.setValue('https://single.dev');
@@ -133,7 +151,7 @@ describe('AppCrawlComponent', () => {
 
     component.submitCrawlJob();
 
-    expect(component.crawlEnqueue).not.toHaveBeenCalled();
+    expect(component.crawlEnqueue).toHaveBeenCalled();
   });
 
   it('should read what the next run costs, for the route it will submit to', () => {

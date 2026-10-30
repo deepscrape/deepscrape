@@ -1,20 +1,23 @@
 import { DatePipe, DOCUMENT, NgClass, isPlatformBrowser } from '@angular/common'
-import { ChangeDetectionStrategy, Component, OnInit, PLATFORM_ID, inject, signal } from '@angular/core'
+import { ChangeDetectionStrategy, Component, OnInit, PLATFORM_ID, computed, inject, signal } from '@angular/core'
 import { MatIcon } from '@angular/material/icon'
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
 import { BucketStorageService } from '../../services'
 import { StorageObject, StorageScope } from '../../types'
 import { ResultEnvelopeComponent, ResultEnvelopeState } from '../result-envelope/result-envelope.component'
+import { ChartPoint, UsageHistoryChartComponent } from '../usage-history-chart/usage-history-chart.component'
 
 /**
  * What has already been sent to storage.
  *
- * Why opening goes through `presign`
- * ----------------------------------
+ * Why opening goes through `objectUrl`
+ * ------------------------------------
  * The object's own URL is DISPLAYED and never used. Every open calls
- * `POST /api/storage/presign` and follows whatever URL comes back, because the
- * alternative (assembling the bucket host and the key here) would move the
- * storage layout into the browser and break the first time the layout changes.
+ * `BucketStorageService.objectUrl`, which fetches the bytes from
+ * `GET /api/storage/object` under this caller's own token and wraps them in a
+ * page-local `blob:` URL. Assembling the bucket host and the key here would move
+ * the storage layout into the browser; presigning would put a replayable
+ * credential in a tab's address bar. Neither is done.
  *
  * Why the list is loaded once and refreshed by hand
  * -------------------------------------------------
@@ -25,7 +28,7 @@ import { ResultEnvelopeComponent, ResultEnvelopeState } from '../result-envelope
  */
 @Component({
   selector: 'app-saved-files-list',
-  imports: [NgClass, MatIcon, TranslateModule, DatePipe, ResultEnvelopeComponent],
+  imports: [NgClass, MatIcon, TranslateModule, DatePipe, ResultEnvelopeComponent, UsageHistoryChartComponent],
   templateUrl: './saved-files-list.component.html',
   styleUrl: './saved-files-list.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -39,10 +42,37 @@ export class SavedFilesListComponent implements OnInit {
   protected readonly state = signal<ResultEnvelopeState>('loading')
   protected readonly objects = signal<StorageObject[]>([])
   protected readonly errorMessage = signal('')
-  /** The key currently being presigned, so only that row shows a spinner. */
+  /** The key currently being fetched, so only that row shows a spinner. */
   protected readonly openingKey = signal<string | null>(null)
   /** A failed open, which is a row-level problem rather than a page-level one. */
   protected readonly actionError = signal('')
+
+  /**
+   * Stored bytes over time, for the history chart.
+   *
+   * CUMULATIVE, not per-day: the question a storage chart answers is "how much am
+   * I holding", so each point is the running total after that day's uploads. An
+   * object with an unparseable `createdAt` is skipped rather than filed under
+   * today, which would inflate the last bar with everything undated.
+   */
+  protected readonly storageSeries = computed<ChartPoint[]>(() => {
+    const bytesByDay = new Map<string, number>()
+
+    for (const object of this.objects()) {
+      const at = new Date(object.createdAt).getTime()
+      if (Number.isNaN(at)) continue
+      const date = new Date(at).toISOString().slice(0, 10)
+      bytesByDay.set(date, (bytesByDay.get(date) ?? 0) + (Number(object.bytes) || 0))
+    }
+
+    let running = 0
+    return [...bytesByDay.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, bytes]) => {
+        running += bytes
+        return { date, value: running }
+      })
+  })
 
   ngOnInit(): void {
     this.reload()
@@ -67,11 +97,18 @@ export class SavedFilesListComponent implements OnInit {
   }
 
   /**
-   * Mint a link and open it.
+   * Fetch the bytes and open them from a blob URL.
    *
-   * The URL is not held in a signal after the click: it is short-lived by
-   * design, and keeping it on the component would leave a live download link
-   * sitting in memory for the life of the page.
+   * This used to presign and open the minted link, which put a bearer credential
+   * in a new tab's address bar: the URL is readable from the tab's history, from
+   * a shared screenshot, and by anything on the other end of `window.opener` if
+   * `noopener` were ever lost. `/api/storage/object` returns the bytes to an
+   * ordinary authenticated request instead, so the only credential involved is
+   * the caller's own token, and the URL this opens exists only in this document.
+   *
+   * The blob URL is revoked immediately after the tab is opened: the browser
+   * keeps the bytes alive for the tab that already holds them, and a revoked URL
+   * cannot be replayed by anything else.
    */
   protected open(object: StorageObject): void {
     if (this.openingKey()) {
@@ -81,10 +118,10 @@ export class SavedFilesListComponent implements OnInit {
     this.actionError.set('')
     this.openingKey.set(object.key)
 
-    this.storage.presign(object.key).subscribe({
-      next: reply => {
+    this.storage.objectUrl(object.key).subscribe({
+      next: url => {
         this.openingKey.set(null)
-        this.openInNewTab(reply.url)
+        this.openInNewTab(url)
       },
       error: () => {
         this.openingKey.set(null)
@@ -101,6 +138,11 @@ export class SavedFilesListComponent implements OnInit {
     // Guarded above, so `defaultView` is the real window here. `noopener` keeps
     // the new tab from reaching back through `window.opener`.
     this.document.defaultView?.open(url, '_blank', 'noopener,noreferrer')
+    // Released on a delay, not immediately: the new document has to FETCH the
+    // blob, and revoking before it does leaves a blank tab in browsers that had
+    // not started the load. A minute is far past that point and still bounded,
+    // which is the property the credential-bearing URL this replaced never had.
+    setTimeout(() => this.storage.revokeObjectUrl(url), 60_000)
   }
 
   /** The same tone rule the save button uses, so one object reads the same in both places. */

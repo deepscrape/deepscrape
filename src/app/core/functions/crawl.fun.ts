@@ -2,39 +2,6 @@ import { FormGroup } from "@angular/forms"
 import { BrowserType, CrawlCachingMode, CrawlOperationStatus } from "../enum"
 import { CrawlPack, DropDownOption, Serializable } from "../types"
 
-export function crawlOperationStatusColor(status: CrawlOperationStatus) {
-    let color = 'gray'
-    switch (status) {
-        case CrawlOperationStatus.IN_PROGRESS:
-            color = 'cyan'
-            break
-        case CrawlOperationStatus.FAILED:
-            color = 'red'
-            break
-        case CrawlOperationStatus.CANCELED:
-            color = 'deep-orange'
-            break
-        case CrawlOperationStatus.SCHEDULED:
-            color = 'emerald'
-            break
-        case CrawlOperationStatus.COMPLETED:
-            color = 'green'
-            break
-        case CrawlOperationStatus.STARTED:
-            color = 'blue'
-            break
-        case CrawlOperationStatus.READY:
-            color = color
-            break
-        default:
-            break
-    }
-    //` bg-${color}-600/[.8]` + ` hover:bg-${color}-600/[0.5]` + ` focus:bg-${color}-900/[0.8]`
-    // ' bg-' + color + '-600/[.8] hover:bg-' + color + '-600/[0.5] focus:bg-' + color + '-900/[0.8] '
-    return color
-}
-
-
 export function setOperationStatusList(statusList: DropDownOption[]) {
     const list = [
         { name: 'Save', code: CrawlOperationStatus.READY },

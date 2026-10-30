@@ -1,4 +1,5 @@
-import { buildHistory, buildRequest, notOfferedText, refusalText, toolResultText } from './chatai.component';
+import { buildHistory, buildRequest, isAtBottom, notOfferedText, refusalText, sessionTitle, toChatMessage, toChatSession, toolResultText } from './chatai.component';
+import type { ChatMessage } from './chatai.component';
 
 describe('buildHistory', () => {
     it('appends the prompt after the existing turns', () => {
@@ -118,5 +119,120 @@ describe('toolResultText', () => {
 
     it('returns an empty string for a value JSON cannot represent', () => {
         expect(toolResultText(undefined)).toBe('');
+    });
+});
+
+describe('isAtBottom', () => {
+    const box = (scrollHeight: number, scrollTop: number, clientHeight: number) =>
+        ({ scrollHeight, scrollTop, clientHeight });
+
+    it('is true at the end of a fully scrolled transcript', () => {
+        expect(isAtBottom(box(1000, 400, 600))).toBeTrue();
+    });
+
+    it('is false once the user has scrolled up past the tolerance', () => {
+        // The behaviour this guards: a streaming reply must not pull the reader back down.
+        expect(isAtBottom(box(1000, 300, 600))).toBeFalse();
+    });
+
+    it('tolerates a fractional offset, which a non-integer pixel ratio produces', () => {
+        // An exact `=== 0` test reads as "scrolled up" on a transcript that is visibly at the
+        // bottom, and the follow effect would then stop following for good.
+        expect(isAtBottom(box(1000, 399.5, 600))).toBeTrue();
+    });
+
+    it('is true when the transcript is shorter than the viewport', () => {
+        // scrollHeight === clientHeight means nothing to scroll; that is the bottom.
+        expect(isAtBottom(box(200, 0, 600))).toBeTrue();
+    });
+});
+
+describe('toChatMessage', () => {
+    const turn = (tools: unknown) => ({ id: 'a', role: 'assistant', content: 'answer', at: 1, tools });
+
+    it('defaults a run stored before the status field existed to ok', () => {
+        // Those runs really did execute; guessing `failed` would libel a conversation that worked.
+        const message = toChatMessage(turn([{ name: 'search', summary: '12' }]));
+
+        expect(message?.tools).toEqual([{ name: 'search', summary: '12', status: 'ok' }]);
+    });
+
+    it('keeps the status a run was stored with', () => {
+        const message = toChatMessage(turn([{ name: 'vision', summary: '0', status: 'refused' }]));
+
+        expect(message?.tools?.[0]?.status).toBe('refused');
+    });
+
+    it('normalises a status it does not recognise instead of rendering an untoneable chip', () => {
+        const message = toChatMessage(turn([{ name: 'scrape', summary: '0', status: 'exploded' }]));
+
+        expect(message?.tools?.[0]?.status).toBe('ok');
+    });
+
+    it('drops a tool entry that is not shaped like a run', () => {
+        const message = toChatMessage(turn([{ name: 'search' }, 'nope', {}]));
+
+        expect(message?.tools).toEqual([]);
+    });
+});
+
+describe('sessionTitle', () => {
+    const message = (role: 'user' | 'assistant', content: string): ChatMessage =>
+        ({ id: 'm', role, content, at: 0 });
+
+    it('names the conversation after the first question, not the first turn', () => {
+        const title = sessionTitle([
+            message('assistant', 'Hi, ask me anything'),
+            message('user', 'crawl example.com'),
+        ]);
+
+        expect(title).toBe('crawl example.com');
+    });
+
+    it('collapses a pasted multi-line prompt to one line', () => {
+        expect(sessionTitle([message('user', '  one\n\ntwo   three ')])).toBe('one two three');
+    });
+
+    it('shortens a long question and says so', () => {
+        // A menu row is one line; a pasted paragraph would otherwise become the widest thing in it.
+        const title = sessionTitle([message('user', 'x'.repeat(200))]);
+
+        expect(title.endsWith('…')).toBeTrue();
+        expect(title.length).toBeLessThan(200);
+    });
+
+    it('returns nothing for a conversation with no text', () => {
+        expect(sessionTitle([message('assistant', '   ')])).toBe('');
+    });
+});
+
+describe('toChatSession', () => {
+    const stored = (over: Record<string, unknown>) => ({
+        id: 's1',
+        title: 'title',
+        at: 5,
+        messages: [{ id: 'm', role: 'user', content: 'hello', at: 0 }],
+        ...over,
+    });
+
+    it('round-trips a valid stored conversation', () => {
+        const session = toChatSession(stored({}));
+
+        expect(session?.id).toBe('s1');
+        expect(session?.messages.length).toBe(1);
+    });
+
+    it('re-caps a title so a hand-edited row cannot fill the menu', () => {
+        const session = toChatSession(stored({ title: 'y'.repeat(500) }));
+
+        expect(session?.title.length).toBe(60);
+    });
+
+    it('drops a conversation whose turns are all unreadable', () => {
+        expect(toChatSession(stored({ messages: [{}, 'nope'] }))).toBeNull();
+    });
+
+    it('rejects a row with no id', () => {
+        expect(toChatSession(stored({ id: '' }))).toBeNull();
     });
 });

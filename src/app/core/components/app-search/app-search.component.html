@@ -91,6 +91,22 @@
   </div>
   </section>
 
+  <!--
+    Where the search went. The call is a queued job, so this mode is a viewer of
+    it rather than its owner: switching playground mode stops the polling and
+    not the search. Saying so is what makes leaving safe to do -- and it is the
+    same line the tools panel shows for the same reason.
+  -->
+  @if (jobId(); as id) {
+    <p class="text-xs text-gray-600 dark:text-gray-300" role="status">
+      {{ 'TOOLS.JOB_QUEUED' | translate }}
+      <a
+        [routerLink]="['/operations']"
+        class="font-medium text-cyan-700 hover:underline dark:text-cyan-300"
+        [attr.title]="id">{{ 'TOOLS.JOB_LINK' | translate }}</a>
+    </p>
+  }
+
   <!-- Output -->
   <app-serp-results
     [response]="response()"

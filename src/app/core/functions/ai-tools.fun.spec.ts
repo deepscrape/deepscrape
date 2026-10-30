@@ -8,6 +8,7 @@ import {
   anthropicTools,
   availableTools,
   finishToolCalls,
+  jobRequest,
   newToolCallAccumulator,
   openaiToolCalls,
   openaiToolTurns,
@@ -91,11 +92,13 @@ describe('offered tools', () => {
       'list_sessions',
       'list_storage',
       'list_machines',
+      'run_command',
       'stop_session',
       'stop_machine',
       'suspend_machine',
       'delete_file',
       'save_file',
+      'write_file',
       'set_spend_cap',
       'set_model',
     ]);
@@ -157,8 +160,12 @@ describe('offered tools', () => {
     expect(resolveToolCall(call('vision'), false))
       .toEqual(jasmine.objectContaining({ block: 'plan' }));
 
-    // And the same call the same caller was refused a moment ago now runs.
-    expect(resolveToolCall(call('vision'), true).ok).toBeTrue();
+    // And the same call the same caller was refused a moment ago now runs -- with
+    // arguments that satisfy the schema, because a required field is checked here
+    // and the point of this assertion is the plan block lifting, not empty args.
+    expect(
+      resolveToolCall({ id: 'c2', name: 'vision', args: { op: 'ask', prompt: 'x' } }, true).ok
+    ).toBeTrue();
   });
 
   it('gives every tool either a real route or the client-side sentinel', () => {
@@ -172,12 +179,146 @@ describe('offered tools', () => {
       }
     }
 
-    // Pinned to exactly ONE, so the exception cannot quietly become the norm: if a
-    // second route-less tool is ever added, this fails and forces the decision rather
-    // than letting the rule evaporate one entry at a time.
+    // Pinned to exactly these TWO, so the exception cannot quietly become the norm:
+    // if a third route-less tool is ever added, this fails and forces the decision
+    // rather than letting the rule evaporate one entry at a time.
+    //
+    // `create_job` is the second, and it is client-answered because the body is not
+    // the model's to compose: the job route takes an `operation_data` row, and the
+    // scheduled case writes a document instead of calling anything.
     expect(
       AI_TOOLS.filter(tool => tool.path === CLIENT_SIDE_PATH).map(tool => tool.name)
-    ).toEqual(['set_model']);
+    ).toEqual(['create_job', 'set_model']);
+  });
+
+  it('offers create_job only to a paid caller', () => {
+    // It ends up on `/api/crawl/stream/job`, which carries `paid`; offering it to a
+    // free caller would promise work the server refuses.
+    expect(availableTools(false).map(tool => tool.name)).not.toContain('create_job');
+    expect(availableTools(true).map(tool => tool.name)).toContain('create_job');
+  });
+
+  describe('run_command', () => {
+    const call = (args: Record<string, unknown>) => ({ id: 'r1', name: 'run_command', args });
+
+    it('needs confirmation and is offered to a free caller', () => {
+      // The sandbox does the bounding, not the plan: a free account may run it on a
+      // session it already holds, and the route refuses when there is no machine.
+      expect(availableTools(false).map(tool => tool.name)).toContain('run_command');
+      expect(toolByName('run_command')?.requiresConfirm).toBeTrue();
+    });
+
+    it('refuses an empty argv or a missing session, rather than sending them', () => {
+      // `command` is an array, and the presence check has to be about the KEY: an
+      // empty array would otherwise reach the daemon, which refuses it with a 400
+      // the model reads as an error instead of a correction.
+      expect(resolveToolCall(call({ session_id: 's1', command: [] }), true).ok).toBeTrue();
+      expect(resolveToolCall(call({ session_id: 's1' }), true)).toEqual(
+        jasmine.objectContaining({ reason: 'bad-arguments' })
+      );
+      expect(resolveToolCall(call({ command: ['id'] }), true)).toEqual(
+        jasmine.objectContaining({ reason: 'bad-arguments' })
+      );
+    });
+  });
+
+  describe('create_session', () => {
+    const call = (args: Record<string, unknown>) => ({ id: 's1', name: 'create_session', args });
+
+    it('is not offered to a free caller, and needs confirmation', () => {
+      // `SESSION_CAPS.free` holds no dedicated capacity, so the route would refuse
+      // anyway -- and an offer that cannot be honoured teaches the model to retry.
+      expect(availableTools(false).map(tool => tool.name)).not.toContain('create_session');
+      expect(availableTools(true).map(tool => tool.name)).toContain('create_session');
+      expect(toolByName('create_session')?.requiresConfirm).toBeTrue();
+    });
+
+    it('resolves with NO arguments, because the server picks the defaults', () => {
+      // Every field is optional on purpose: the model is told to reuse a live
+      // session first, and a call that had to name a browser before it could ask
+      // would be a second thing to get wrong.
+      expect(resolveToolCall(call({}), true).ok).toBeTrue();
+    });
+
+    it('refuses a free caller with the plan block rather than silently', () => {
+      expect(resolveToolCall(call({}), false))
+        .toEqual(jasmine.objectContaining({ reason: 'not-offered', block: 'plan' }));
+    });
+  });
+
+  describe('write_file', () => {
+    const call = (args: Record<string, unknown>) => ({ id: 'w1', name: 'write_file', args });
+
+    it('is offered to every caller and needs confirmation', () => {
+      // Storage is gated by `storage.write` on the caller's OWN tier, not by plan,
+      // so hiding it from a free account would be a lie about the route.
+      expect(availableTools(false).map(tool => tool.name)).toContain('write_file');
+      expect(toolByName('write_file')?.requiresConfirm).toBeTrue();
+    });
+
+    it('posts to the payload route, not the URL-fetching one', () => {
+      // The whole reason this tool exists: `save_file` hands the platform a URL to
+      // fetch, and cannot keep text the model composed. If these two ever share a
+      // path, one of them is lying about what it does.
+      expect(toolByName('write_file')?.path).toBe('/api/storage/payload');
+      expect(toolByName('save_file')?.path).toBe('/api/storage/save');
+    });
+
+    it('resolves with filename and content, and refuses a call missing content', () => {
+      const ok = resolveToolCall(call({ filename: 'list.txt', content: 'a\nb' }), true);
+      expect(ok.ok).toBeTrue();
+
+      // `content` is what the file IS. Accepting a call without it would file an
+      // empty object and read as success.
+      const missing = resolveToolCall(call({ filename: 'list.txt' }), true);
+      expect(missing.ok).toBeFalse();
+      expect(missing).toEqual(jasmine.objectContaining({ reason: 'bad-arguments' }));
+    });
+  });
+
+  describe('jobRequest', () => {
+    const now = Date.parse('2026-10-23T12:00:00Z');
+
+    it('starts now when no time is given', () => {
+      expect(jobRequest({ urls: ['https://a.example/x'] }, now))
+        .toEqual({ ok: true, urls: ['https://a.example/x'], startsAt: null });
+    });
+
+    it('refuses a target that is not an absolute http(s) url', () => {
+      // A bare hostname would be refused by the route as well; refusing here is
+      // what lets the model fix the call in the same turn.
+      expect(jobRequest({ urls: ['a.example/x', 'javascript:alert(1)'] }, now).ok)
+        .toBeFalse();
+    });
+
+    it('refuses a time with no zone rather than guessing one', () => {
+      // `Date.parse("2026-10-24T09:00")` succeeds and means LOCAL time to most
+      // runtimes -- hours away from what the user said in another one.
+      const refused = jobRequest(
+        { urls: ['https://a.example/x'], when: '2026-10-24T09:00' },
+        now,
+      );
+
+      expect(refused.ok).toBeFalse();
+      expect(refused.ok === false && refused.error).toContain('timezone');
+    });
+
+    it('accepts a zoned time and refuses one in the past', () => {
+      const future = jobRequest(
+        { urls: ['https://a.example/x'], when: '2026-10-24T09:00:00Z' },
+        now,
+      );
+      expect(future).toEqual({
+        ok: true,
+        urls: ['https://a.example/x'],
+        startsAt: Date.parse('2026-10-24T09:00:00Z'),
+      });
+
+      expect(jobRequest(
+        { urls: ['https://a.example/x'], when: '2026-10-23T11:00:00Z' },
+        now,
+      ).ok).toBeFalse();
+    });
   });
 });
 

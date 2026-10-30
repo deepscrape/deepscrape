@@ -136,6 +136,13 @@ const string = (description: string): Record<string, unknown> => ({
   description,
 });
 
+/** A list of plain strings, for a tool that takes many targets at once. */
+const strings = (description: string): Record<string, unknown> => ({
+  type: 'array',
+  items: { type: 'string' },
+  description,
+});
+
 const enumOf = (
   description: string,
   values: readonly string[]
@@ -442,15 +449,100 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
   // flag is how a call asks. An entry here without it runs the moment the model
   // names it.
   //
-  // Session and machine lifecycle ONLY, and only in the STOPPING direction.
-  // Stopping reduces spend, so the blast radius of a wrong call is a smaller bill
-  // rather than a destroyed resource. `destroy` is deliberately not here: a
-  // session machine can be destroyed while its RECORD survives, and
-  // `chargeSessionMeter` bills from the record -- so a destroyed session machine
-  // leaves the customer paying to the ceiling with nothing left to connect to.
-  // That is exactly what `refuseSessionOwnedAction()` guards in the machines
-  // page, and these tools route through the same service the page uses rather
-  // than around it.
+  // Session and machine lifecycle. `create_session` is the one STARTING action
+  // here and it is the expensive direction, so it is the one that must read as
+  // expensive: a create leases a machine and starts a meter that only
+  // `stop_session` ends.
+  //
+  // Everything else in this group is the STOPPING direction, where the blast
+  // radius of a wrong call is a smaller bill rather than a destroyed resource.
+  // `destroy` is deliberately not here: a session machine can be destroyed while
+  // its RECORD survives, and `chargeSessionMeter` bills from the record -- so a
+  // destroyed session machine leaves the customer paying to the ceiling with
+  // nothing left to connect to. That is exactly what `refuseSessionOwnedAction()`
+  // guards in the machines page, and these tools route through the same service
+  // the page uses rather than around it.
+  {
+    /**
+     * The tool the "browse for me" half of the chat was missing.
+     *
+     * `paidOnly` because `SESSION_CAPS.free` holds no dedicated capacity: the
+     * route would refuse a free caller anyway, and an offer it cannot honour
+     * teaches the model to keep retrying. `requiresConfirm` because this is the
+     * only tool here whose first effect is money.
+     *
+     * `mode` is NOT a parameter. Only `dedicated` is offered, because `byo`
+     * needs a CDP URL the model would have to invent -- and a model that
+     * guessed one would spend a lease pointing the session at a browser we do
+     * not control. `kind` and `workload` are safe enumerations the server
+     * already clamps.
+     */
+    name: 'create_session',
+    description:
+      'Open a browser session, or pick up one the caller already has. A live session ' +
+      'of the same kind is REUSED and the reply says `reused: true` with its id -- so ' +
+      'tell the user you are continuing their existing browser, which may still hold ' +
+      'their logins, rather than presenting it as new. Only a create starts a meter; ' +
+      'either way, stop_session is what ends it. Pass fresh to force a clean browser. ' +
+      'Use when the user asks to browse, log in, click through a site, or run tools ' +
+      'that need a browser of their own.',
+    parameters: object({
+      kind: enumOf('Which browser to run. Defaults to chrome.', [
+        'chrome',
+        'lightpanda',
+        'obscura',
+      ]),
+      workload: enumOf(
+        'What the session is for. Defaults to browser; code asks for more memory.',
+        ['browser', 'code']
+      ),
+      fresh: {
+        type: 'boolean',
+        description:
+          'Ask for a NEW browser even if one is live, e.g. when the user wants a ' +
+          'clean profile or a logged-out state.',
+      },
+    }),
+    path: '/api/browser/session',
+    available: true,
+    paidOnly: true,
+    requiresConfirm: true,
+  },
+  {
+    /**
+     * The compute half of a session. Reading a page needs `observe`; WORKING on
+     * what it returned needs a process, and the sandbox is the only process a
+     * tenant may start.
+     *
+     * `requiresConfirm` because it runs arbitrary argv on a machine the caller is
+     * paying for. The boundary is not this schema: the daemon drops the child to
+     * uid 10001 in /work, gives it an empty network namespace and bounds its time,
+     * memory, processes and output. That is why the arguments are not enumerated
+     * here -- the isolation is the guarantee, not an allowlist.
+     */
+    name: 'run_command',
+    description:
+      'Run ONE program in a session\'s sandbox and return its exit code and output. ' +
+      'The sandbox has NO network, so it computes over data rather than fetching it: ' +
+      'use scrape/observe to get bytes, then run_command to parse, filter or convert ' +
+      'them. `command` is argv, not a shell line: pass ["sh","-c","..."] if a pipeline ' +
+      'is unavoidable. The working directory is /work, which is empty on a new session ' +
+      'and is wiped when the machine stops.',
+    parameters: object(
+      {
+        session_id: string('The session id, from list_sessions.'),
+        command: strings('argv: the program first, then its arguments.'),
+        timeout: {
+          type: 'number',
+          description: 'Seconds to allow. Default 10, maximum 30.',
+        },
+      },
+      ['session_id', 'command']
+    ),
+    path: '/api/browser/session',
+    available: true,
+    requiresConfirm: true,
+  },
   {
     name: 'stop_session',
     description:
@@ -539,6 +631,72 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
     requiresConfirm: true,
   },
   {
+    /**
+     * Distinct from `save_file` in the way the model must not confuse: `save_file`
+     * asks the PLATFORM to fetch a URL, this keeps text the model already wrote.
+     *
+     * Without it the chat could research and read but never hand back an artifact,
+     * so "save the comparison as markdown and the list as txt" was answerable only
+     * by printing both into the transcript and hoping the user copied them.
+     *
+     * `requiresConfirm` for the same reason every other write has it: it spends the
+     * caller's storage and appears in a list they own.
+     */
+    name: 'write_file',
+    description:
+      'Save TEXT YOU WROTE as a file in the caller\'s own storage, and return its ' +
+      'key. Use for a report, a summary, a CSV, or a list the user asked to keep as ' +
+      'markdown or .txt. Use save_file instead when the content is a URL the ' +
+      'platform should fetch.',
+    parameters: object(
+      {
+        filename: string('The file name including its extension, e.g. report.md.'),
+        content: string('The exact text to save.'),
+        content_type: string('Optional MIME type, e.g. text/markdown.'),
+      },
+      ['filename', 'content']
+    ),
+    path: '/api/storage/payload',
+    available: true,
+    requiresConfirm: true,
+  },
+  {
+    /**
+     * The second tool the COMPONENT answers rather than a route.
+     *
+     * Not a route because the body is not the model's to compose: the job route
+     * wants an `operation_data` row (author, colour, name, timestamps) and the
+     * scheduled case writes a document instead of calling anything. Letting a
+     * model fill that row would put its guesses in the list the user reads.
+     *
+     * `paidOnly` matches the route it ultimately calls: `/api/crawl/stream/job`
+     * carries `paid`, so offering this to a free caller would promise work the
+     * server refuses. `requiresConfirm` because it SPENDS worker time and may
+     * commit to a future run the user is not watching.
+     */
+    name: 'create_job',
+    description:
+      'Start scraping work that outlives this conversation: one page per URL, run by ' +
+      'the platform, listed later on the Operations page with its results. Use when the ' +
+      'user asks to crawl, run or schedule pages and expects to leave or come back later. ' +
+      'Without `when` the job starts now; with `when` it is scheduled and runs on its own ' +
+      'even if the user closes the chat. Returns the job id, or the time it will run.',
+    parameters: object(
+      {
+        urls: strings('The absolute URLs to scrape, one entry per page.'),
+        when: string(
+          'Optional ISO 8601 time WITH a timezone, e.g. 2026-10-24T09:00:00Z. ' +
+            'Omit to start the job immediately.'
+        ),
+      },
+      ['urls']
+    ),
+    path: CLIENT_SIDE_PATH,
+    available: true,
+    paidOnly: true,
+    requiresConfirm: true,
+  },
+  {
     name: 'set_spend_cap',
     description:
       'Set the caller\'s own spend cap for the current billing period. The unit is ' +
@@ -594,6 +752,73 @@ export const AI_TOOLS: readonly AiToolSpec[] = [
 ];
 export const availableTools = (paid = false): readonly AiToolSpec[] =>
   AI_TOOLS.filter(tool => offeredTo(tool, paid));
+
+/** What `create_job`'s arguments mean once they have been checked. */
+export type JobRequest =
+  | { readonly ok: true; readonly urls: string[]; readonly startsAt: number | null }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * Check `create_job`'s arguments, and say when the job would start.
+ *
+ * Pure and next to the tool's own schema, because this is the contract that
+ * schema describes: a target must be an absolute http(s) URL (the job route runs
+ * a scrape, so a bare hostname would be refused there instead), and `when` must
+ * be an ISO time WITH a zone. A time without one is REFUSED rather than assumed
+ * local or UTC -- the two readings differ by hours, and a job that runs at the
+ * wrong hour is indistinguishable from a scheduler bug.
+ *
+ * `startsAt` is `null` for "now", so the caller cannot confuse "no time given"
+ * with "time given that happens to be now".
+ * @param {Record<string, unknown>} args The model's arguments.
+ * @param {number} [now] The current epoch millis, for the past-time check.
+ * @return {JobRequest} The targets and start, or why not.
+ */
+export const jobRequest = (
+  args: Record<string, unknown>,
+  now = Date.now()
+): JobRequest => {
+  const urls = (Array.isArray(args['urls']) ? args['urls'] : [])
+    .map(entry => String(entry ?? '').trim())
+    .filter(entry => /^https?:\/\//i.test(entry));
+  const when = typeof args['when'] === 'string' ? args['when'].trim() : '';
+
+  if (!urls.length) {
+    return { ok: false, error: 'urls has to hold at least one absolute http(s) URL.' };
+  }
+
+  if (!when) {
+    return { ok: true, urls, startsAt: null };
+  }
+
+  // `Date.parse` accepts a zone-less string, so the shape is checked first:
+  // "2026-10-24T09:00" parses, and parses as LOCAL time for some inputs and UTC
+  // for others -- which is exactly the ambiguity this refuses.
+  if (!/(z|[+-]\d{2}:?\d{2})$/i.test(when)) {
+    return {
+      ok: false,
+      error: 'when has to be an ISO 8601 time WITH a timezone, e.g. 2026-10-24T09:00:00Z.',
+    };
+  }
+
+  const startsAt = Date.parse(when);
+
+  if (Number.isNaN(startsAt)) {
+    return {
+      ok: false,
+      error: 'when has to be an ISO 8601 time WITH a timezone, e.g. 2026-10-24T09:00:00Z.',
+    };
+  }
+
+  if (startsAt <= now) {
+    return {
+      ok: false,
+      error: 'when is in the past. Ask the user which future time they want.',
+    };
+  }
+
+  return { ok: true, urls, startsAt };
+};
 
 /**
  * Whether this caller may be offered this tool.
@@ -680,6 +905,21 @@ export const resolveToolCall = (
     Array.isArray(call.args)
   ) {
     return { ok: false, name: call.name, reason: 'bad-arguments' };
+  }
+
+  // A MISSING required field is the same class as unusable arguments, and it was
+  // the one case this never checked: `required` was written into every schema for
+  // the PROVIDER to honour, and a provider is free to ignore it. The route would
+  // then answer with a 400 whose shape differs per route, which is precisely the
+  // outcome the comment above says this exists to prevent. Checked by presence
+  // only -- a present-but-wrong value is the route's to refuse.
+  const required = (tool.parameters as { required?: unknown }).required;
+  if (Array.isArray(required)) {
+    for (const field of required) {
+      if (typeof field === 'string' && !(field in call.args)) {
+        return { ok: false, name: call.name, reason: 'bad-arguments' };
+      }
+    }
   }
 
   return { ok: true, tool, call };

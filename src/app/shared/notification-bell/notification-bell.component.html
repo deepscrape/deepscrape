@@ -75,7 +75,7 @@
           }
         </p>
       } @else {
-        <ul class="max-h-[420px] divide-y divide-gray2/60 overflow-y-auto dark:divide-white/10">
+        <ul class="scrollbar max-h-[420px] divide-y divide-gray2/60 overflow-y-auto dark:divide-white/10">
           @for (item of visible(); track item.id) {
             <li class="motion-preset-fade">
               <a
@@ -113,12 +113,18 @@
           }
         </ul>
 
-        <footer class="border-t border-gray2/60 px-4 py-2.5 text-center dark:border-white/10">
+        <footer class="flex items-center justify-between border-t border-gray2/60 px-4 py-2.5 dark:border-white/10">
+          <a
+            routerLink="/alerts"
+            (click)="close()"
+            class="text-xs font-medium text-rose-700 hover:underline dark:text-rose-400">
+            View all alerts
+          </a>
           <a
             routerLink="/settings/security"
             (click)="close()"
-            class="text-xs font-medium text-rose-700 hover:underline dark:text-rose-400">
-            See security settings
+            class="text-xs font-medium text-gray5 hover:underline dark:text-gray3">
+            Security settings
           </a>
         </footer>
       }

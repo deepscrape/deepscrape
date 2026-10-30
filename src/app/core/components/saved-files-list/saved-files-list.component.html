@@ -7,6 +7,16 @@
   [showRetry]="state() === 'error'"
   (retry)="reload()">
 
+  <!-- Stored bytes over time. Derived from the list already on screen, so there is
+       no second request and no way for it to disagree with the rows below. No
+       heading: the chart's own peak caption and end dates already say what it is,
+       and a label here would need five translations for one word. -->
+  @if (storageSeries().length > 1) {
+    <div class="mb-4 rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-gray-700 dark:bg-gray6/60">
+      <app-usage-history-chart [series]="storageSeries()" unit="bytes" />
+    </div>
+  }
+
   <ul class="flex flex-col gap-2">
     @for (object of objects(); track object.key) {
       <li class="rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-gray-700 dark:bg-gray6/60">

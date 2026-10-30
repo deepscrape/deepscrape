@@ -6,7 +6,8 @@ import { AsyncPipe, JsonPipe, NgClass } from '@angular/common';
 import { forkJoin } from 'rxjs/internal/observable/forkJoin';
 import { takeUntil } from 'rxjs/internal/operators/takeUntil';
 import { tap } from 'rxjs/internal/operators/tap';
-import { AuthService, CrawlAPIService, FirestoreService, LocalStorage, OperationStatusService, SnackbarService, AnalyticsService, WebrainToolsService } from '../../services';
+import { AuthService, CrawlAPIService, CrawlStoreService, FirestoreService, LocalStorage, OperationStatusService, SnackbarService, AnalyticsService, WebrainToolsService } from '../../services';
+import { BillingService } from '../../services';
 import { PricingRatesService } from '../../services/pricing-rates.service';
 import { PricingEstimate } from '../../types/pricing-rates.interface';
 import { ToolEnvelope } from '../../types';
@@ -14,13 +15,12 @@ import { Subject } from 'rxjs/internal/Subject';
 import { concatMap } from 'rxjs/internal/operators/concatMap';
 import { delay } from 'rxjs/internal/operators/delay';
 import { CrawlOperation, CrawlPack, CrawlStatus, CrawlStreamBatch, CrawlTask, DropDownOption, Users } from '../../types'; // Removed CrawlResult from here
-import { arrayBufferToString, crawlOperationStatusColor, setCrawlPackList } from '../../functions';
+import { arrayBufferToString, setCrawlPackList } from '../../functions';
 import { SnackBarType } from '../snackbar/snackbar.component';
 import { MatIcon } from '@angular/material/icon';
 import { RemoveToolbarDirective, RippleDirective } from '../../directives';
-import { DropdownComponent } from '../dropdown/dropdown.component';
 import { FormControlPipe } from '../../pipes';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { from } from 'rxjs/internal/observable/from';
 import { startWith } from 'rxjs/internal/operators/startWith';
 import { ClipboardbuttonComponent } from '../clipboardbutton/clipboardbutton.component';
@@ -36,13 +36,14 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { API_BASE_URL } from '../../variables';
 import { UserInfo } from '@angular/fire/auth';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 
 const DEFAULT_CRAWL_PACK_SELECTION = { name: 'CRAWL.SELECT_PACK', code: 'default' }
 @Component({
   selector: 'app-crawl',
-  imports: [MatProgressSpinner, GinputComponent, MatIcon, NgClass, RippleDirective, DropdownComponent, FormControlPipe, RouterLink, MarkdownModule, RemoveToolbarDirective, JsonPipe, RadioToggleComponent, CrawlResultItemComponent, ResultEnvelopeComponent, AsyncPipe, MatProgressBarModule, TranslateModule],
+  imports: [MatProgressSpinner, GinputComponent, MatIcon, NgClass, RippleDirective, FormControlPipe, MarkdownModule, RemoveToolbarDirective, JsonPipe, RadioToggleComponent, CrawlResultItemComponent, ResultEnvelopeComponent, AsyncPipe, MatProgressBarModule, TranslateModule],
   animations: [expandCollapseAnimation],
   templateUrl: './app-crawl.component.html',
   styleUrl: './app-crawl.component.scss',
@@ -58,6 +59,8 @@ export class AppCrawlComponent {
   private analytics = inject(AnalyticsService)
   private pricingService = inject(PricingRatesService)
   private webrainTools = inject(WebrainToolsService)
+  /** The entitlement behind `canSchedule`; see that field. */
+  private billing = inject(BillingService)
   private user: Users & { currProviderData: UserInfo | null } | null = null
   private destroy$ = new Subject<void>()
 
@@ -120,6 +123,7 @@ export class AppCrawlComponent {
     private authService: AuthService,
     private fireService: FirestoreService,
     private crawlService: CrawlAPIService,
+    private crawlStoreService: CrawlStoreService,
     private operStatusService: OperationStatusService,
     private snackbarService: SnackbarService,
     private cdr: ChangeDetectorRef,
@@ -228,8 +232,11 @@ export class AppCrawlComponent {
   submitCrawlJob() {
     console.log('Crawl Operation Started', this.urls.value)
 
-    // return an error message if url or userpormpt is invalid
-    if (!this.urls.valid || this.crawlPackSelector.value?.code === 'default')
+    // A crawl pack is NOT required. The job body is the URL list plus
+    // `operation_data`, so a pack changed nothing about the request -- and since
+    // the crawl-pack editor is retired, none can be created, which made this
+    // guard refuse every first run.
+    if (!this.urls.valid)
       return
 
     this.crawlResults = [] // reset the results array
@@ -251,8 +258,11 @@ export class AppCrawlComponent {
 
     let urls = formInput.trim().split(',')
     const operationData = this.setupOperationData()
-    // Create a new CrawlConfig object
-    this.crawlSubscription = this.crawlService.multiCrawlEnqueue(urls, operationData, this.crawlpack as CrawlPack)
+    // The crawl pack is deliberately NOT passed: its `crawler_config` and
+    // `browser_config` are Crawl4AI's shape and the job route is served by
+    // webrain, which reads neither. It used to be spread into the request body and
+    // silently dropped there.
+    this.crawlSubscription = this.crawlService.multiCrawlEnqueue(urls, operationData)
       .pipe(
         takeUntil(this.destroy$),
         // ponytail: one crawl_started emit at the single enqueue choke point.
@@ -311,8 +321,94 @@ export class AppCrawlComponent {
       })
   }
 
-  setupOperationData(): CrawlOperation {
+  /**
+   * Whether this caller may SCHEDULE a run.
+   *
+   * `runDueOperations` re-reads the caller's access mode before it dispatches
+   * and refuses a non-chargeable one with `PLAN_REQUIRED`, so a free account
+   * that scheduled a run would create a row that can never run. The scheduler
+   * therefore follows the same entitlement the paid job route carries. A trial
+   * counts: `paidPlans` in `billing.domain.ts` includes `trial`, and
+   * `canAccessPaidFeatures$` mirrors `requirePaidAccess`.
+   *
+   * `false` until the entitlement resolves, so the control is not offered to
+   * someone who cannot use it.
+   */
+  readonly canSchedule = toSignal(this.billing.canAccessPaidFeatures$(), { initialValue: false });
 
+  /** The `datetime-local` value the user picked, as it is typed. */
+  readonly scheduleAt = signal('');
+
+  /** The time the row was filed for, once it was filed; empty otherwise. */
+  readonly scheduledFor = signal('');
+
+  readonly scheduling = signal(false);
+
+  /**
+   * File this run as a PLAN instead of starting it.
+   *
+   * The whole mechanism is the operation row: `runDueOperations` claims rows in
+   * `users/{uid}/operations` whose `status` is `Scheduled` and whose
+   * `scheduled_At` has passed, then dispatches each one through the same
+   * `enqueueJobCore` a manual run uses. So scheduling is a WRITE, and there is
+   * nothing to re-queue -- which is also why a plan can be edited afterwards
+   * from its own page.
+   *
+   * Refused locally rather than queued-and-failed when:
+   *  - the URL field is invalid (there would be no target),
+   *  - the time is empty or already past (the dispatcher would run it on the
+   *    next tick, so "schedule for yesterday" would start work immediately).
+   * @return {void}
+   */
+  protected scheduleCrawl(): void {
+    if (!this.urls.valid) {
+      this.urls.markAsTouched();
+      return;
+    }
+
+    const at = Date.parse(this.scheduleAt());
+    if (Number.isNaN(at) || at <= Date.now()) {
+      this.showSnackbar(
+        this.translate.instant('OPERATION_DETAIL.ERR_TIME_PAST'),
+        SnackBarType.warning,
+        '',
+        5000,
+      );
+      return;
+    }
+
+    const uid = this.user?.uid;
+    if (!uid || this.scheduling()) {
+      return;
+    }
+
+    const operationData = this.setupOperationData();
+    operationData.status = CrawlOperationStatus.SCHEDULED;
+    operationData.scheduled_At = at;
+
+    this.scheduling.set(true);
+    this.crawlStoreService
+      .storeCrawlOperation(uid, operationData)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.scheduling.set(false);
+          this.scheduledFor.set(new Date(at).toLocaleString());
+        },
+        error: (failure: unknown) => {
+          console.error('Error scheduling the crawl operation:', failure);
+          this.scheduling.set(false);
+          this.showSnackbar(
+            this.translate.instant('OPERATIONS.ERROR_LOAD'),
+            SnackBarType.error,
+            '',
+            5000,
+          );
+        },
+      });
+  }
+
+  setupOperationData(): CrawlOperation {
     const operationData: CrawlOperation = {
       type: 'playground',
       author: {
@@ -327,7 +423,6 @@ export class AppCrawlComponent {
       metadataId: this.crawlpack?.id || 'unknown',
       urls: this.urls.value.trim().split(',') || [],
       status: CrawlOperationStatus.READY,
-      color: crawlOperationStatusColor(CrawlOperationStatus.READY),
     }
 
     return operationData

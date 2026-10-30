@@ -1,5 +1,5 @@
 <section
-  class="w-full rounded-2xl border border-gray-200 bg-slate-50/30 p-4 shadow-sm transition-shadow dark:border-gray-700 dark:bg-gray7/80">
+  class="w-full rounded-2xl bg-gray-50 p-5 shadow-md transition-shadow dark:bg-gray6/80">
   @if (hasHeader) {
     <header class="mb-3 flex flex-wrap items-center justify-between gap-2">
       @if (title) {
@@ -35,10 +35,27 @@
 
   @switch (state) {
     @case ('loading') {
-      <div class="flex items-center gap-2 py-6 text-sm text-gray-500 dark:text-gray-400" role="status" aria-live="polite">
-        <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent"></span>
-        {{ loadingMessage | translate }}
+      <!--
+        The house skeleton, not a spinner.
+
+        `loading-line-*` is the shimmer every data surface already uses
+        (`settings/workspace`, `operations`), so a slow read looks the same
+        everywhere instead of depending on which component wrapped it. One change
+        here upgrades every envelope consumer at once, which is why it is not done
+        per page.
+
+        Accessibility is kept, not dropped with the spinner: the shimmer is
+        `aria-hidden`, and the message moves to an `sr-only` live region so a
+        screen reader still hears "loading" — a moving gradient says nothing.
+      -->
+      <div class="space-y-3 py-6" aria-hidden="true">
+        <div class="loading-line-long"></div>
+        <div class="loading-line-mid"></div>
+        <div class="loading-line-short"></div>
       </div>
+      <p class="sr-only" role="status" aria-live="polite">
+        {{ loadingMessage | translate }}
+      </p>
     }
 
     @case ('error') {

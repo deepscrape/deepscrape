@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostBinding, effect, inject, signal, viewChild } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { DatePipe } from '@angular/common';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormsModule, Validators } from '@angular/forms';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { TranslateModule } from '@ngx-translate/core';
@@ -8,14 +9,16 @@ import { Observable } from 'rxjs/internal/Observable';
 import { Subscription } from 'rxjs/internal/Subscription';
 import { forkJoin } from 'rxjs/internal/observable/forkJoin';
 import { of } from 'rxjs/internal/observable/of';
+import { from } from 'rxjs/internal/observable/from';
+import { firstValueFrom } from 'rxjs/internal/firstValueFrom';
 import { catchError } from 'rxjs/internal/operators/catchError';
-import { map } from 'rxjs/internal/operators/map';
 import { switchMap } from 'rxjs/internal/operators/switchMap';
+import { map } from 'rxjs/internal/operators/map';
 import { ClipboardbuttonComponent } from 'src/app/core/components/clipboardbutton/clipboardbutton.component';
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component';
-import { AiToolCall, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, newToolCallAccumulator, openaiToolTurns, resolveToolCall, sessionOwning } from 'src/app/core/functions';
+import { AiToolCall, AiToolSpec, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, jobRequest, newToolCallAccumulator, openaiToolTurns, resolveToolCall, sessionOwning } from 'src/app/core/functions';
 import { FormControlPipe } from 'src/app/core/pipes';
-import { AiAPIService, AiFetchService, AiModelsService, BucketStorageService, DeploymentService, SearchService, WebrainToolsService } from 'src/app/core/services';
+import { AiAPIService, AiFetchService, AiModelsService, AuthService, BucketStorageService, CrawlAPIService, CrawlStoreService, DeploymentService, SearchService, WebrainToolsService } from 'src/app/core/services';
 // Not in the services barrel: every existing consumer imports it direct, so this follows them.
 import { BrowserSessionService } from 'src/app/core/services/browser-session.service';
 // Not in the barrel either -- the barrel exports `./billing.service`, not this one.
@@ -28,6 +31,8 @@ import { BillingService } from 'src/app/core/services/billing.service';
 import { isPaidPlan } from 'src/app/core/types/ai-provider.interface';
 import { LocalStorage } from 'src/app/core/services/storage.service';
 import { AIModel, AiVendorId, SERP_DEFAULTS, SerpEngine, vendorForModelCode } from 'src/app/core/types';
+import { CrawlOperation } from 'src/app/core/types';
+import { CrawlOperationStatus } from 'src/app/core/enum';
 import { DEFAULT_SYSTEM_PROMPT } from 'src/app/core/variables';
 
 /**
@@ -40,10 +45,23 @@ import { DEFAULT_SYSTEM_PROMPT } from 'src/app/core/variables';
  * `summary` is a measurement rather than a paraphrase: naming a payload's fields here would be
  * this component inventing a second vocabulary for something it does not own, which is the
  * drift `refusalText` and `webrain-tools.interface.ts` both refuse to commit.
+ *
+ * `status` is the one thing an agent step log showed that this transcript did not. A refused call
+ * and a route that failed both became ordinary result text, so every chip rendered identically and
+ * the amber failure line named no call. It carries that WITHOUT carrying the payload, which the
+ * paragraph above refuses.
  */
+export type ToolRunStatus = 'ok' | 'refused' | 'failed';
+
 export interface ToolRun {
     readonly name: string;
     readonly summary: string;
+    readonly status: ToolRunStatus;
+}
+
+/** One executed call: the text the model got, plus how it went for the human reading it. */
+export interface ExecutedCall extends ToolCallResult {
+    readonly status: ToolRunStatus;
 }
 
 export interface ChatMessage {
@@ -152,12 +170,35 @@ export function buildRequest(
 }
 
 /**
+ * How close to the end still counts as "at the bottom", in CSS pixels.
+ *
+ * Not zero: `scrollHeight - scrollTop - clientHeight` is fractional at a non-integer device
+ * pixel ratio, so an exact comparison reads as "scrolled up" on a transcript that is visibly
+ * at the bottom -- and the follow effect below would then never follow again.
+ */
+export const BOTTOM_TOLERANCE_PX = 24;
+
+/**
+ * Whether a scroll container is showing its newest line.
+ *
+ * Takes the three measurements rather than an element so a spec can pin it with no DOM, and so
+ * the element itself stays inside one component method.
+ * @param {*} box The container's scrollHeight, scrollTop and clientHeight.
+ * @return {boolean} True when the viewport is within BOTTOM_TOLERANCE_PX of the end.
+ */
+export function isAtBottom(
+    box: { scrollHeight: number; scrollTop: number; clientHeight: number },
+): boolean {
+    return box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_TOLERANCE_PX;
+}
+
+/**
  * AI chat. Streams against `AiAPIService`, which already accepts a message array and
  * reports deltas — no new service, no new dependency.
  */
 @Component({
     selector: 'app-chatai',
-    imports: [FormsModule, MatProgressSpinner, MarkdownModule, TranslateModule, DropdownComponent, FormControlPipe],
+    imports: [DatePipe, FormsModule, MatProgressSpinner, MarkdownModule, TranslateModule, DropdownComponent, FormControlPipe],
     templateUrl: './chatai.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -198,6 +239,11 @@ export class ChataiComponent {
     /** The caller's plan, for the one tool whose availability depends on it. */
     private readonly billingAccount = inject(BillingService);
     private readonly deployment = inject(DeploymentService);
+    private readonly crawl = inject(CrawlAPIService);
+    private readonly crawlStore = inject(CrawlStoreService);
+    private readonly auth = inject(AuthService);
+    /** The caller, for the operation row a chat-started job leaves behind. */
+    private readonly user = toSignal(this.auth.user$, { initialValue: null });
     private readonly destroyRef = inject(DestroyRef);
     /**
      * Where the transcript is kept between reloads.
@@ -212,6 +258,35 @@ export class ChataiComponent {
     readonly messages = signal<ChatMessage[]>([]);
     readonly draft = signal('');
     readonly streaming = signal(false);
+
+    /**
+     * Whether the transcript is showing its newest line.
+     *
+     * State rather than a DOM read inside the follow effect. It is what stops a streaming reply
+     * from dragging the viewport back down while the user reads an earlier answer, and it makes
+     * that behaviour a value a spec can assert instead of a side effect nobody can observe.
+     */
+    readonly atBottom = signal(true);
+
+    /**
+     * The conversations kept on this device, newest first.
+     *
+     * Local rather than server-side by decision (`26-chat-frontend-upgrade.md` §4): a second copy in
+     * Firestore is a new deletion obligation under `25`, and nothing has decided that yet.
+     */
+    readonly history = signal<readonly ChatSession[]>([]);
+
+    /** Which conversation is open. Empty is a fresh one that has not been stored yet. */
+    readonly activeId = signal('');
+
+    /** Which answer's copy just succeeded, so that button alone can confirm it. */
+    readonly copiedId = signal('');
+
+    /** The conversation whose title is being edited, or ''. */
+    readonly renamingId = signal('');
+
+    /** The title being typed. Seeded from the stored one so a small fix is easy. */
+    readonly renameDraft = signal('');
 
     /**
      * Why the last turn failed, or null.
@@ -242,6 +317,50 @@ export class ChataiComponent {
     readonly toolRunning = signal('');
 
     /**
+     * Tool rounds spent on this turn, and the ceiling for one answer.
+     *
+     * A round is one MODEL CALL and can carry many tool calls, so this bounds
+     * latency and spend rather than how much work a plan may do. Twelve fits
+     * "search a few times, read ten pages, write the files" with room to correct
+     * one mistake, and stops a model that has begun asking the same question.
+     * Without it the loop in `runBatch` had no end a customer would survive.
+     *
+     * A SIGNAL rather than a field so the running chip can show the budget being spent. A ceiling
+     * nobody can see is a limit that reads as a bug the first time it fires.
+     */
+    protected readonly rounds = signal(0);
+    protected readonly maxRounds = ChataiComponent.MAX_TOOL_ROUNDS;
+    private static readonly MAX_TOOL_ROUNDS = 12;
+
+    /** True when the loop stopped short, so the transcript can say why. */
+    readonly stoppedAtLimit = signal(false);
+
+    /**
+     * True when a tool route failed outright.
+     *
+     * The MODEL already gets the failure as tool text and may well recover, so this
+     * is not an error dialog -- it is the only way the human learns that an answer
+     * was built from a partial picture. Without it a dead route is invisible until
+     * the answer is wrong.
+     */
+    readonly toolFailed = signal(false);
+
+    /**
+     * The one line the user sees, or '' when there is nothing to say.
+     *
+     * One key rather than a block per condition: the two reasons are mutually
+     * exclusive in practice, and two amber lines stacked would read as two problems.
+     * @return {string} A CHAT translation key, or ''.
+     */
+    protected noticeKey(): string {
+        if (this.stoppedAtLimit()) {
+            return 'CHAT.TOOL_LIMIT';
+        }
+
+        return this.toolFailed() ? 'CHAT.TOOL_FAILED' : '';
+    }
+
+    /**
      * The batch waiting for approval, or null.
      *
      * Non-null means the loop is PARKED: nothing is in flight, the transcript has
@@ -268,6 +387,15 @@ export class ChataiComponent {
      */
     private paid = false;
 
+    /**
+     * The tools this caller may use, as the panel lists them.
+     *
+     * The SAME array `stream()` offers the model, refreshed on the same tier answer, so the panel
+     * cannot claim a capability the request withholds or hide one the caller has. It is also the
+     * list `17-mcp-capability-surface.md` phase 1 must serve over `tools/list`.
+     */
+    protected readonly offered = signal<readonly AiToolSpec[]>(availableTools());
+
     constructor() {
         this.aiModels.load();
 
@@ -276,12 +404,18 @@ export class ChataiComponent {
         this.billingAccount
             .getAccessMode$()
             .pipe(takeUntilDestroyed(this.destroyRef))
-            .subscribe(mode => this.paid = isPaidPlan(mode));
+            .subscribe(mode => {
+                this.paid = isPaidPlan(mode);
+                this.offered.set(availableTools(this.paid));
+            });
 
-        // A reload keeps the conversation. Restored BEFORE the effects below, so a stored
-        // turn is painted by the same pass that would have painted a fresh one -- and it
+        // A reload keeps the conversation, and the list of them. Restored BEFORE the effects below,
+        // so a stored turn is painted by the same pass that would have painted a fresh one -- and it
         // cannot resurrect a reply, because `streaming` starts false either way.
-        this.messages.set(this.restoreTranscript());
+        const restored = this.restoreSessions();
+        this.history.set(restored.sessions);
+        this.activeId.set(restored.activeId);
+        this.messages.set([...restored.messages]);
 
         // Repairs the selection every time the list moves. Not cosmetic: the list is filled in two
         // passes, and a selection that is not among its options leaves the dropdown blank.
@@ -291,14 +425,83 @@ export class ChataiComponent {
         });
 
         // Keeps the newest token in view while a reply streams. `scroller()` is undefined
-        // during SSR, so this stays browser-only without touching `document`.
+        // Keeps the newest token in view while a reply streams -- but only while the user is
+        // already at the bottom. `scroller()` is undefined during SSR, so this stays
+        // browser-only without touching `document`.
         effect(() => {
             this.messages();
             const element = this.scroller()?.nativeElement;
-            if (element) {
+            if (!element) {
+                return;
+            }
+
+            // An empty transcript has nowhere to scroll, and leaving the flag false would keep the
+            // next answer from following after "New chat" left the list empty.
+            if (!this.messages().length) {
+                this.atBottom.set(true);
+                return;
+            }
+
+            if (this.atBottom()) {
                 element.scrollTop = element.scrollHeight;
             }
         });
+    }
+
+    /**
+     * Track whether the transcript is showing its newest line.
+     *
+     * Read here, on the real scroll event, rather than inside the follow effect. The effect fires
+     * on every streamed delta, so asking the element each time made the scroll unconditional and
+     * pulled the user back down while they were reading an earlier answer.
+     * @param {Event} event The scroller's scroll event.
+     */
+    onScroll(event: Event): void {
+        const element = event.target as HTMLElement | null;
+        if (element) {
+            this.atBottom.set(isAtBottom(element));
+        }
+    }
+
+    /**
+     * Return to the newest message, and resume following it.
+     *
+     * Sets the flag as well as the position: moving the viewport alone would leave the effect
+     * declining to follow the next token, and the pill would never go away.
+     */
+    jumpToLatest(): void {
+        const element = this.scroller()?.nativeElement;
+        this.atBottom.set(true);
+        if (element) {
+            element.scrollTop = element.scrollHeight;
+        }
+    }
+
+    /**
+     * Copy one answer in full.
+     *
+     * The `clipboard` directive on `<markdown>` only adds a button to CODE BLOCKS, so there was no
+     * way to copy a whole reply. Guarded the way `webrtc.service` guards the same call: `navigator`
+     * is absent during SSR and `clipboard` is absent outside a secure context, and a button must
+     * degrade to nothing rather than throw.
+     * @param {string} id The turn, so only the button that was pressed shows the confirmation.
+     * @param {string} content The answer as rendered.
+     * @return {Promise<void>} Resolves once the write settles.
+     */
+    async copyAnswer(id: string, content: string): Promise<void> {
+        if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') {
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(content);
+        } catch {
+            // A refused clipboard needs a permission only the user can grant; nothing to report.
+            return;
+        }
+
+        this.copiedId.set(id);
+        setTimeout(() => this.copiedId.set(''), 800);
     }
 
     send(): void {
@@ -361,36 +564,150 @@ export class ChataiComponent {
     }
 
     /**
-     * Keep the transcript where a reload can find it.
+     * Keep the open conversation, and the list of them, where a reload can find them.
      *
-     * Called at the two TURN BOUNDARIES -- when the question is asked and when the
-     * answer ends -- and never per streamed delta, which would stringify the whole
-     * array on every token. A store that refuses (full, disabled, private mode) is
-     * swallowed: losing the cache is not worth failing a reply the user already paid for.
+     * Called at the two TURN BOUNDARIES -- when the question is asked and when the answer ends --
+     * and never per streamed delta, which would re-serialise every conversation on every token.
+     * A store that refuses (full, disabled, private mode) is swallowed: losing the cache is not
+     * worth failing a reply the user already paid for.
      * @return {void}
      */
     private persistTranscript(): void {
+        const messages = this.messages().slice(-TRANSCRIPT_MAX);
+        const id = this.activeId();
+
+        // An empty conversation is neither written nor listed: a menu row that opens to nothing is
+        // worse than no row, and `newChat` leaves the list holding only real history.
+        if (!messages.length) {
+            const kept = id
+                ? this.history().filter(session => session.id !== id)
+                : this.history();
+
+            this.history.set(kept);
+            this.activeId.set('');
+            this.writeSessions('', kept);
+            return;
+        }
+
+        const session: ChatSession = {
+            id: id || newSessionId(),
+            title: sessionTitle(messages),
+            at: Date.now(),
+            messages,
+        };
+
+        const sessions = [session, ...this.history().filter(other => other.id !== session.id)]
+            .slice(0, SESSIONS_MAX);
+
+        this.activeId.set(session.id);
+        this.history.set(sessions);
+        this.writeSessions(session.id, sessions);
+    }
+
+    /**
+     * Write the list, or say nothing.
+     *
+     * Takes the values rather than reading the signals so the one caller that runs BEFORE they are
+     * set (adopting the previous shape) cannot write the old list over the new one.
+     * @param {string} activeId The conversation to reopen.
+     * @param {readonly ChatSession[]} sessions The conversations.
+     * @return {void}
+     */
+    private writeSessions(activeId: string, sessions: readonly ChatSession[]): void {
         try {
-            this.local.setItem(
-                TRANSCRIPT_KEY,
-                JSON.stringify(this.messages().slice(-TRANSCRIPT_MAX)),
-            );
+            this.local.setItem(SESSIONS_KEY, JSON.stringify({ activeId, sessions }));
         } catch {
-            // Deliberately silent. Serialising our own array cannot fail for a reason the
-            // user could act on, so a line here would be noise in a console nobody reads.
+            // Deliberately silent: a full or disabled store cannot fail for a reason the user could
+            // act on, so a line here would be noise in a console nobody reads.
         }
     }
 
     /**
-     * The stored transcript, or an empty one.
+     * The stored conversations, the open one, and its turns.
      *
-     * Every failure is an empty transcript rather than a throw: this runs inside the
-     * constructor, where an exception would leave the page unable to render at all. A
-     * malformed value is either something a previous version wrote or something the user
-     * edited, and "start empty" is the honest answer to both.
-     * @return {ChatMessage[]} The turns that could be read back.
+     * Every failure is an empty set rather than a throw: this runs inside the constructor, where an
+     * exception would leave the page unable to render at all.
+     * @return {*} The list, the active id, and the turns to open with.
      */
-    private restoreTranscript(): ChatMessage[] {
+    private restoreSessions(): {
+        sessions: readonly ChatSession[];
+        activeId: string;
+        messages: readonly ChatMessage[];
+    } {
+        const empty = {
+            sessions: [] as readonly ChatSession[],
+            activeId: '',
+            messages: [] as readonly ChatMessage[],
+        };
+        let raw: string | null = null;
+
+        try {
+            raw = this.local.getItem(SESSIONS_KEY);
+        } catch {
+            return empty;
+        }
+
+        if (!raw) {
+            return this.adoptLegacyTranscript();
+        }
+
+        try {
+            const parsed = JSON.parse(raw) as { activeId?: unknown; sessions?: unknown };
+
+            if (!Array.isArray(parsed?.sessions)) {
+                return empty;
+            }
+
+            const sessions = parsed.sessions
+                .map(toChatSession)
+                .filter((session): session is ChatSession => session !== null);
+
+            const active = sessions.find(session => session.id === parsed.activeId);
+
+            return { sessions, activeId: active?.id ?? '', messages: active?.messages ?? [] };
+        } catch {
+            return empty;
+        }
+    }
+
+    /**
+     * The one conversation the previous version stored, adopted as the first session.
+     *
+     * Written back under the new key immediately, so the next reload takes the ordinary path. The
+     * old key is NOT removed: until this has been read back intact once, it is the only copy.
+     * @return {*} The adopted list and its turns.
+     */
+    private adoptLegacyTranscript(): {
+        sessions: readonly ChatSession[];
+        activeId: string;
+        messages: readonly ChatMessage[];
+    } {
+        const messages = this.readLegacyTranscript();
+
+        if (!messages.length) {
+            return { sessions: [], activeId: '', messages: [] };
+        }
+
+        const session: ChatSession = {
+            id: newSessionId(),
+            title: sessionTitle(messages),
+            at: Date.now(),
+            messages,
+        };
+
+        this.writeSessions(session.id, [session]);
+
+        return { sessions: [session], activeId: session.id, messages };
+    }
+
+    /**
+     * The previous single-transcript value, or nothing.
+     *
+     * A malformed value is either something an older version wrote or something the user edited,
+     * and "start empty" is the honest answer to both.
+     * @return {readonly ChatMessage[]} The turns that could be read back.
+     */
+    private readLegacyTranscript(): readonly ChatMessage[] {
         let raw: string | null = null;
 
         try {
@@ -410,16 +727,9 @@ export class ChataiComponent {
                 return [];
             }
 
-            const restored: ChatMessage[] = [];
-
-            for (const value of parsed) {
-                const message = toChatMessage(value);
-                if (message) {
-                    restored.push(message);
-                }
-            }
-
-            return restored;
+            return parsed
+                .map(toChatMessage)
+                .filter((message): message is ChatMessage => message !== null);
         } catch {
             return [];
         }
@@ -436,14 +746,111 @@ export class ChataiComponent {
      */
     newChat(): void {
         this.stop();
+
+        // Persist BEFORE clearing, so the turns already finished join the history rather than being
+        // thrown away. Starting a new conversation must not destroy the old one -- that is the whole
+        // difference between a session list and the single transcript this replaced.
+        this.persistTranscript();
+
         this.messages.set([]);
         this.failure.set(null);
+        this.activeId.set('');
+    }
 
-        try {
-            this.local.removeItem(TRANSCRIPT_KEY);
-        } catch {
-            // Same reasoning as `persistTranscript`: not an error anyone can act on.
+    /**
+     * Open a stored conversation.
+     *
+     * Stops the reply in flight first, for the reason `newChat` does: a stream is bound to the turn
+     * it is filling, and swapping the transcript underneath it would append an answer to a
+     * conversation the user is no longer reading.
+     * @param {string} id The conversation to open.
+     * @return {void}
+     */
+    openSession(id: string): void {
+        const session = this.history().find(candidate => candidate.id === id);
+
+        if (!session || session.id === this.activeId()) {
+            return;
         }
+
+        this.stop();
+        // Set BEFORE the transcript so the follow effect sees it. Opening a conversation must land on
+        // its NEWEST turn; without this it inherits whatever `atBottom` the previous conversation
+        // left, so a session opened after scrolling up in another one starts at its first message
+        // with the jump pill already showing.
+        this.atBottom.set(true);
+        this.messages.set([...session.messages]);
+        this.failure.set(null);
+        this.activeId.set(session.id);
+    }
+
+    /**
+     * Forget a stored conversation.
+     *
+     * Deleting the OPEN one clears the transcript too, because leaving its turns on screen would
+     * offer a conversation no reload can bring back.
+     * @param {string} id The conversation to delete.
+     * @return {void}
+     */
+    deleteSession(id: string): void {
+        const sessions = this.history().filter(session => session.id !== id);
+        const wasOpen = this.activeId() === id;
+
+        this.history.set(sessions);
+
+        if (wasOpen) {
+            this.stop();
+            this.messages.set([]);
+            this.failure.set(null);
+            this.activeId.set('');
+        }
+
+        this.writeSessions(wasOpen ? '' : this.activeId(), sessions);
+    }
+
+    /**
+     * Begin editing a conversation's title.
+     *
+     * Rename exists because the title is derived from the first question, and the first question is
+     * not always the one the conversation ended up being about.
+     * @param {ChatSession} session The conversation to rename.
+     * @return {void}
+     */
+    startRename(session: ChatSession): void {
+        this.renamingId.set(session.id);
+        this.renameDraft.set(session.title);
+    }
+
+    cancelRename(): void {
+        this.renamingId.set('');
+    }
+
+    /**
+     * Store a new title.
+     *
+     * Trimmed and capped like `sessionTitle`, because this value now comes from a field rather than
+     * from derived content. An empty title is refused rather than stored -- an unlabelled row is
+     * worse than the old name -- and a no-op commit is ignored so the blur that follows Enter does
+     * not write the list twice.
+     * @param {string} id The conversation.
+     * @return {void}
+     */
+    commitRename(id: string): void {
+        if (this.renamingId() !== id) {
+            return;
+        }
+
+        const title = this.renameDraft().trim().slice(0, TITLE_MAX);
+        const history = title
+            ? this.history().map(session => (session.id === id ? { ...session, title } : session))
+            : this.history();
+
+        if (title) {
+            this.history.set(history);
+            this.writeSessions(this.activeId(), history);
+        }
+
+        this.renamingId.set('');
     }
 
     /**
@@ -456,6 +863,15 @@ export class ChataiComponent {
      * @return {void}
      */
     private submit(prompt: string): void {
+        // The per-turn budget lives HERE, not in `send`. Both `send` and `retry` reach this method,
+        // and resetting in `send` alone meant a retry inherited the previous turn's rounds -- so a
+        // retry after a turn that spent all twelve returned immediately with `stoppedAtLimit` set
+        // and no answer at all. The two amber notices had the same problem: they survived into the
+        // next turn. One reset, on the path every turn takes.
+        this.rounds.set(0);
+        this.stoppedAtLimit.set(false);
+        this.toolFailed.set(false);
+
         // Snapshot history BEFORE the empty assistant placeholder is pushed, otherwise the
         // streamed reply would be fed back to the model as its own prior turn.
         const request = buildRequest(
@@ -571,6 +987,17 @@ export class ChataiComponent {
         messages: Array<{ role: string; content: unknown }>,
         calls: readonly AiToolCall[],
     ): void {
+        // The budget is checked BEFORE the approval gate, because a parked batch is
+        // still a round the caller will pay for once they approve it. Stopping here
+        // keeps the promise the transcript makes: the tools above really did run.
+        if (this.rounds() >= ChataiComponent.MAX_TOOL_ROUNDS) {
+            this.stoppedAtLimit.set(true);
+            this.finish();
+            return;
+        }
+
+        this.rounds.update(spent => spent + 1);
+
         // The gate. A batch containing anything that changes state is PARKED, not
         // run, and the calls are held exactly as the model emitted them.
         //
@@ -708,11 +1135,11 @@ export class ChataiComponent {
      * @param {AiToolCall} call One call as the model emitted it.
      * @return {Observable<ToolCallResult>} The call paired with its result text.
      */
-    private execute(call: AiToolCall): Observable<ToolCallResult> {
+    private execute(call: AiToolCall): Observable<ExecutedCall> {
         const resolution = resolveToolCall(call, this.paid);
 
         if (!resolution.ok) {
-            return of({ call, content: refusalText(resolution) });
+            return of({ call, content: refusalText(resolution), status: 'refused' });
         }
 
         this.toolRunning.set(resolution.tool.name);
@@ -723,11 +1150,106 @@ export class ChataiComponent {
         const source = this.dispatch(route, args);
 
         return source.pipe(
-            map(envelope => ({ call, content: toolResultText(envelope) })),
-            catchError((error: unknown) =>
-                of({ call, content: `The tool "${route}" failed: ${failureLine(error)}` }),
-            ),
+            // A 200 whose body reports an error is still `ok` here: the model received an answer it
+            // can act on, and only the transport failing is the human's business.
+            map(envelope => ({ call, content: toolResultText(envelope), status: 'ok' as const })),
+            catchError((error: unknown) => {
+                // The model can retry from the text below; the human cannot see this
+                // at all unless the transcript says so.
+                this.toolFailed.set(true);
+
+                return of({
+                    call,
+                    content: `The tool "${route}" failed: ${failureLine(error)}`,
+                    status: 'failed' as const,
+                });
+            }),
         );
+    }
+
+    /**
+     * Queue scraping work the user can walk away from.
+     *
+     * Two shapes and one tool, because the difference is a field the model already
+     * knows. Without `when` the batch is queued NOW through the same route the
+     * Operations page uses; with it, the row is stored as `Scheduled` and the
+     * platform's dispatcher starts it at that time. Either way the work becomes a
+     * JOB, not a chat request, so it survives this conversation closing — which is
+     * the whole point of offering it here.
+     *
+     * Refusals are returned as data rather than thrown: a model that reads "that
+     * has to be an absolute http(s) URL" can correct itself in the same turn,
+     * where a thrown error ends the turn with a stack trace.
+     *
+     * Only page scraping: that is what the job route runs. A model asking for
+     * anything else is told what this tool actually does rather than being
+     * silently given a scrape it did not request.
+     * @param {Record<string, unknown>} args The model's arguments.
+     * @return {Promise<unknown>} What to tell the model.
+     */
+    private async createJob(args: Record<string, unknown>): Promise<unknown> {
+        const request = jobRequest(args);
+
+        if (!request.ok) {
+            return { error: request.error };
+        }
+
+        const uid = this.user()?.uid ?? '';
+        if (!uid) {
+            return { error: 'There is no signed-in account to queue this under.' };
+        }
+
+        const { urls, startsAt } = request;
+        const scheduled = startsAt !== null;
+        const operation = this.jobRow(uid, urls, startsAt ?? Date.now());
+
+        try {
+            if (scheduled) {
+                await firstValueFrom(this.crawlStore.storeCrawlOperation(uid, {
+                    ...operation,
+                    status: CrawlOperationStatus.SCHEDULED,
+                }));
+                return {
+                    scheduled: true,
+                    runs_at: new Date(startsAt).toISOString(),
+                    urls,
+                    name: operation.name,
+                };
+            }
+
+            const task = await firstValueFrom(this.crawl.multiCrawlEnqueue(urls, operation));
+            return { task_id: task.id, status: 'In Progress', urls };
+        } catch (failure) {
+            // The route's own refusals (402 for a lapsed plan, 503 for no queue)
+            // are the honest answer, so they are handed to the model as text.
+            return { error: failureLine(failure) };
+        }
+    }
+
+    /**
+     * The `/operations` row a chat-started job leaves behind.
+     *
+     * Kept minimal on purpose: the server owns `id`, `task_id`, `status` and the
+     * author's uid, and overwrites whatever this sends for them.
+     * @param {string} uid The owner.
+     * @param {string[]} urls The targets.
+     * @param {number} startsAt The scheduled time, or NaN to start now.
+     * @return {CrawlOperation} The row to send.
+     */
+    private jobRow(uid: string, urls: string[], startsAt: number): CrawlOperation {
+        return {
+            type: 'playground',
+            author: {
+                uid,
+                displayName: this.user()?.currProviderData?.displayName || 'anonymous',
+            },
+            name: urls.length === 1 ? `Chat · ${urls[0]}` : `Chat · ${urls.length} pages`,
+            created_At: Date.now(),
+            scheduled_At: Number.isNaN(startsAt) ? Date.now() : startsAt,
+            urls,
+            status: CrawlOperationStatus.READY,
+            urlPath: '/chatai',
+        };
     }
 
     /**
@@ -765,6 +1287,68 @@ export class ChataiComponent {
                 return this.storage.list();
             case 'list_machines':
                 return this.deployment.listMine();
+            /**
+             * The one STARTING action, and the reason `list_sessions` is offered
+             * beside it: the model is told to reuse a live session, and the two
+             * tools are what let it check rather than assume.
+             *
+             * `mode` is fixed to `dedicated` here rather than exposed as a
+             * parameter. `byo` means "my own CDP endpoint", which needs a URL the
+             * model would have to invent; a guessed one would point a paid lease
+             * at a browser we do not control. `kind` and `workload` are narrowed
+             * with a literal test instead of a cast, so a hallucinated value
+             * falls back to the server's own default rather than reaching it.
+             */
+            case 'create_session': {
+                const kind = args['kind'] === 'lightpanda' || args['kind'] === 'obscura'
+                    ? args['kind']
+                    : 'chrome';
+                const workload = args['workload'] === 'code' ? 'code' : 'browser';
+                const fresh = args['fresh'] === true;
+
+                /**
+                 * Reuse before creating. A description asking the model to check
+                 * `list_sessions` first is a request, not a guarantee, and the cost
+                 * of the model ignoring it is a second machine billing in parallel.
+                 *
+                 * The response carries `reused` so the model can TELL the user it
+                 * picked up an existing browser instead of quietly presenting it as
+                 * new -- a session may still hold their logins.
+                 *
+                 * shortcut: not atomic, so two tabs can still buy two machines;
+                 * upgrade to a lease lookup keyed by uid when that shows up.
+                 */
+                return this.sessions.list().pipe(
+                    switchMap(list => {
+                        const live = fresh
+                            ? undefined
+                            : list.sessions.find(session => session.kind === kind);
+
+                        return live
+                            ? of({ status: 'ok', session: live, reused: true })
+                            : this.sessions.create({ mode: 'dedicated', kind, workload });
+                    }),
+                );
+            }
+            /**
+             * argv is rebuilt here rather than forwarded: a model can send a string,
+             * a nested array or numbers, and the daemon refuses a blank program name.
+             * Rebuilding keeps "what the route receives" the same shape no matter
+             * what the model emitted, and `timeout` only rides along when it is a
+             * real number -- the server clamps it either way.
+             */
+            case 'run_command': {
+                const argv = Array.isArray(args['command'])
+                    ? args['command'].map(part => String(part))
+                    : [];
+                const seconds = Number(args['timeout']);
+
+                return this.sessions.exec(
+                    String(args['session_id'] ?? ''),
+                    argv,
+                    Number.isFinite(seconds) && seconds > 0 ? seconds : undefined,
+                );
+            }
             /**
              * The three browser-escalation tools. `guide` takes no arguments on
              * the worker; the other two forward verbatim and let the route
@@ -818,6 +1402,26 @@ export class ChataiComponent {
                     url: String(args['url'] ?? ''),
                     ...(args['filename'] ? { filename: String(args['filename']) } : {}),
                 });
+            /**
+             * Text the MODEL composed, which `save_file` cannot express: that one hands
+             * the platform a URL to fetch. `content` is required by the schema, so an
+             * absent value is a bug in the schema rather than a case to default -- and
+             * an empty string is refused by the route with a 400 the model can read.
+             */
+            case 'write_file':
+                return this.storage.savePayload(
+                    String(args['content'] ?? ''),
+                    String(args['filename'] ?? ''),
+                    args['content_type'] ? String(args['content_type']) : undefined,
+                );
+            /**
+             * The job tools. Answered here rather than by a route because the body
+             * is not the model's to compose: the route takes an `operation_data`
+             * row, and the scheduled case writes a document instead of calling
+             * anything. See `createJob` for what each shape does.
+             */
+            case 'create_job':
+                return from(this.createJob(args));
             case 'set_spend_cap': {
                 /**
                  * Checked here rather than forwarded. The route rejects a non-integer,
@@ -955,10 +1559,11 @@ export class ChataiComponent {
      * @param {readonly ToolCallResult[]} results The results, in the order the calls were declared.
      * @return {void}
      */
-    private recordTools(results: readonly ToolCallResult[]): void {
+    private recordTools(results: readonly ExecutedCall[]): void {
         const runs: ToolRun[] = results.map(result => ({
             name: result.call.name,
             summary: summariseToolResult(result.content),
+            status: result.status,
         }));
 
         this.messages.update(list => {
@@ -1027,7 +1632,7 @@ export interface PendingToolBatch {
 const TOOL_RESULT_LIMIT = 6000;
 
 /**
- * Where the transcript is kept between reloads, and how much of it.
+ * Where the conversation history is kept between reloads, and how much of it.
  *
  * Versioned, because the stored shape may change and an older value has to be
  * recognisable rather than misread. Capped, because this is a CACHE in a ~5MB budget
@@ -1035,12 +1640,48 @@ const TOOL_RESULT_LIMIT = 6000;
  * so the oldest are the right thing to lose. It is deliberately local to ONE browser
  * -- there is no cross-device history, and adding one means Firestore plus a
  * retention decision rather than another line here.
+ *
+ * `TRANSCRIPT_KEY` is the PREVIOUS single-conversation shape. It is still read once, to
+ * adopt whatever the user already had, and is never written again: deleting a
+ * conversation somebody was in the middle of is not a migration.
  */
+const SESSIONS_KEY = 'deepscrape.chat.sessions.v1';
 const TRANSCRIPT_KEY = 'deepscrape.chat.v1';
 const TRANSCRIPT_MAX = 40;
+/** Conversations kept. Twenty is the point where the newest turns still fit the budget. */
+const SESSIONS_MAX = 20;
+/** Longest title kept or rendered, so one pasted paragraph cannot fill the menu. */
+const TITLE_MAX = 60;
+
+/**
+ * One stored conversation.
+ *
+ * `at` is the moment of the last turn rather than creation, so the menu orders by recency
+ * and a conversation being used stays at the top. `title` is derived from the first turn
+ * and stored, rather than recomputed: a session whose first turn is later trimmed must not
+ * be renamed by that.
+ */
+export interface ChatSession {
+    readonly id: string;
+    readonly title: string;
+    readonly at: number;
+    readonly messages: readonly ChatMessage[];
+}
+
+/**
+ * A tool run as it comes out of storage, before its status is normalised.
+ *
+ * `status` is `unknown` rather than `ToolRunStatus` on purpose: a transcript written before the
+ * field existed has none, and a hand-edited one can hold anything.
+ */
+interface StoredRun {
+    readonly name: string;
+    readonly summary: string;
+    readonly status?: unknown;
+}
 
 /** Whether a stored value is a tool run the chip can render. */
-const isToolRun = (value: unknown): value is ToolRun => {
+const isStoredRun = (value: unknown): value is StoredRun => {
     if (!value || typeof value !== 'object') {
         return false;
     }
@@ -1048,6 +1689,20 @@ const isToolRun = (value: unknown): value is ToolRun => {
     const run = value as Partial<ToolRun>;
     return typeof run.name === 'string' && typeof run.summary === 'string';
 };
+
+/**
+ * A stored run with a status the template can switch on.
+ *
+ * A missing status is `ok`, which is the only safe default: it says "this ran", and an old
+ * transcript really did run its tools. Guessing `failed` would libel a conversation that worked.
+ * @param {StoredRun} run The validated stored shape.
+ * @return {ToolRun} The run, with a status the template can render.
+ */
+const toToolRun = (run: StoredRun): ToolRun => ({
+    name: run.name,
+    summary: run.summary,
+    status: run.status === 'refused' || run.status === 'failed' ? run.status : 'ok',
+});
 
 /**
  * A stored entry as a turn, or null when it is not one.
@@ -1062,13 +1717,13 @@ const isToolRun = (value: unknown): value is ToolRun => {
  * @param {unknown} value One entry of the stored array.
  * @return {ChatMessage | null} The turn, or null when it cannot be rendered.
  */
-const toChatMessage = (value: unknown): ChatMessage | null => {
+export const toChatMessage = (value: unknown): ChatMessage | null => {
     if (!value || typeof value !== 'object') {
         return null;
     }
 
     const entry = value as Partial<ChatMessage>;
-    const tools = Array.isArray(entry.tools) ? entry.tools.filter(isToolRun) : [];
+    const tools = Array.isArray(entry.tools) ? entry.tools.filter(isStoredRun).map(toToolRun) : [];
 
     if (typeof entry.id !== 'string' || typeof entry.content !== 'string') {
         return null;
@@ -1088,6 +1743,84 @@ const toChatMessage = (value: unknown): ChatMessage | null => {
 
     return { id: entry.id, role: entry.role, content: entry.content, at: entry.at, tools };
 };
+
+/**
+ * A conversation's name, taken from what the user actually asked.
+ *
+ * Whitespace is collapsed because a pasted multi-line prompt otherwise renders as one broken run in
+ * the menu, and the cut ends on an ellipsis so a shortened title reads as shortened rather than as
+ * an oddly short question.
+ * @param {readonly ChatMessage[]} messages The conversation, oldest first.
+ * @return {string} The title, or '' when the conversation holds no text yet.
+ */
+export function sessionTitle(messages: readonly ChatMessage[]): string {
+    const question = messages.find(
+        message => message.role === 'user' && message.content.trim().length > 0,
+    );
+
+    // An assistant-led transcript still needs a name, so ANY non-empty turn is the fallback. Taking
+    // the first non-empty turn outright would title the conversation with the assistant's words.
+    const source = question ?? messages.find(message => message.content.trim().length > 0);
+    const text = (source?.content ?? '').trim().replace(/\s+/g, ' ');
+
+    return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1).trimEnd()}…` : text;
+}
+
+/**
+ * An identifier for a new conversation.
+ *
+ * `randomUUID` is absent outside a secure context, so the fallback is time plus randomness rather
+ * than a throw in the one path that runs while a user is mid-sentence.
+ * @return {string} An id unique enough for a per-browser list.
+ */
+const newSessionId = (): string =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+/**
+ * A stored conversation, or null when it is not one.
+ *
+ * The value comes out of localStorage, so every field is re-validated and the title is re-capped:
+ * a hand-edited row must not be able to put a megabyte into the menu. A conversation with no
+ * readable turn is dropped rather than rendered as an empty row.
+ * @param {unknown} value One entry of the stored array.
+ * @return {ChatSession | null} The conversation, or null when it cannot be rendered.
+ */
+export function toChatSession(value: unknown): ChatSession | null {
+    if (!value || typeof value !== 'object') {
+        return null;
+    }
+
+    const entry = value as Partial<ChatSession>;
+
+    if (typeof entry.id !== 'string' || !entry.id) {
+        return null;
+    }
+
+    if (typeof entry.title !== 'string' || typeof entry.at !== 'number') {
+        return null;
+    }
+
+    if (!Array.isArray(entry.messages)) {
+        return null;
+    }
+
+    const messages = entry.messages
+        .map(toChatMessage)
+        .filter((message): message is ChatMessage => message !== null);
+
+    if (!messages.length) {
+        return null;
+    }
+
+    return {
+        id: entry.id,
+        title: entry.title.slice(0, TITLE_MAX),
+        at: entry.at,
+        messages,
+    };
+}
 
 /**
  * A route's answer as text for the model, capped.

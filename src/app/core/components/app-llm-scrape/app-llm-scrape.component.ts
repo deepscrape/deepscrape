@@ -9,7 +9,6 @@ import { mergeMap } from 'rxjs/internal/operators/mergeMap';
 import { Subscription } from 'rxjs/internal/Subscription';
 import {
   arrayBufferToString, calculateOpenAICost, chatInBatchesAI, constructCookiesforJina,
-  crawlOperationStatusColor,
   extractDomain, formatBytes, sanitizeJSON,
 } from 'src/app/core/functions';
 import { aichunk, AIModel, BrowserConfigurationImpl, CrawlConfig, CrawlerRunConfigImpl, CrawlOperation, CrawlPack, CrawlTask, OpenAITokenDetails, AiKeySource, AiVendorId, vendorForModelCode } from '../../types';

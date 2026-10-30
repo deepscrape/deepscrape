@@ -9,17 +9,38 @@ import {
 } from '@angular/core';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Router, RouterLink } from '@angular/router';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { MatIcon } from '@angular/material/icon';
 import { TranslateModule } from '@ngx-translate/core';
-import { ToolEnvelope } from '../../types';
-import { WebrainToolsService } from '../../services';
+import { concat, switchMap, takeWhile, timer } from 'rxjs';
+import { CrawlOperation, JobResult, ToolEnvelope } from '../../types';
+import { AuthService, CrawlAPIService } from '../../services';
+import { CrawlOperationStatus } from '../../enum';
 import { StinputComponent } from '../stinput/stinput.component';
 import {
   ResultEnvelopeComponent,
   ResultEnvelopeState,
 } from '../result-envelope/result-envelope.component';
+import { SerpResultsComponent } from '../serp-results/serp-results.component';
+import { SerpResponse } from '../../types/serp.interface';
 import { smoothfadeAnimation } from 'src/app/animations';
+
+/**
+ * How often a queued call is re-read while it runs.
+ *
+ * Two seconds is the resolution a human can perceive without the panel turning
+ * into a busy loop: these calls take seconds to minutes, and each poll is one
+ * Firestore read behind the BFF.
+ */
+const JOB_POLL_MS = 2000;
+
+/** The statuses after which a job has nothing left to learn. */
+const JOB_TERMINAL: readonly CrawlOperationStatus[] = [
+  CrawlOperationStatus.COMPLETED,
+  CrawlOperationStatus.FAILED,
+  CrawlOperationStatus.CANCELED,
+];
 
 /** How one field renders. Five kinds cover every argument the three tools take. */
 export type ToolFieldKind = 'text' | 'select' | 'number' | 'json' | 'flag';
@@ -384,8 +405,10 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     ReactiveFormsModule,
     MatIcon,
     TranslateModule,
+    RouterLink,
     StinputComponent,
     ResultEnvelopeComponent,
+    SerpResultsComponent,
   ],
   templateUrl: './tools-panel.component.html',
   styleUrl: './tools-panel.component.scss',
@@ -398,8 +421,13 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
 export class ToolsPanelComponent {
   @HostBinding('class') classes = 'flex items-center flex-col relative w-full';
 
-  private readonly tools = inject(WebrainToolsService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly crawl = inject(CrawlAPIService);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+
+  /** The caller, for the `/operations` row this panel leaves behind. */
+  private readonly user = toSignal(this.auth.user$, { initialValue: null });
 
   /** Every tab. */
   readonly descriptors = TOOL_DESCRIPTORS;
@@ -418,19 +446,27 @@ export class ToolsPanelComponent {
    * attributed to a caller. Collapsing that into one "tier" word would hide the
    * axis that actually gates them.
    *
-   * A tool with NO entry here renders no cost box at all, which is the intended
-   * answer for one whose gate is neither axis: `vision` and the three capacity
-   * tools (`batch`, `spider`, `watch`) are PAID routes, so their `note` says so
-   * in words rather than the box implying "free, so it works".
+   * A tool with NO entry here renders no cost box at all. `vision` is the one left
+   * that way on purpose: it is a PAID route whose own note already states what it
+   * needs, and a lease badge for it would be a claim this table cannot back.
    *
    * Lease prices are from the same table and stated in `TOOLS.LEASE_COST`:
    * `POST /machines/deploy` is 5 credits, `start`/`suspend`/`stop` are 1 each,
    * `DELETE` is 2.
    */
-  readonly costs: Record<string, { requires: 'free' | 'lease'; credits: number }> = {
+  readonly costs: Record<string, { requires: 'free' | 'lease'; credits: number; paid?: boolean }> = {
     search: { requires: 'free', credits: 0 },
     extract: { requires: 'lease', credits: 0 },
     pdf: { requires: 'lease', credits: 0 },
+    // The three capacity tools used to have no row, on the argument that their
+    // `note` said "paid" in words. It did not, and it said nothing about the lease
+    // either -- while `bff/api.ts` says of batch and spider: "These two therefore
+    // answer a refusal until an exclusive pool exists." So the panel offered three
+    // tabs whose only possible answer was a refusal, with nothing on screen saying
+    // why or what would fix it. Credits are `billing-pricing.domain.ts`'s own numbers.
+    batch: { requires: 'lease', credits: 3, paid: true },
+    spider: { requires: 'lease', credits: 10, paid: true },
+    watch: { requires: 'lease', credits: 5, paid: true },
   };
 
   /**
@@ -449,6 +485,13 @@ export class ToolsPanelComponent {
   readonly errorMessage = signal('');
   /** An i18n key for a form-level problem, e.g. unparseable JSON. */
   readonly formError = signal('');
+  /**
+   * The queued call's id, once the server has one.
+   *
+   * Held so the panel can say where the work went: this screen may be closed
+   * long before the job finishes, and `/operations` is where it lands.
+   */
+  readonly jobId = signal<string | null>(null);
 
   /** The live value of the tool's mode field, which gates conditional fields. */
   private modeValue(): string {
@@ -476,6 +519,24 @@ export class ToolsPanelComponent {
   readonly pretty = computed(() => {
     const reply = this.envelope();
     return reply ? JSON.stringify(reply.data ?? reply, null, 2) : '';
+  });
+
+  /**
+   * The reply AS a search envelope, when it is one.
+   *
+   * The panel has no schema endpoint to ask, so this is a shape check rather
+   * than a declared type: `results` plus a `query` is what `SerpResponse` is and
+   * nothing else the three routes return has both. A SERP reply rendered as
+   * `<pre>` is the raw-blob result this exists to stop -- the rows, per-engine
+   * breakdown and skipped-engine note are already built in
+   * `app-serp-results`, and re-rendering them here would be the per-tool drift
+   * the header warns about.
+   */
+  readonly serp = computed<SerpResponse | null>(() => {
+    const data = this.envelope()?.data as Partial<SerpResponse> | undefined;
+    return data && Array.isArray(data.results) && typeof data.query === 'string'
+      ? (data as SerpResponse)
+      : null;
   });
 
   /** Header chips: what the worker reported about its own call. */
@@ -639,20 +700,97 @@ export class ToolsPanelComponent {
 
     this.state.set('loading');
     this.errorMessage.set('');
+    this.jobId.set(null);
 
-    // The cast names every tool that HAS a method on the service, which is one
-    // more than it used to: `vision` was absent before the capacity tools were
-    // added, so a cut-and-paste that dropped a name here would have compiled.
-    this.tools[
-      this.active().id as
-        | 'search' | 'extract' | 'pdf' | 'vision'
-        | 'batch' | 'spider' | 'watch'
-    ](body)
-      .pipe(takeUntilDestroyed(this.destroyRef))
+    const descriptor = this.active();
+
+    // QUEUED, not called. The tool's own route lived exactly as long as this
+    // tab: switching playground mode destroyed the component and aborted the
+    // request, so the answer was gone and nothing recorded that the call had
+    // been made. One unit of work on the queue, one row in `/operations`, and
+    // this panel becomes a VIEWER of work that no longer belongs to it --
+    // leaving the page stops the polling and never the call.
+    this.crawl
+      .enqueueTool(descriptor.id, body, this.operationRow(descriptor))
+      .pipe(
+        switchMap((task) => {
+          this.jobId.set(task.id);
+          // Read once IMMEDIATELY, then poll. The SSE routes answer a client
+          // that watches from the first frame; this one has to read a job that
+          // may already have finished, and an immediate read is also what makes
+          // a fast tool (`search`) feel like a request rather than a wait.
+          return concat(
+            this.crawl.getJobResult(task.id),
+            timer(JOB_POLL_MS, JOB_POLL_MS).pipe(
+              switchMap(() => this.crawl.getJobResult(task.id)),
+            ),
+          ).pipe(
+            takeWhile((result) => !JOB_TERMINAL.includes(result.status), true),
+          );
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
-        next: reply => this.apply(reply),
+        next: (result) => this.applyJobResult(result),
         error: (error: HttpErrorResponse) => this.applyFailure(error),
       });
+  }
+
+  /**
+   * The `/operations` row this call should leave behind.
+   *
+   * The server owns the fields it can know better -- `id`, `task_id`,
+   * `created_At`, `status`, and `author.uid` from the credential -- and merges
+   * this row underneath them. So only what it cannot know is sent: WHICH tool
+   * ran. The `urls` line is left empty on purpose; the server fills it with the
+   * call's own label, so the row reads `spider · https://example.com` without
+   * this side having to know which argument each tool echoes.
+   * @param {ToolDescriptor} descriptor The tool that is being queued.
+   * @return {CrawlOperation} The row to send.
+   */
+  private operationRow(descriptor: ToolDescriptor): CrawlOperation {
+    const user = this.user();
+
+    return {
+      type: 'playground',
+      author: {
+        uid: user?.uid ?? '',
+        displayName: user?.currProviderData?.displayName || 'anonymous',
+      },
+      name: descriptor.id,
+      created_At: Date.now(),
+      scheduled_At: Date.now(),
+      urls: [],
+      status: CrawlOperationStatus.READY,
+      urlPath: this.router.url,
+    };
+  }
+
+  /**
+   * Fold one job snapshot into the envelope.
+   *
+   * A snapshot with no rows yet is a call the queue has accepted but not run:
+   * nothing is set, so the panel keeps its loading state instead of painting an
+   * empty answer. The LAST row wins, because the stored array is append-only
+   * and a retried call leaves two.
+   * @param {JobResult} result One read of the job.
+   * @return {void}
+   */
+  private applyJobResult(result: JobResult): void {
+    const item = result.items[result.items.length - 1];
+
+    if (!item) {
+      return;
+    }
+
+    this.apply({
+      provider: 'webrain',
+      status: item.status === 'ok' ? 'ok' : 'error',
+      data: item.data,
+      error: item.status === 'error' ? item.message : undefined,
+      tokens: item.tokens?.est_tokens,
+      ms: item.ms,
+    });
   }
 
   /** Re-run the same submission. */

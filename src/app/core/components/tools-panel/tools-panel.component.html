@@ -51,6 +51,12 @@
           {{ 'TOOLS.REQ_LEASE' | translate }}
         </span>
       }
+      @if (cost.paid) {
+        <span
+          class="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          {{ 'FEATURE_GATE.REQUIRES_PLAN_TITLE' | translate }}
+        </span>
+      }
       <span class="text-gray-600 dark:text-gray-300">
         {{ 'TOOLS.COST_LABEL' | translate }}: {{ cost.credits }}
       </span>
@@ -84,7 +90,7 @@
             </span>
             <select
               [formControl]="controlFor(field.name)"
-              class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray6 transition-colors focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7 dark:text-white">
+              class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 transition-colors focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800/50 dark:text-white">
               <option value="">{{ 'TOOLS.OPTION_UNSET' | translate }}</option>
               @for (option of field.options; track option) {
                 <option [value]="option">{{ option }}</option>
@@ -106,7 +112,7 @@
               spellcheck="false"
               [formControl]="controlFor(field.name)"
               [attr.placeholder]="'TOOLS.PLACEHOLDER_JSON' | translate"
-              class="rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray6 transition-colors focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7 dark:text-white"></textarea>
+              class="scrollbar rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 transition-colors focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800/50 dark:text-white"></textarea>
             @if (hintFor(field); as hint) {
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ hint | translate }}</span>
             }
@@ -121,14 +127,14 @@
         @case ('flag') {
           <div class="flex flex-col gap-1">
             <div
-              class="flex items-center justify-between gap-3 rounded-xl border border-gray-200/70 bg-slate-50/40 px-3 py-2 dark:border-gray-700/60 dark:bg-gray7/50">
+              class="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2 dark:bg-gray6/80">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ field.label | translate }}</span>
               <input
                 type="checkbox"
                 [checked]="isFlagOn(field.name)"
                 (change)="setFlag(field.name, $any($event.target).checked)"
                 [attr.aria-label]="field.label | translate"
-                class="h-5 w-5 flex-shrink-0 rounded border-gray-300 text-cyan-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7" />
+                class="h-5 w-5 flex-shrink-0 rounded border-gray-300 text-cyan-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600" />
             </div>
             @if (hintFor(field); as hint) {
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ hint | translate }}</span>
@@ -180,14 +186,36 @@
     </button>
   </div>
 
-  <app-result-envelope
-    [state]="state()"
-    [title]="active().label"
-    [meta]="meta()"
-    [errorMessage]="errorMessage() | translate"
-    [showRetry]="showRetry"
-    (retry)="retry()">
-    <pre
-      class="max-h-96 overflow-auto rounded-lg bg-slate-100/60 p-3 text-xs leading-5 text-gray6 dark:bg-gray7/90 dark:text-gray-100">{{ pretty() }}</pre>
-  </app-result-envelope>
+  <!--
+    Where the work went. The call is a queued job, so this panel is a viewer of
+    it rather than its owner: closing the tab or switching playground mode stops
+    the polling and not the call. Saying so is what makes leaving safe to do.
+  -->
+  @if (jobId(); as id) {
+    <p class="text-xs text-gray-600 dark:text-gray-300" role="status">
+      {{ 'TOOLS.JOB_QUEUED' | translate }}
+      <a
+        [routerLink]="['/operations']"
+        class="font-medium text-cyan-700 hover:underline dark:text-cyan-300"
+        [attr.title]="id">{{ 'TOOLS.JOB_LINK' | translate }}</a>
+    </p>
+  }
+
+  <!-- A search reply gets the SERP renderer; anything else stays the JSON blob it
+       always was. `app-serp-results` brings its own envelope chrome, so the two
+       are alternatives rather than nested -- nesting would print two titles. -->
+  @if (serp(); as reply) {
+    <app-serp-results [response]="reply" [state]="'ready'" />
+  } @else {
+    <app-result-envelope
+      [state]="state()"
+      [title]="active().label"
+      [meta]="meta()"
+      [errorMessage]="errorMessage() | translate"
+      [showRetry]="showRetry"
+      (retry)="retry()">
+      <pre
+        class="max-h-96 overflow-auto rounded-lg bg-slate-100/60 p-3 text-xs leading-5 text-gray6 dark:bg-gray7/90 dark:text-gray-100">{{ pretty() }}</pre>
+    </app-result-envelope>
+  }
 </div>

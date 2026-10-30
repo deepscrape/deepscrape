@@ -15,7 +15,6 @@ import { HiddenDragScrollDirective, RippleDirective } from '../../directives'
 import { expandCollapseAnimation, fadeInUp } from 'src/app/animations'
 import { SnackBarType } from '../snackbar/snackbar.component'
 import { SeederResultsComponent } from '../seeder-results/seeder-results.component'
-import { crawlOperationStatusColor } from '../../functions'
 import { CrawlOperationStatus } from '../../enum'
 import { UserInfo } from '@angular/fire/auth'
 import { Router } from '@angular/router'
@@ -630,7 +629,6 @@ export class DomainSeederComponent implements AfterViewInit, OnDestroy {
       metadataId: 'unknown',
       urls: domains || [],
       status: CrawlOperationStatus.READY,
-      color: crawlOperationStatusColor(CrawlOperationStatus.READY),
     }
 
     return operationData

@@ -27,7 +27,6 @@ describe('PlansComponent', () => {
         enabled: true,
         minimumCredits: 50,
         maximumCredits: 5000,
-        unitAmount: 19,
         currency: 'eur',
         suggestedCredits: [100, 250, 500],
       }),
@@ -71,5 +70,39 @@ describe('PlansComponent', () => {
     await component.startTrialFromPromo();
 
     expect(startTrialSpy).not.toHaveBeenCalled();
+  });
+
+  it('never recommends the plan the caller already pays for', () => {
+    const pro = { id: 'pro', label: 'Pro', features: [], prices: {} } as never;
+    const starter = { id: 'starter', label: 'Starter', features: [], prices: {} } as never;
+
+    component.currentPlanValue = 'starter';
+    expect(component.isBestChoice(pro)).toBe(true);
+
+    component.currentPlanValue = 'pro';
+    expect(component.isBestChoice(pro)).toBe(false);
+
+    // An unlimited account is above the self-serve ladder; nothing to recommend to it.
+    component.currentPlanValue = 'enterprise';
+    expect(component.isBestChoice(pro)).toBe(false);
+    expect(component.isBestChoice(starter)).toBe(false);
+  });
+
+  it('prices a custom amount at the pack rate it has earned, never below it', () => {
+    const packs = [
+      { id: 'credits_100', label: '100 credits', credits: 100, amount: 150, currency: 'eur' as const },
+      { id: 'credits_500', label: '500 credits', credits: 500, amount: 600, currency: 'eur' as const },
+      { id: 'credits_2000', label: '2000 credits', credits: 2000, amount: 2000, currency: 'eur' as const },
+    ];
+
+    component.customCreditsAmount.setValue('500');
+    expect(component.getCustomCreditsTotal(packs)).toBe(600);
+    expect(component.getCustomCreditRate(packs)).toBeCloseTo(0.012, 5);
+
+    // Above the largest pack the rate stops improving; below the smallest it is that pack's.
+    component.customCreditsAmount.setValue('5000');
+    expect(component.getCustomCreditRate(packs)).toBeCloseTo(0.01, 5);
+    component.customCreditsAmount.setValue('50');
+    expect(component.getCustomCreditRate(packs)).toBeCloseTo(0.015, 5);
   });
 });

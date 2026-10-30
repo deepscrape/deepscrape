@@ -1,0 +1,27 @@
+@if (!series().length) {
+  <p class="text-sm text-gray-500 dark:text-gray-300">
+    No history in this period.
+  </p>
+} @else {
+  <div class="flex items-end gap-1" role="img"
+    [attr.aria-label]="total() + ' ' + unit() + ' across ' + series().length + ' active days'">
+    @for (point of series(); track point.date) {
+      <div class="group relative flex flex-1 flex-col items-center justify-end">
+        <!-- The bar. `min-w` keeps a single day from rendering one hairline. -->
+        <div
+          class="w-full min-w-1.5 rounded-t bg-cyan-500/80 transition-colors duration-150 group-hover:bg-cyan-600 dark:bg-cyan-400/70 dark:group-hover:bg-cyan-300"
+          [style.height.px]="heightOf(point) * 1.2"
+          [attr.title]="point.date + ' · ' + valueOf(point) + ' ' + unit()">
+        </div>
+      </div>
+    }
+  </div>
+
+  <div class="mt-2 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+    <span>{{ series()[0].date }}</span>
+    @if (busiest(); as top) {
+      <span>Peak {{ valueOf(top) }} {{ unit() }} on {{ top.date }}</span>
+    }
+    <span>{{ series()[series().length - 1].date }}</span>
+  </div>
+}

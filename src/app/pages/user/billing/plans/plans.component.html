@@ -37,6 +37,21 @@
           </div>
         </div>
       }
+      @if (isDunning((billing$ | async)?.status)) {
+        <div class="mb-5 rounded-2xl border border-amber-500/40 bg-amber-500/10 dark:bg-amber-400/10 px-4 py-3 text-amber-900 dark:text-amber-100 shadow-md" role="alert">
+          <div class="flex flex-wrap items-center gap-2">
+            <mat-icon fontSet="material-icons-outlined" class="text-amber-600 dark:text-amber-300">report_problem</mat-icon>
+            <span class="font-medium">{{ 'BILLING_PLANS.DUNNING_BODY' | translate }}</span>
+            <button
+              type="button"
+              class="ml-auto inline-flex items-center gap-1 rounded-full bg-amber-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-60"
+              [disabled]="loading.portal"
+              (click)="openPortal()">
+              {{ 'BILLING_PLANS.DUNNING_CTA' | translate }}
+            </button>
+          </div>
+        </div>
+      }
       @if (offerBadgeMessage) {
         <div @offerBadgeAnimation class="mb-5 rounded-2xl border border-violet-500/40 bg-violet-500/15 dark:bg-violet-500/20 px-4 py-3 text-violet-800 dark:text-violet-100 shadow-md">
           <div class="flex items-center gap-2">
@@ -386,13 +401,13 @@
                       {{ 'BILLING_PLANS.CUSTOM_CREDITS_RANGE' | translate : { min: customConfig.minimumCredits, max: customConfig.maximumCredits } }}
                     </p>
                     <p class="text-sm text-violet-700 dark:text-violet-300 mt-2">
-                      {{ customConfig.unitAmount / 100 | currency : currencyValue }} {{ 'BILLING_PLANS.PER_CREDIT' | translate }}
+                      {{ getCustomCreditRate(packs) | currency : currencyValue : 'symbol' : '1.2-3' }} {{ 'BILLING_PLANS.PER_CREDIT' | translate }}
                     </p>
                   </div>
                   <div class="text-left md:text-right">
                     <p class="text-sm text-gray-600 dark:text-gray-300">{{ 'BILLING_PLANS.ESTIMATED_TOTAL' | translate }}</p>
                     <p class="text-2xl font-bold text-violet-600 dark:text-violet-400">
-                      {{ getCustomCreditsTotal(customConfig) / 100 | currency : currencyValue }}
+                      {{ getCustomCreditsTotal(packs) / 100 | currency : currencyValue }}
                     </p>
                   </div>
                 </div>

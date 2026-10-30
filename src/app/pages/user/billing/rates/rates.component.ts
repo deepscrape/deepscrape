@@ -1,3 +1,4 @@
+import { CurrencyPipe } from '@angular/common'
 import { HttpErrorResponse } from '@angular/common/http'
 import {
   ChangeDetectionStrategy,
@@ -10,6 +11,7 @@ import {
 } from '@angular/core'
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
 import { TranslateModule } from '@ngx-translate/core'
+import { BillingService } from '../../../../core/services/billing.service'
 import { PricingRatesService } from '../../../../core/services/pricing-rates.service'
 import { PricingRate } from '../../../../core/types/pricing-rates.interface'
 import {
@@ -126,14 +128,27 @@ interface RateGroupView {
 @Component({
   selector: 'app-rates',
   standalone: true,
-  imports: [TranslateModule, ResultEnvelopeComponent],
+  imports: [TranslateModule, ResultEnvelopeComponent, CurrencyPipe],
   templateUrl: './rates.component.html',
   styleUrl: './rates.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RatesComponent implements OnInit {
   private readonly pricing = inject(PricingRatesService)
+  private readonly billing = inject(BillingService)
   private readonly destroyRef = inject(DestroyRef)
+
+  /**
+   * What ONE credit costs, in minor units, from the cheapest pack.
+   *
+   * The pack catalog is the only place the platform prices a credit on its own, so
+   * it is the only honest source for "1 credit costs €X" — deriving it from a plan
+   * would answer a different question (what a credit costs once you have paid for a
+   * subscription, which is cheaper and not what a pay-as-you-go reader is asking).
+   * The CHEAPEST pack is used because it is the best case a customer can actually
+   * buy, so the figure cannot overstate the price.
+   */
+  readonly perCreditMinor = signal(0)
 
   /** The envelope's state. `empty` and `ready` are different remedies. */
   readonly state = signal<ResultEnvelopeState>('idle')
@@ -174,6 +189,29 @@ export class RatesComponent implements OnInit {
 
   ngOnInit(): void {
     this.load()
+    this.loadPerCreditPrice()
+  }
+
+  /**
+   * Read the pack catalog and keep the cheapest per-credit amount.
+   *
+   * A failed read leaves the figure at 0, which the template treats as "not
+   * shown" — a price list is still worth reading without it, and inventing a
+   * fallback number here is exactly the drift this page exists to prevent.
+   * @return {void} Nothing.
+   */
+  private loadPerCreditPrice(): void {
+    this.billing
+      .getCreditPacks$()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: packs => {
+          const priced = packs.filter(pack => pack.credits > 0 && pack.amount > 0)
+          if (!priced.length) return
+          this.perCreditMinor.set(Math.min(...priced.map(pack => pack.amount / pack.credits)))
+        },
+        error: () => this.perCreditMinor.set(0),
+      })
   }
 
   /**

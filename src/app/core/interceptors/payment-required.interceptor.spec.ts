@@ -29,7 +29,6 @@ describe('paymentRequiredInterceptor', () => {
         origin: 'https://deepscrape.dev',
       } as Location,
     }
-
     TestBed.configureTestingModule({
       providers: [
         ...getTestProviders(),
@@ -69,6 +68,50 @@ describe('paymentRequiredInterceptor', () => {
             returnUrl: '/dashboard',
           },
         })
+        done()
+      },
+    })
+  })
+
+  it('stays put when the 402 arrives while a checkout is settling', (done) => {
+    Object.defineProperty(routerMock, 'url', {
+      value: '/org_abc?checkout=success',
+      configurable: true,
+    })
+
+    const req = new HttpRequest('GET', '/api/jobs')
+    const error = new HttpErrorResponse({
+      status: 402,
+      url: '/api/jobs',
+      error: { code: 'payment_required' },
+    })
+    const next: HttpHandlerFn = () => throwError(() => error)
+
+    executeInterceptor(req, next).subscribe({
+      next: () => fail('expected error'),
+      error: (receivedError) => {
+        expect(receivedError).toBe(error)
+        expect(routerMock.navigate).not.toHaveBeenCalled()
+        done()
+      },
+    })
+  })
+
+  it('sends a held wallet to the passes page, not to the plans page', (done) => {
+    const req = new HttpRequest('GET', '/api/jobs')
+    const error = new HttpErrorResponse({
+      status: 402,
+      url: '/api/jobs',
+      error: { code: 'wallet_on_hold' },
+    })
+    const next: HttpHandlerFn = () => throwError(() => error)
+
+    executeInterceptor(req, next).subscribe({
+      next: () => fail('expected error'),
+      error: () => {
+        // A held wallet may be full: "buy a plan" is wrong advice, and the passes page is
+        // where the balance and the reason are rendered.
+        expect(routerMock.navigate).toHaveBeenCalledWith(['/billing/passes'])
         done()
       },
     })

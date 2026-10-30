@@ -1,6 +1,15 @@
 <div class="container mx-auto px-4 py-6">
   <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-6">{{ 'BILLING_PASSES.TITLE' | translate }}</h2>
 
+  @if (billing$ | async; as holdBilling) {
+    @if (holdBilling.hold) {
+      <div class="rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 mb-6 flex items-start gap-2">
+        <mat-icon fontSet="material-icons-outlined" class="text-amber-600 dark:text-amber-300 text-sm">gavel</mat-icon>
+        <span>{{ 'BILLING_CANCEL.HOLD_NOTICE' | translate }}</span>
+      </div>
+    }
+  }
+
   <!-- Credit balance summary -->
   <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
     <div class="rounded-2xl bg-gradient-to-br from-violet-50 to-white dark:from-violet-950/30 dark:to-gray-800/30 border border-violet-200 dark:border-violet-800/30 p-5 shadow-sm">
@@ -54,6 +63,9 @@
       </div>
       <div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
         <p>{{ 'BILLING_PASSES.PURCHASED' | translate }}: {{ getAvailablePurchased(billing) }} credits {{ 'BILLING_PASSES.AVAILABLE' | translate }}</p>
+        @if (billing.creditsExpireAt) {
+          <p class="text-xs text-amber-700 dark:text-amber-300">{{ 'BILLING_PASSES.EXPIRES' | translate }}: {{ billing.creditsExpireAt | date: 'mediumDate' }}</p>
+        }
         <p>{{ 'BILLING_PASSES.INCLUDED' | translate }}: {{ getAvailableIncluded(billing) }} credits {{ 'BILLING_PASSES.AVAILABLE' | translate }}</p>
         @if (billing.subscriptionId) {
           <p class="text-xs text-gray-400">{{ 'BILLING_PASSES.SUBSCRIPTION' | translate }}: {{ billing.subscriptionId.slice(0, 14) }}…</p>

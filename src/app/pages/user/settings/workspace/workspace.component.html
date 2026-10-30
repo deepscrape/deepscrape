@@ -46,7 +46,93 @@
       <p class="text-xs text-gray-600 dark:text-gray-400">
         {{ activeAccessKey() | translate }}
       </p>
+
+      <!--
+        The wallet. An organization exists so several people spend one balance, and
+        without this number the whole card was a name and a role.
+      -->
+      @if (wallet(); as currentWallet) {
+        <p class="text-sm text-gray-600 dark:text-gray-300">
+          {{ 'SETTINGS_WORKSPACE.WALLET_BALANCE' | translate }}:
+          <span class="font-semibold">{{ currentWallet.available }}</span>
+        </p>
+      }
+
+      <!--
+        Funding. Until a workspace can buy credits for itself, its wallet is only
+        reachable by moving credits from a member's own balance.
+      -->
+      @if (canManageWallet()) {
+        <form
+          class="mt-2 flex flex-wrap items-end gap-2"
+          [formGroup]="fundForm"
+          (ngSubmit)="fundWorkspace()">
+          <app-stinput
+            [control]="fundForm.get('amount') | formControl"
+            [leftIcon]="'confirmation_number'"
+            [type]="'number'"
+            [min]="1"
+            [label]="'SETTINGS_WORKSPACE.FUND_AMOUNT' | translate"></app-stinput>
+          <button
+            type="submit"
+            appRipple
+            rippleColor="dark"
+            class="mb-1 rounded-full bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
+            [disabled]="fundForm.invalid || isFundingWallet()">
+            {{ isFundingWallet() ? ('SETTINGS_WORKSPACE.FUNDING' | translate) : ('SETTINGS_WORKSPACE.FUND_CTA' | translate) }}
+          </button>
+          <button
+            type="button"
+            appRipple
+            rippleColor="dark"
+            class="mb-1 rounded-full bg-gray-200 px-4 py-2 text-sm font-medium text-gray-800 transition hover:bg-gray-300 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray6 dark:text-gray-100 dark:hover:bg-gray-700"
+            [disabled]="fundForm.invalid || isFundingWallet()"
+            (click)="withdrawWorkspaceCredits()">
+            {{ 'SETTINGS_WORKSPACE.WITHDRAW_CTA' | translate }}
+          </button>
+        </form>
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          {{ 'SETTINGS_WORKSPACE.FUND_HINT' | translate }}
+        </p>
+      }
+
+      <!--
+        Plan. A workspace owns its own subscription from here: the owner buys it, every
+        member spends from it, and nobody has to put their personal card behind a team.
+      -->
+      @if (isOwnerOfSelected()) {
+        <div class="mt-5 rounded-2xl border border-violet-500/25 bg-violet-500/[0.06] px-4 py-4 dark:border-violet-400/20">
+          <p class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ 'SETTINGS_WORKSPACE.PLAN_TITLE' | translate }}</p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ 'SETTINGS_WORKSPACE.PLAN_HINT' | translate }}</p>
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <a
+              [routerLink]="['/billing/plans']"
+              [queryParams]="{ forOrg: selectedOrgId() }"
+              appRipple
+              rippleColor="dark"
+              class="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500">
+              <mat-icon fontSet="material-icons-outlined" class="text-base">workspace_premium</mat-icon>
+              {{ 'SETTINGS_WORKSPACE.PLAN_CTA' | translate }}
+            </a>
+          </div>
+        </div>
+      }
     </div>
+
+    @if (isOwnerOfSelected()) {
+      <button
+        type="button"
+        appRipple
+        rippleColor="dark"
+        class="mt-4 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+        [disabled]="isDeletingWorkspace()"
+        (click)="requestDeleteWorkspace()">
+        {{ 'SETTINGS_WORKSPACE.DELETE_WORKSPACE' | translate }}
+      </button>
+      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        {{ 'SETTINGS_WORKSPACE.DELETE_WORKSPACE_HINT' | translate }}
+      </p>
+    }
   </div>
 
   <div class="grid gap-6 lg:grid-cols-2">
@@ -323,24 +409,46 @@
                 </p>
               </div>
               @if (member.role !== 'owner') {
-                <button
-                  *ifAuthorized="{
-                    resource: 'organization',
-                    action: 'manage',
-                    data: { orgId: selectedOrgId() || undefined },
-                  }"
-                  type="button"
-                  appRipple
-                  rippleColor="dark"
-                  class="rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  [disabled]="isRemovingMember() === member.userId"
-                  (click)="removeMember(member.userId)">
-                  {{
-                    isRemovingMember() === member.userId
-                      ? ('SETTINGS_WORKSPACE.REMOVING' | translate)
-                      : ('COMMON.REMOVE' | translate)
-                  }}
-                </button>
+                <div class="flex items-center gap-2">
+                  <!--
+                    Handing the org over. One click, no dialog: the new owner can hand it
+                    straight back, and the outgoing owner keeps `admin`, so nothing is lost
+                    if it was a mistake.
+                  -->
+                  @if (isOwnerOfSelected()) {
+                    <button
+                      type="button"
+                      appRipple
+                      rippleColor="dark"
+                      class="rounded-full bg-gray-200 px-3 py-1.5 text-xs font-medium text-gray-800 transition hover:bg-gray-300 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                      [disabled]="isTransferringOwner() === member.userId"
+                      (click)="transferOwnership(member.userId)">
+                      {{
+                        isTransferringOwner() === member.userId
+                          ? ('SETTINGS_WORKSPACE.TRANSFERRING' | translate)
+                          : ('SETTINGS_WORKSPACE.TRANSFER_OWNERSHIP' | translate)
+                      }}
+                    </button>
+                  }
+                  <button
+                    *ifAuthorized="{
+                      resource: 'organization',
+                      action: 'manage',
+                      data: { orgId: selectedOrgId() || undefined },
+                    }"
+                    type="button"
+                    appRipple
+                    rippleColor="dark"
+                    class="rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    [disabled]="isRemovingMember() === member.userId"
+                    (click)="removeMember(member.userId)">
+                    {{
+                      isRemovingMember() === member.userId
+                        ? ('SETTINGS_WORKSPACE.REMOVING' | translate)
+                        : ('COMMON.REMOVE' | translate)
+                    }}
+                  </button>
+                </div>
               }
             </div>
           }
@@ -348,4 +456,52 @@
       }
     </div>
   </div>
+
+  <!-- Deleting a workspace is irreversible: it takes the roster, the invitations and
+       the credit wallet with it, so it is confirmed rather than done on the first click. -->
+  @if (confirmDeleteWorkspace()) {
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="deleteWorkspaceTitle">
+      <div class="w-full max-w-md rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+        <h3
+          id="deleteWorkspaceTitle"
+          class="text-base font-semibold text-gray-900 dark:text-gray-100">
+          {{ 'SETTINGS_WORKSPACE.DELETE_CONFIRM_TITLE' | translate }}
+        </h3>
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+          {{
+            'SETTINGS_WORKSPACE.DELETE_CONFIRM_BODY'
+              | translate: { name: selectedOrganization()?.name || '' }
+          }}
+        </p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            appRipple
+            rippleColor="dark"
+            class="rounded-full bg-gray-200 px-4 py-2 text-sm font-medium text-gray-800 transition hover:bg-gray-300 disabled:opacity-60 dark:bg-gray-700 dark:text-gray-100"
+            [disabled]="isDeletingWorkspace()"
+            (click)="cancelDeleteWorkspace()">
+            {{ 'COMMON.CANCEL' | translate }}
+          </button>
+          <button
+            type="button"
+            appRipple
+            rippleColor="dark"
+            class="rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+            [disabled]="isDeletingWorkspace()"
+            (click)="deleteWorkspace()">
+            {{
+              isDeletingWorkspace()
+                ? ('SETTINGS_WORKSPACE.DELETING' | translate)
+                : ('SETTINGS_WORKSPACE.DELETE_WORKSPACE' | translate)
+            }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
 </section>

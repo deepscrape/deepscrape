@@ -97,7 +97,7 @@
                 </p>
               </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
               <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
                 <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.TOTAL_INVOICED' | translate }}</p>
                 <p class="text-2xl font-semibold text-gray-800 dark:text-gray-100 mt-1">
@@ -110,10 +110,62 @@
                   {{ (report.summary.totalPaid / 100) | currency: asCurrencyCode(report.summary.currency) }}
                 </p>
               </div>
+              <!-- What subscribing bought, against the same credits at pack rates.
+                   Hidden when the server did not send it, i.e. against an older
+                   functions deploy: no number beats a guessed one. Negative is
+                   shown in rose rather than hidden — a quiet month is the answer
+                   a customer needs when deciding whether to keep the plan. -->
+              @if (report.usage.savings; as savings) {
+                <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ 'BILLING_USAGE.SAVED_VS_PAYG' | translate }}</p>
+                  <p class="text-2xl font-semibold mt-1"
+                    [class]="savings.savingMinor >= 0
+                      ? 'text-emerald-700 dark:text-emerald-300'
+                      : 'text-rose-700 dark:text-rose-300'">
+                    {{ (savings.savingMinor / 100) | currency: asCurrencyCode(report.summary.currency) }}
+                  </p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ 'BILLING_USAGE.SAVED_HINT' | translate }}
+                    {{ (savings.payAsYouGoMinor / 100) | currency: asCurrencyCode(report.summary.currency) }}
+                  </p>
+                </div>
+              }
             </div>
+            <!-- The browser fleet's bill. Only session time records a machine id,
+                 so this lists leased machines and nothing else — a crawl has no
+                 machine and is not attributed to one. -->
+            @if ((report.usage.machines?.length ?? 0) > 0) {
+              <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md mb-8">
+                <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">{{ 'BILLING_USAGE.MACHINES_TITLE' | translate }}</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-300 mb-4">{{ 'BILLING_USAGE.MACHINES_HINT' | translate }}</p>
+                <div class="overflow-x-auto">
+                  <table class="w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr class="border-b border-gray-200 text-xs uppercase tracking-wider text-gray-500 dark:border-gray6 dark:text-gray-400">
+                        <th scope="col" class="py-2 pr-4 font-semibold">{{ 'BILLING_USAGE.MACHINE_ID' | translate }}</th>
+                        <th scope="col" class="py-2 pr-4 text-right font-semibold">{{ 'BILLING_USAGE.METERED_EVENTS' | translate }}</th>
+                        <th scope="col" class="py-2 text-right font-semibold">{{ 'BILLING_USAGE.METERED_CREDITS' | translate }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (machine of report.usage.machines ?? []; track machine.machineId) {
+                        <tr class="border-b border-gray-100 last:border-0 dark:border-gray5/40">
+                          <td class="py-2 pr-4 font-mono text-xs text-gray-700 dark:text-gray-200">{{ machine.machineId }}</td>
+                          <td class="py-2 pr-4 text-right text-gray-600 dark:text-gray-300">{{ machine.events | number:'1.0-0' }}</td>
+                          <td class="py-2 text-right font-semibold text-gray-800 dark:text-gray-100">{{ machine.credits | number:'1.0-0' }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
             <div [@fadeInUp] class="rounded-2xl bg-white dark:bg-gray6 p-5 shadow-md mb-8">
               <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">{{ 'BILLING_USAGE.METERED_USAGE' | translate }}</h3>
               <p class="text-sm text-gray-500 dark:text-gray-300 mb-4">{{ 'BILLING_USAGE.METERED_HINT' | translate }}</p>
+              <!-- Same ledger rows as the table below, ordered by day. Rendered from
+                   the one read, so the chart cannot disagree with the totals. -->
+              <app-usage-history-chart class="mb-5 block" [series]="report.usage.series ?? []" />
               @if ((report.usage.metered?.length ?? 0) === 0) {
                 <p class="text-sm text-gray-500 dark:text-gray-300">{{ 'BILLING_USAGE.METERED_EMPTY' | translate }}</p>
               } @else {

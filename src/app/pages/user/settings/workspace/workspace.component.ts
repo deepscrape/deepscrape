@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core'
 import { ReactiveFormsModule, FormControl, FormGroup, Validators } from '@angular/forms'
 import { DatePipe } from '@angular/common';
+import { RouterLink } from '@angular/router';
+import { MatIconModule } from '@angular/material/icon';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
 import { finalize } from 'rxjs'
 import { DropdownComponent, StinputComponent } from 'src/app/core/components'
@@ -25,7 +27,7 @@ type DropdownOption = {
 
 @Component({
   selector: 'app-workspace-tab',
-  imports: [ReactiveFormsModule, IfAuthorizedDirective, RippleDirective, StinputComponent, FormControlPipe, DropdownComponent, DatePipe, TranslateModule],
+  imports: [ReactiveFormsModule, IfAuthorizedDirective, RippleDirective, StinputComponent, FormControlPipe, DropdownComponent, DatePipe, TranslateModule, RouterLink, MatIconModule],
   templateUrl: './workspace.component.html',
   styleUrl: './workspace.component.scss',
   animations: [listStaggerAnimation],
@@ -55,6 +57,10 @@ export class WorkspaceTabComponent {
   isSubmittingInvite = signal(false)
   isAcceptingInvite = signal<string | null>(null)
   isRemovingMember = signal<string | null>(null)
+  isTransferringOwner = signal<string | null>(null)
+  isDeletingWorkspace = signal(false)
+  isFundingWallet = signal(false)
+  confirmDeleteWorkspace = signal(false)
   readonly workspaceControl = new FormControl<DropdownOption>({ name: 'SHELL.SELECT_WORKSPACE', code: '' }, { nonNullable: true })
   readonly inviteRoleControl = new FormControl<DropdownOption>({ name: 'SETTINGS_WORKSPACE.ROLE_MEMBER', code: 'member' }, { nonNullable: true })
   readonly inviteRoleOptions: DropdownOption[] = [
@@ -291,6 +297,153 @@ export class WorkspaceTabComponent {
         },
         error: () => {
           this.showError(this.translate.instant('SETTINGS_WORKSPACE.ERR_REMOVE_MEMBER'))
+        },
+      })
+  }
+
+  /** The selected workspace's credit wallet, or null before anything is loaded. */
+  readonly wallet = computed(() => this.selectedOrganization()?.wallet ?? null)
+
+  readonly isOwnerOfSelected = computed(
+    () => this.selectedOrganization()?.membership?.role === 'owner',
+  )
+
+  /**
+   * The transfer route is gated by `organization.manage`, which the POLICIES table
+   * grants to the OWNER alone — an admin holds `read` and `invite`, not `manage`. A
+   * looser check here shows a member a form whose submit is a guaranteed 403.
+   */
+  readonly canManageWallet = computed(
+    () => this.selectedOrganization()?.membership?.role === 'owner',
+  )
+
+  /** Whole credits only: the ledger moves integers, and a fraction floors silently. */
+  readonly fundForm = new FormGroup({
+    amount: new FormControl('', {
+      validators: [Validators.required, Validators.pattern(/^\d+$/)],
+      nonNullable: true,
+    }),
+  })
+
+  /** Move the caller's own credits into the selected workspace. */
+  fundWorkspace(): void {
+    this.transferWallet('toOrg')
+  }
+
+  /**
+   * Return the workspace balance to the caller's own wallet.
+   *
+   * Without this the `org_has_credits` refusal on delete is a dead end: the only way
+   * to zero a funded wallet was to spend the credits on usage.
+   */
+  withdrawWorkspaceCredits(): void {
+    this.transferWallet('fromOrg')
+  }
+
+  private transferWallet(direction: 'toOrg' | 'fromOrg'): void {
+    const orgId = this.selectedOrgId()
+    const amount = Math.floor(Number(this.fundForm.getRawValue().amount))
+    if (!orgId || !Number.isFinite(amount) || amount < 1 || this.isFundingWallet()) {
+      return
+    }
+
+    const prefix = direction === 'toOrg' ? 'FUND' : 'WITHDRAW'
+    const request = direction === 'toOrg'
+      ? this.organizationService.fundOrganizationFromWallet(orgId, amount)
+      : this.organizationService.withdrawOrganizationCredits(orgId, amount)
+
+    this.isFundingWallet.set(true)
+    request
+      .pipe(finalize(() => this.isFundingWallet.set(false)))
+      .subscribe({
+        next: (result) => {
+          this.showSuccess(this.translate.instant(`SETTINGS_WORKSPACE.${prefix}_SUCCESS`, {
+            moved: result.moved,
+            left: result.organizationAvailable,
+          }))
+          this.fundForm.reset({ amount: '' })
+          this.refreshWorkspaceData()
+        },
+        error: (error) => {
+          // 402 carries the reason the customer can act on; anything else is a fault.
+          const reason = error?.error?.reason
+          this.showError(this.translate.instant(
+            reason === 'insufficient_credits'
+              ? `SETTINGS_WORKSPACE.${prefix}_INSUFFICIENT`
+              : 'SETTINGS_WORKSPACE.TRANSFER_FAILED',
+          ))
+        },
+      })
+  }
+
+  requestDeleteWorkspace(): void {
+    if (!this.selectedOrgId() || this.isDeletingWorkspace()) {
+      return
+    }
+
+    this.confirmDeleteWorkspace.set(true)
+  }
+
+  cancelDeleteWorkspace(): void {
+    this.confirmDeleteWorkspace.set(false)
+  }
+
+  deleteWorkspace(): void {
+    const orgId = this.selectedOrgId()
+    if (!orgId || this.isDeletingWorkspace()) {
+      return
+    }
+
+    this.isDeletingWorkspace.set(true)
+    this.organizationService
+      .deleteOrganization(orgId)
+      .pipe(
+        finalize(() => {
+          this.isDeletingWorkspace.set(false)
+          this.confirmDeleteWorkspace.set(false)
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: () => {
+          this.organizationService.setActiveOrganization(null)
+          this.showSuccess(this.translate.instant('SETTINGS_WORKSPACE.SUCCESS_WORKSPACE_DELETED'))
+          this.refreshWorkspaceData()
+        },
+        error: (error) => {
+          // A funded wallet is refused, not destroyed, and the code says so.
+          const code = error?.error?.code
+          this.showError(this.translate.instant(
+            code === 'org_has_credits'
+              ? 'SETTINGS_WORKSPACE.ERR_DELETE_HAS_CREDITS'
+              : 'SETTINGS_WORKSPACE.ERR_DELETE_WORKSPACE',
+          ))
+        },
+      })
+  }
+
+  transferOwnership(userId: string): void {
+    const orgId = this.selectedOrgId()
+    if (!orgId || !userId || this.isTransferringOwner()) {
+      return
+    }
+
+    this.isTransferringOwner.set(userId)
+    this.organizationService
+      .transferOwnership(orgId, userId)
+      .pipe(
+        finalize(() => {
+          this.isTransferringOwner.set(null)
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: () => {
+          this.showSuccess(this.translate.instant('SETTINGS_WORKSPACE.SUCCESS_TRANSFER'))
+          this.refreshWorkspaceData()
+        },
+        error: () => {
+          this.showError(this.translate.instant('SETTINGS_WORKSPACE.ERR_TRANSFER'))
         },
       })
   }

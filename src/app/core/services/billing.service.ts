@@ -14,6 +14,7 @@ import {
 } from '../types'
 import { AnalyticsService } from './analytics.service'
 import { AuthService } from './auth.service'
+import { AuthzService } from './authz.service'
 import { CacheService } from './cache.service'
 import { FirestoreService } from './firestore.service'
 
@@ -25,6 +26,9 @@ export class BillingService {
   private readonly cacheService = inject(CacheService)
   private readonly firestoreService = inject(FirestoreService)
   private readonly analyticsService = inject(AnalyticsService)
+  // Which workspace is active decides whose wallet the API charges, so it is a
+  // source of the entitlement query rather than a detail of the UI.
+  private readonly authzService = inject(AuthzService)
   private readonly billingCacheNamespace = 'billing-entitlements'
   private readonly billingCacheTtlMs = 5 * 60 * 1000
   private readonly loadingStateSubject = new BehaviorSubject<BillingLoadingState>({
@@ -99,24 +103,33 @@ export class BillingService {
   readonly billing$: Observable<UserBilling> = combineLatest([
     this.firestoreService.authState(),
     this.billingRefreshTrigger$,
+    this.authzService.activeOrgId$,
   ]).pipe(
-    switchMap(([firebaseUser]) => {
+    // The org id is read positionally and is not used except as the cache key and
+    // the callable argument, so no binding is given for the refresh trigger.
+    switchMap(([firebaseUser, , activeOrgId]) => {
       if (!firebaseUser) {
         this.entitlementsUnavailable$.next(false)
         return of(this.defaultBilling())
       }
 
-      const cached = this.cacheService.get<string, UserBilling>(this.billingCacheNamespace, firebaseUser.uid)
+      // Keyed by wallet, not by user: switching workspace must not serve the other
+      // workspace's balance from the 5-minute cache.
+      const cacheKey = `${firebaseUser.uid}:${activeOrgId ?? ''}`
+      const cached = this.cacheService.get<string, UserBilling>(this.billingCacheNamespace, cacheKey)
       if (cached) {
         this.entitlementsUnavailable$.next(false)
         return of(cached)
       }
 
-      return from(this.firestoreService.callFunction<void, { billing?: Partial<UserBilling> }>('getMyEntitlements')).pipe(
+      return from(this.firestoreService.callFunction<
+        { orgId: string | null },
+        { billing?: Partial<UserBilling> }
+      >('getMyEntitlements', { orgId: activeOrgId ?? null })).pipe(
         map((entitlements) => this.mergeWithDefault(entitlements?.billing as Partial<UserBilling> | undefined)),
         tap((billing) => {
           this.entitlementsUnavailable$.next(false)
-          this.cacheService.set(this.billingCacheNamespace, firebaseUser.uid, billing, this.billingCacheTtlMs)
+          this.cacheService.set(this.billingCacheNamespace, cacheKey, billing, this.billingCacheTtlMs)
         }),
         catchError(() => {
           // Recorded, not swallowed: the fallback below is what the UI shows, and
@@ -208,6 +221,8 @@ export class BillingService {
     interval: BillingInterval
     successUrl: string
     cancelUrl: string
+    /** Present when the OWNER is buying the plan for their workspace. */
+    orgId?: string | null
   }): Promise<{ url: string; sessionId: string }> {
     this.setLoading('checkout', true)
     try {
@@ -216,6 +231,7 @@ export class BillingService {
         interval: BillingInterval
         successUrl: string
         cancelUrl: string
+        orgId?: string | null
         checkoutRequestId: string
       }, { url: string; sessionId: string }>('createCheckoutSession', {
         ...args,
@@ -285,12 +301,15 @@ export class BillingService {
     }
   }
 
-  async openBillingPortal(returnUrl: string): Promise<string> {
+  async openBillingPortal(returnUrl: string, orgId?: string | null): Promise<string> {
     this.setLoading('portal', true)
     try {
-      const response = await this.firestoreService.callFunction<{ returnUrl: string }, { url: string }>(
+      const response = await this.firestoreService.callFunction<
+        { returnUrl: string; orgId?: string | null },
+        { url: string }
+      >(
         'createBillingPortalSession',
-        { returnUrl }
+        { returnUrl, orgId: orgId ?? null }
       )
       return response.url
     } finally {
@@ -364,7 +383,12 @@ export class BillingService {
   async getUsageReport(args: BillingUsageRequest): Promise<BillingUsageResponse> {
     this.setLoading('usageReport', true)
     try {
-      return this.firestoreService.callFunction<BillingUsageRequest, BillingUsageResponse>('getBillingUsage', args)
+      // The report follows the wallet that pays: a workspace's spend is in
+      // `orgs/{orgId}/credits_ledger`, not in the member's own ledger.
+      return this.firestoreService.callFunction<
+        BillingUsageRequest & { orgId: string | null },
+        BillingUsageResponse
+      >('getBillingUsage', { ...args, orgId: this.authzService.activeOrgId ?? null })
     } finally {
       this.setLoading('usageReport', false)
     }

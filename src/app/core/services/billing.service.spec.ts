@@ -1,9 +1,11 @@
 import { TestBed } from '@angular/core/testing'
 import { User } from '@angular/fire/auth'
-import { firstValueFrom, of } from 'rxjs'
+import { firstValueFrom, of, Subject } from 'rxjs'
 import { BillingService } from './billing.service'
 import { FirestoreService } from './firestore.service'
 import { AuthService } from './auth.service'
+import { AuthzService } from './authz.service'
+import { SessionStorage } from './storage.service'
 import { getTestProviders } from 'src/app/testing';
 
 describe('BillingService', () => {
@@ -161,5 +163,63 @@ describe('BillingService', () => {
 
     expect(canAccess).toBeTrue()
     expect(hasFeature).toBeTrue()
+  })
+
+  /**
+   * The API charges whichever wallet `resolveSpend` picks, so the client has to ask
+   * about the SAME wallet. Before this, a member of a funded workspace was told
+   * "free" and paywalled by `paywallGuard` while the server debited the workspace.
+   */
+  it('asks about the active workspace and caches per wallet', async () => {
+    setAuthenticatedBilling({
+      plan: 'free',
+      subscriptionId: null,
+      credits: { purchasedBalance: 40, purchasedReserved: 0 },
+      features: {},
+    })
+
+    const orgId$ = new Subject<string | null>()
+    TestBed.overrideProvider(AuthzService, {
+      useValue: { activeOrgId$: orgId$.asObservable(), activeOrgId: null },
+    })
+
+    // The shared test providers give SessionStorage a no-op stub, so the cache in
+    // `CacheService` never stores anything and a cache assertion would prove nothing.
+    const stored = new Map<string, string>()
+    TestBed.overrideProvider(SessionStorage, {
+      useValue: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+        removeItem: (key: string) => stored.delete(key),
+      },
+    })
+
+    service = TestBed.inject(BillingService)
+
+    // A live subscription is required: `billing$` is shared with refCount, so an
+    // emission that arrives while nobody is listening would never be replayed.
+    const modes: string[] = []
+    const subscription = service.getAccessMode$().subscribe((mode) => modes.push(mode))
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve))
+    orgId$.next('org_1')
+    await flush()
+    // Same workspace again: this must be served from the per-wallet cache.
+    orgId$.next('org_1')
+    await flush()
+    // A different workspace is a different wallet, so it must be fetched again.
+    orgId$.next('org_2')
+    await flush()
+
+    subscription.unsubscribe()
+
+    const entitlementCalls = firestoreServiceMock.callFunction.calls
+      .allArgs()
+      .filter((args) => args[0] === 'getMyEntitlements')
+
+    expect(entitlementCalls.length).toBe(2)
+    expect(entitlementCalls[0][1]).toEqual({ orgId: 'org_1' })
+    expect(entitlementCalls[1][1]).toEqual({ orgId: 'org_2' })
+    expect(modes[modes.length - 1]).toBe('credits')
   })
 })

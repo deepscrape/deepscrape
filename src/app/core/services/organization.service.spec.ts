@@ -15,7 +15,10 @@ describe('OrganizationService', () => {
   let authzServiceMock: jasmine.SpyObj<AuthzService>;
 
   beforeEach(() => {
-    authServiceMock = jasmine.createSpyObj('AuthService', [], { token: 'test-token', user$: of(null) });
+    authServiceMock = jasmine.createSpyObj('AuthService', ['isAuthenticated'], { token: 'test-token', user$: of(null) });
+    // `listMyOrganizations` waits for the snapshot before it reads `token`, so the mock
+    // has to answer it or the request is never issued.
+    authServiceMock.isAuthenticated.and.returnValue(of({ isAuthenticated: true, user: null }) as any);
     authzServiceMock = jasmine.createSpyObj('AuthzService', ['setActiveOrgId'], {
       activeOrgId: null,
     });
@@ -125,5 +128,31 @@ describe('OrganizationService', () => {
 
     const req = httpMock.expectOne(API_ORGANIZATIONS);
     req.error(new ErrorEvent('Network error'), { status: 500 });
+  });
+
+  // A typo in this path is a 404 in production and nothing else in the app touches it.
+  it('moves credits into the workspace and drops the cached list', () => {
+    service.fundOrganizationFromWallet('org-9', 40).subscribe((result) => {
+      expect(result.moved).toBe(40);
+    });
+
+    const req = httpMock.expectOne(`${API_ORGANIZATIONS}/org-9/credits/transfer`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ amount: 40, direction: 'toOrg' });
+    req.flush({ moved: 40, replayed: false, personalAvailable: 60, organizationAvailable: 40 });
+
+    // The wallet balance rides on the org list, so the mutation has to drop it.
+    service.listMyOrganizations().subscribe();
+    httpMock.expectOne(API_ORGANIZATIONS).flush({ organizations: [] });
+  });
+
+  // The direction is what makes the delete refusal escapable; sending the default
+  // would silently fund the workspace again.
+  it('asks the server to withdraw, not to fund, on the way out', () => {
+    service.withdrawOrganizationCredits('org-9', 25).subscribe();
+
+    const req = httpMock.expectOne(`${API_ORGANIZATIONS}/org-9/credits/transfer`);
+    expect(req.request.body).toEqual({ amount: 25, direction: 'fromOrg' });
+    req.flush({ moved: 25, replayed: false, personalAvailable: 25, organizationAvailable: 0 });
   });
 });

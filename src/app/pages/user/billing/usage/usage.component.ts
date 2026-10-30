@@ -5,6 +5,7 @@ import { MatIconModule } from '@angular/material/icon'
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner'
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
 import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component'
+import { UsageHistoryChartComponent } from 'src/app/core/components/usage-history-chart/usage-history-chart.component'
 import { fadeInUp, smoothfadeAnimation } from 'src/app/animations'
 import { BillingService } from 'src/app/core/services'
 import {
@@ -32,7 +33,7 @@ type UsageViewModel = {
 
 @Component({
   selector: 'app-usage',
-  imports: [AsyncPipe, ReactiveFormsModule, CurrencyPipe, DecimalPipe, DatePipe, MatIconModule, MatProgressSpinnerModule, DropdownComponent, TranslateModule],
+  imports: [AsyncPipe, ReactiveFormsModule, CurrencyPipe, DecimalPipe, DatePipe, MatIconModule, MatProgressSpinnerModule, DropdownComponent, TranslateModule, UsageHistoryChartComponent],
   templateUrl: './usage.component.html',
   styleUrl: './usage.component.scss',
   animations: [fadeInUp, smoothfadeAnimation],

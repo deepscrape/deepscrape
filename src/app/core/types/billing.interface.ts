@@ -41,7 +41,6 @@ export type CustomCreditsCatalog = {
   enabled: boolean
   minimumCredits: number
   maximumCredits: number
-  unitAmount: number
   currency: "eur"
   suggestedCredits: number[]
 }
@@ -63,6 +62,10 @@ export type UserBilling = {
   trialEndsAt?: string | null
   trialUsedAt?: string | null
   trialCreditCapEur?: number
+  /** When the next purchased-credit batch stops being spendable, from the server. */
+  creditsExpireAt?: string | null
+  /** Set while a payment dispute is open; spending is refused until it clears. */
+  hold?: boolean | null
   credits: {
     balance: number
     reserved: number
@@ -168,6 +171,13 @@ export type BillingUsageMeter = {
   machines?: number
 }
 
+/** One machine's share of the period. Only session time records a machine id. */
+export type BillingUsageMachine = {
+  machineId: string
+  credits: number
+  events: number
+}
+
 export type BillingUsageStats = {
   currentUsage: number
   usageCap: number
@@ -176,6 +186,44 @@ export type BillingUsageStats = {
   creditsUsedInRange: number
   /** Per-capability credit totals for the same window. Optional: older payloads omit it. */
   metered?: BillingUsageMeter[]
+  /**
+   * The same ledger rows, ordered by UTC day, for the history chart.
+   *
+   * Sparse: a day with no activity is absent rather than zero, so fill gaps from
+   * the range when a continuous axis is needed. Optional for the same reason as
+   * `metered` — an older deployment does not send it.
+   */
+  series?: BillingUsageDay[]
+  /** Subscription versus pay-as-you-go for this window. Optional: older payloads omit it. */
+  savings?: BillingPlanSavings
+  /** The browser fleet's bill, dearest machine first. Optional for the same reason. */
+  machines?: BillingUsageMachine[]
+}
+
+/** One day of the reporting window. */
+export type BillingUsageDay = {
+  /** UTC `YYYY-MM-DD`. */
+  date: string
+  credits: number
+  events: number
+}
+
+/**
+ * What the plan saved against buying the same credits as packs.
+ *
+ * Computed by `estimatePlanSavings` from the same two catalogs checkout uses.
+ * `savingMinor` is SIGNED: a quiet month on a paid plan is negative, and
+ * pretending otherwise would be a claim the till does not support.
+ */
+export type BillingPlanSavings = {
+  /** The period's credits at pack rates, in minor units. */
+  payAsYouGoMinor: number
+  /** What the plan cost for the same period, in minor units. */
+  planMinor: number
+  /** `payAsYouGoMinor - planMinor`. */
+  savingMinor: number
+  /** Signed percentage of the pay-as-you-go figure; 0 when there was no usage. */
+  savingPercent: number
 }
 
 export type BillingUsageResponse = {

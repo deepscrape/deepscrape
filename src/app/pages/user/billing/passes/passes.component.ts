@@ -1,4 +1,4 @@
-import { AsyncPipe, CurrencyPipe } from '@angular/common';
+import { AsyncPipe, CurrencyPipe, DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core'
 import { MatIconModule } from '@angular/material/icon'
 import { Router } from '@angular/router'
@@ -8,7 +8,7 @@ import { CreditPackCatalog, CustomCreditsCatalog, UserBilling } from 'src/app/co
 
 @Component({
   selector: 'app-passes',
-  imports: [AsyncPipe, CurrencyPipe, MatIconModule, TranslateModule],
+  imports: [AsyncPipe, CurrencyPipe, DatePipe, MatIconModule, TranslateModule],
   templateUrl: './passes.component.html',
   styleUrl: './passes.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -16,6 +16,13 @@ import { CreditPackCatalog, CustomCreditsCatalog, UserBilling } from 'src/app/co
 export class PassesComponent {
   private readonly billingService = inject(BillingService)
   private readonly router = inject(Router)
+
+  constructor() {
+    // The entitlements cache lives 5 minutes, and this page is where a wallet's exact
+    // state is read: a hold or an expiry that happened since the last load must not be
+    // hidden by a cached copy.
+    this.billingService.refreshBilling()
+  }
 
   readonly billing$ = this.billingService.billing$
   readonly creditPacks$ = this.billingService.getCreditPacks$()

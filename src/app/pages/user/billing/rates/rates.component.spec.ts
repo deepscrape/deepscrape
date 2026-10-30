@@ -2,7 +2,8 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { TranslateModule } from '@ngx-translate/core';
-import { Observable, Subject } from 'rxjs';
+import { Observable, Subject, of } from 'rxjs';
+import { BillingService } from '../../../../core/services/billing.service';
 import { PricingRatesService } from '../../../../core/services/pricing-rates.service';
 import {
   PricingRate,
@@ -59,6 +60,10 @@ describe('RatesComponent', () => {
       imports: [RatesComponent, TranslateModule.forRoot()],
       providers: [
         { provide: PricingRatesService, useValue: stub },
+        // The per-credit price reads the pack catalog. Empty here on purpose: the
+        // page must render fine when that read yields nothing, which is also the
+        // case the template hides the figure for.
+        { provide: BillingService, useValue: { getCreditPacks$: () => of([]) } },
         // The envelope renders through the animation engine, so without this
         // EVERY render throws NG05105.
         provideNoopAnimations(),

@@ -1,7 +1,7 @@
 import { inject, Injectable } from '@angular/core'
 import { HttpClient, HttpHeaders } from '@angular/common/http'
 import { Observable, of, throwError } from 'rxjs'
-import { catchError, finalize, shareReplay, tap } from 'rxjs/operators'
+import { catchError, finalize, shareReplay, switchMap, take, tap } from 'rxjs/operators'
 import { AnalyticsService } from './analytics.service'
 import { AuthService } from './auth.service'
 import { AuthzService } from './authz.service'
@@ -12,9 +12,14 @@ export type OrganizationSummary = {
   name?: string
   slug?: string
   ownerId?: string
-  plan?: string
   membership?: {
     role: 'owner' | 'admin' | 'member' | 'viewer'
+  }
+  /** The org's credit wallet. Zero for an org nobody has funded. */
+  wallet?: {
+    balance: number
+    reserved: number
+    available: number
   }
 }
 
@@ -112,10 +117,17 @@ export class OrganizationService {
       return this.orgListInFlight
     }
 
-    this.orgListInFlight = this.http.get<OrganizationListResponse>(API_ORGANIZATIONS, {
-      headers: this.getAuthHeaders(),
-      withCredentials: true,
-    }).pipe(
+this.orgListInFlight = this.authService.isAuthenticated().pipe(
+        // `authService.token` is assigned inside `authSnapshot()`, so a call made
+        // during the FIRST navigation — which is exactly when `orgScopeGuard` asks
+        // for this list — used to send `Authorization: Bearer undefined` and come
+        // back 401. The snapshot is cached and shared, so waiting on it here costs
+        // no extra request; `take(1)` keeps a later token refresh from re-fetching.
+        take(1),
+        switchMap(() => this.http.get<OrganizationListResponse>(API_ORGANIZATIONS, {
+          headers: this.getAuthHeaders(),
+          withCredentials: true,
+        })),
       tap((response) => {
         this.orgList = { at: Date.now(), value: response }
         this.applyActiveOrg(response)
@@ -163,6 +175,108 @@ export class OrganizationService {
       tap(() => this.invalidateOrganizationList()),
       catchError((error) => {
         console.error('Failed to rename organization:', error)
+        return throwError(() => error)
+      }),
+    )
+  }
+
+  /**
+   * Hand the org to another member.
+   *
+   * The only exit for an owner: member removal refuses the last owner and deletion
+   * refuses an org that still has teammates, so this is what unblocks both.
+   */
+  transferOwnership(orgId: string, userId: string): Observable<void> {
+    return this.http.put<void>(
+      `${API_ORGANIZATIONS}/${orgId}/owner`,
+      { userId },
+      { headers: this.getAuthHeaders(), withCredentials: true },
+    ).pipe(
+      tap(() => this.invalidateOrganizationList()),
+      catchError((error) => {
+        console.error('Failed to transfer organization ownership:', error)
+        return throwError(() => error)
+      }),
+    )
+  }
+
+  /**
+   * Move credits from the caller's personal wallet into the workspace wallet.
+   *
+   * Server-keyed: with no client key the handler derives
+   * `org-fund:<uid>:<orgId>:<amount>:<minute>`, so a double-click replays instead of
+   * debiting twice. A `replayed` result therefore means "already moved", not "failed".
+   */
+  fundOrganizationFromWallet(
+    orgId: string,
+    amount: number,
+  ): Observable<{
+    moved: number
+    replayed: boolean
+    personalAvailable: number
+    organizationAvailable: number
+  }> {
+    return this.transferOrganizationCredits(orgId, amount, 'toOrg')
+  }
+
+  /**
+   * Return the workspace balance to the caller's own wallet.
+   *
+   * The only exit from the `org_has_credits` refusal on delete: the server refuses to
+   * destroy a funded wallet, so emptying it has to be possible.
+   */
+  withdrawOrganizationCredits(
+    orgId: string,
+    amount: number,
+  ): Observable<{
+    moved: number
+    replayed: boolean
+    personalAvailable: number
+    organizationAvailable: number
+  }> {
+    return this.transferOrganizationCredits(orgId, amount, 'fromOrg')
+  }
+
+  private transferOrganizationCredits(
+    orgId: string,
+    amount: number,
+    direction: 'toOrg' | 'fromOrg',
+  ): Observable<{
+    moved: number
+    replayed: boolean
+    personalAvailable: number
+    organizationAvailable: number
+  }> {
+    return this.http.post<{
+      moved: number
+      replayed: boolean
+      personalAvailable: number
+      organizationAvailable: number
+    }>(
+      `${API_ORGANIZATIONS}/${orgId}/credits/transfer`,
+      { amount, direction },
+      { headers: this.getAuthHeaders(), withCredentials: true },
+    ).pipe(
+      tap(() => this.invalidateOrganizationList()),
+      catchError((error) => {
+        console.error(`Failed to transfer credits (${direction}):`, error)
+        return throwError(() => error)
+      }),
+    )
+  }
+
+  /**
+   * Delete the org, its wallet and every grant that belongs to it. Owner only; the
+   * server refuses while the wallet still holds credits.
+   */
+  deleteOrganization(orgId: string): Observable<void> {
+    return this.http.delete<void>(
+      `${API_ORGANIZATIONS}/${orgId}`,
+      { headers: this.getAuthHeaders(), withCredentials: true },
+    ).pipe(
+      tap(() => this.invalidateOrganizationList()),
+      catchError((error) => {
+        console.error('Failed to delete organization:', error)
         return throwError(() => error)
       }),
     )

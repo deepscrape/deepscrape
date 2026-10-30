@@ -19,6 +19,7 @@ import {
   UserBilling,
 } from 'src/app/core/types';
 import { AuthService, BillingService, HighRiskActionService } from 'src/app/core/services';
+import { isDunning } from 'src/app/core/functions';
 import { catchError, combineLatest, firstValueFrom, map, Observable, of, shareReplay, startWith } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { WindowToken } from 'src/app/core/services';
@@ -65,6 +66,8 @@ export class PlansComponent {
   offerBadgeMessage: string | null = null
   isBillingRestricted = false
   platformAdminBypassActive = false
+  /** The server refuses paid routes for these statuses while `plan` still reads paid. */
+  protected readonly isDunning = isDunning
   // ponytail: string control — StinputComponent is FormControl<string>; the value is
   // parsed with Number() wherever it is used and clamped on blur.
   readonly customCreditsAmount = new FormControl('250', { nonNullable: true })
@@ -290,13 +293,38 @@ export class PlansComponent {
     )
   }
 
-  getCustomCreditsTotal(config: CustomCreditsCatalog): number {
+  getCustomCreditsTotal(packs: CreditPackCatalog[]): number {
     const credits = Math.floor(Number(this.customCreditsAmount.value || 0))
     if (!Number.isFinite(credits) || credits <= 0) {
       return 0
     }
 
-    return credits * config.unitAmount
+    const tier = this.packTierFor(credits, packs)
+    return tier ? Math.round(credits * tier.amount / tier.credits) : 0
+  }
+
+  /**
+   * Euros per credit for the amount entered, at the pack rate it has earned.
+   *
+   * The server prices the same quantity from the same catalog; this only labels the input.
+   * @param {CreditPackCatalog[]} packs The catalog packs the page already loaded.
+   * @return {number} Euros per credit, or 0 when nothing is entered.
+   */
+  getCustomCreditRate(packs: CreditPackCatalog[]): number {
+    const credits = Math.floor(Number(this.customCreditsAmount.value || 0))
+    const tier = this.packTierFor(credits, packs)
+    return tier ? tier.amount / tier.credits / 100 : 0
+  }
+
+  private packTierFor(credits: number, packs: CreditPackCatalog[]): CreditPackCatalog | null {
+    if (!packs.length) {
+      return null
+    }
+
+    // Largest pack the quantity reaches; below the smallest pack it prices at that pack,
+    // proportionally, so a small order is never a discount on the ladder.
+    const sorted = [...packs].sort((a, b) => b.credits - a.credits)
+    return sorted.find((pack) => credits >= pack.credits) ?? sorted[sorted.length - 1]
   }
 
   setSuggestedCustomCredits(credits: number, config: CustomCreditsCatalog): void {
@@ -395,8 +423,21 @@ export class PlansComponent {
     return Boolean(plan.prices[interval]?.stripePriceId)
   }
 
+  /**
+   * Whether this tier carries the "best choice" badge.
+   *
+   * Never on the tier the caller already pays for, and never to an unlimited
+   * account: the card would show "Current plan" and "Recommended" at the same
+   * time, which is the one combination that reads as a mistake rather than as an
+   * offer. Pro stays the badge for everyone below it, which is the step that
+   * actually buys more credits per euro.
+   * @param {BillingPlanCatalog} plan The tier being rendered.
+   * @return {boolean} True when the badge belongs on this tier for this caller.
+   */
   isBestChoice(plan: BillingPlanCatalog): boolean {
-    return plan.id === 'pro'
+    return plan.id === 'pro' &&
+      this.currentPlanValue !== 'pro' &&
+      this.currentPlanValue !== 'enterprise'
   }
 
   getPriceGradientClass(plan: BillingPlanCatalog): string {
@@ -715,6 +756,9 @@ export class PlansComponent {
         interval: this.planView.value as BillingInterval,
         successUrl,
         cancelUrl,
+        // Workspace plans are bought from the workspace tab, which names the workspace.
+        // The server re-checks ownership; this only says WHICH workspace.
+        orgId: this.route.snapshot.queryParamMap.get('forOrg'),
       })
 
       if (result.url) {

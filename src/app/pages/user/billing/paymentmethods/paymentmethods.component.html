@@ -30,19 +30,29 @@
   @if ((paymentMethods$ | async)?.length! > 0) {
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       @for (pm of paymentMethods$ | async; track pm.id) {
-        <div
-          class="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50 p-5 shadow-sm"
-          >
-          <div class="flex items-start justify-between">
+        <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+          <div class="flex items-start justify-between gap-3">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+              <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-200/70 dark:bg-gray6">
                 <mat-icon fontSet="material-icons-outlined" class="text-gray-600 dark:text-gray-300">{{ getCardIcon(pm.brand) }}</mat-icon>
               </div>
               <div>
                 <p class="font-medium text-gray-900 dark:text-gray-100">{{ getCardDisplay(pm) }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ 'BILLING_PAYMENT_METHODS.EXPIRES' | translate }} {{ getExpiryDisplay(pm) }}</p>
+                <!-- A Link method has no expiry, so printing "Expires N/A" described a card
+                     that does not exist. The email above is the whole identifier. -->
+                @if (pm.expMonth && pm.expYear) {
+                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ 'BILLING_PAYMENT_METHODS.EXPIRES' | translate }} {{ getExpiryDisplay(pm) }}</p>
+                }
               </div>
             </div>
+            <!-- Removing or replacing a method is Stripe's hosted portal: there is no
+                 detach route in this app, and a card entry form would need PCI scope. -->
+            <button
+              type="button"
+              class="shrink-0 rounded-full border border-gray-300/70 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200/60 dark:border-gray6 dark:text-gray-200 dark:hover:bg-gray6"
+              (click)="addPaymentMethod()">
+              {{ 'BILLING_PAYMENT_METHODS.MANAGE' | translate }}
+            </button>
           </div>
         </div>
       }

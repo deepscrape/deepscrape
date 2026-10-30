@@ -325,3 +325,55 @@ export const getDefaultPricingRate = (): PublicPricingRate => ({
   action: defaultPricingPolicy.action,
   credits: defaultPricingPolicy.credits,
 })
+
+/** What a subscription saved compared with buying the same usage as credit packs. */
+export type PlanSavingsEstimate = {
+  /** What the period's credits would have cost at pack rates, in minor units. */
+  payAsYouGoMinor: number
+  /** What the plan cost for the SAME period, in minor units. */
+  planMinor: number
+  /** `payAsYouGoMinor - planMinor`. Negative means the plan cost more than it saved. */
+  savingMinor: number
+  /**
+   * The saving as a percentage of the pay-as-you-go figure, rounded.
+   *
+   * Zero when there was no usage to price, because a percentage of nothing is not
+   * a claim worth printing.
+   */
+  savingPercent: number
+}
+
+/**
+ * Subscription versus paying per credit, for one reporting period.
+ *
+ * The comparison is deliberately narrow: what the caller's actual credits would
+ * have cost at the CHEAPEST pack rate against what their plan cost for the same
+ * number of days. Using the cheapest pack is the conservative choice — it is the
+ * best case for pay-as-you-go, so the saving this reports is the smallest one
+ * that is still true.
+ *
+ * Pure and given plain numbers, because `app/stripe.ts` (which owns the catalogs)
+ * imports THIS file: passing the prices in is what keeps that direction one-way.
+ * @param {*} args Credits used, the plan's cost for the period, and the pack rate.
+ * @return {PlanSavingsEstimate} The two totals and their difference.
+ */
+export const estimatePlanSavings = (args: {
+  creditsUsed: number
+  planMinor: number
+  packMinorPerCredit: number
+}): PlanSavingsEstimate => {
+  const creditsUsed = Math.max(0, Math.floor(Number(args.creditsUsed) || 0))
+  const planMinor = Math.max(0, Math.round(Number(args.planMinor) || 0))
+  // Finite-checked, not just clamped: `0 * Infinity` is NaN, and a NaN reaching a
+  // customer's page is worse than showing nothing.
+  const rawRate = Number(args.packMinorPerCredit)
+  const rate = Number.isFinite(rawRate) ? Math.max(0, rawRate) : 0
+
+  const payAsYouGoMinor = Math.round(creditsUsed * rate)
+  const savingMinor = payAsYouGoMinor - planMinor
+  const savingPercent = payAsYouGoMinor > 0 ?
+    Math.round((savingMinor / payAsYouGoMinor) * 100) :
+    0
+
+  return {payAsYouGoMinor, planMinor, savingMinor, savingPercent}
+}

@@ -127,8 +127,69 @@ describe("summarizeMeteredConsumes", () => {
     )
   })
 
-  it("returns zero and an empty breakdown for an empty ledger", () => {
-    assert.deepEqual(summarizeMeteredConsumes([], window), {creditsUsed: 0, metered: []})
+  it("returns zero, an empty breakdown and an empty series for an empty ledger", () => {
+    assert.deepEqual(summarizeMeteredConsumes([], window), {
+      creditsUsed: 0,
+      metered: [],
+      series: [],
+      byMachine: [],
+    })
+  })
+
+  it("ranks machines by what they cost, dearest first", () => {
+    // The browser fleet's bill, from rows the session meter already writes.
+    const rows: MeteredConsumeRow[] = [
+      {delta: -1, reason: "meter:block", machineId: "m-cheap", createdAt: at(1_100)},
+      {delta: -7, reason: "meter:block", machineId: "m-dear", createdAt: at(1_200)},
+      {delta: -2, reason: "meter:block", machineId: "m-dear", createdAt: at(1_300)},
+    ]
+
+    const {byMachine} = summarizeMeteredConsumes(rows, window)
+
+    assert.deepEqual(byMachine, [
+      {machineId: "m-dear", credits: 9, events: 2},
+      {machineId: "m-cheap", credits: 1, events: 1},
+    ])
+  })
+
+  it("leaves a request-priced row out of the machine breakdown", () => {
+    // A crawl has no machine, so attributing it to one would invent a bill.
+    const {byMachine} = summarizeMeteredConsumes(
+      [{delta: -5, reason: "crawl.execute", createdAt: at(1_500)}],
+      window,
+    )
+
+    assert.deepEqual(byMachine, [])
+  })
+
+  it("buckets the same rows by UTC day, oldest first", () => {
+    // 2026-10-01T00:00:00Z and 2026-10-02T00:00:00Z, one consume each.
+    const day1 = Date.UTC(2026, 9, 1, 12)
+    const day2 = Date.UTC(2026, 9, 2, 12)
+    const rows: MeteredConsumeRow[] = [
+      {delta: -4, reason: "a", createdAt: at(day2)},
+      {delta: -3, reason: "a", createdAt: at(day1)},
+      {delta: -1, reason: "b", createdAt: at(day1)},
+    ]
+
+    const {series} = summarizeMeteredConsumes(rows, {startMs: day1 - 1, endMs: day2 + 1})
+
+    assert.deepEqual(series, [
+      {date: "2026-10-01", credits: 4, events: 2},
+      {date: "2026-10-02", credits: 4, events: 1},
+    ])
+  })
+
+  it("keeps a zero-credit day in the series, because the tool still ran", () => {
+    // A free tool writes a row with no delta. Dropping it would draw a gap that
+    // reads as "no activity" on the chart.
+    const day = Date.UTC(2026, 9, 3, 12)
+    const {series} = summarizeMeteredConsumes(
+      [{delta: 0, reason: "webrain_serp", createdAt: at(day)}],
+      {startMs: day - 1, endMs: day + 1},
+    )
+
+    assert.deepEqual(series, [{date: "2026-10-03", credits: 0, events: 1}])
   })
 
   it("counts DISTINCT machines behind a session meter, not one per block", () => {

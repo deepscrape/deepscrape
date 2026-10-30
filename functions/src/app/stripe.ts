@@ -12,8 +12,9 @@ import {
   getStripe,
   getStripeWebhookSecret,
 } from "./config"
-import { applyBillingCreditMutation, grantBillingCredits } from "./billing-credits"
+import { applyBillingCreditMutation, billingDocPath, grantBillingCredits, ledgerCollectionPath } from "./billing-credits"
 import { paygAccessEndsAt } from "../domain/billing.domain"
+import { estimatePlanSavings } from "../domain/billing-pricing.domain"
 import type { UserInfo } from "firebase-admin/auth"
 import { FieldValue } from "firebase-admin/firestore"
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
@@ -23,11 +24,13 @@ import type { SecretParam } from "firebase-functions/params"
 // not one of the definitions below changes. The Express limiters never see an
 // onCall, so createPaymentIntent/createCheckoutSession were unbounded per account.
 import { guardedOnCall as onCallv2 } from "../infrastructure/callable-limiter"
+import { resolveOrgWallet } from "../infrastructure/spend-scope"
+import { organizationMembershipId } from "../infrastructure/organization-lifecycle"
 import { onSchedule } from "firebase-functions/v2/scheduler"
 import { Users, Guest, ANALYTICS_EVENTS, buildAnalyticsEvent, canPurchaseStandaloneCredits, getIncludedCreditsAvailable, getPurchasedCreditsAvailable, toEventHour, toPaidCounterKeys } from "../domain"
 import Stripe from "stripe"
 import { env } from "../config/env"
-import { findUnusableCatalogPrices, lookupKeyForCredits, lookupKeyForPlan, resolvePriceId } from "./stripe-price-resolution"
+import { configuredPriceId, findUnusableCatalogPrices, lookupKeyForCredits, lookupKeyForPlan, resolvePriceId } from "./stripe-price-resolution"
 import { lookupGeoByIp } from "../gfunctions/analytics"
 
 type BillingPlanTier = "free" | "trial" | "starter" | "pro" | "enterprise"
@@ -95,7 +98,6 @@ type CustomCreditsCatalog = {
   enabled: boolean
   minimumCredits: number
   maximumCredits: number
-  unitAmount: number
   currency: "eur"
   suggestedCredits: number[]
 }
@@ -115,6 +117,18 @@ type UserBilling = {
   trialEndsAt?: string | null
   trialUsedAt?: string | null
   trialCreditCapEur?: number
+  /**
+   * Set while a payment dispute is open. Spending is refused until it clears.
+   *
+   * Read by `getBillingAccessMode`, which returns `free` for a held wallet - so every
+   * charging path stops, and paying (checkout, portal) keeps working, because a
+   * customer settling a chargeback needs exactly that pair of behaviours.
+   */
+  hold?: boolean | null
+  holdReason?: string | null
+  heldAt?: string | null
+  /** When the next purchased-credit batch stops being spendable. Derived per call, never stored. */
+  creditsExpireAt?: string | null
   credits: {
     balance: number
     reserved: number
@@ -214,8 +228,26 @@ export const creditsIdempotencyKey = (args: {
   return null
 }
 
+/** How long a credited purchase stays spendable, from `BILLING_CREDIT_EXPIRY_DAYS`. */
+const CREDITS_EXPIRY_DAYS = Math.floor(Number(env.BILLING_CREDIT_EXPIRY_DAYS))
+
+/**
+ * When credits granted now stop being spendable, or null for "never".
+ *
+ * Nothing ever wrote this field: `expireStaleCredits` matches `expiresAt <= now`, every
+ * grant carried `expiresAt: null`, and the documented 365-day expiry was therefore inert.
+ * Zero (or anything unparseable) means no expiry - that is how a deployment turns the
+ * sweep off - and the same value is what the passes page shows.
+ * @param {number} now Epoch ms of the grant.
+ * @return {string | null} ISO-8601 expiry, or null.
+ */
+export const creditsExpiryFromNow = (now = Date.now()): string | null =>
+  CREDITS_EXPIRY_DAYS > 0 ? new Date(now + CREDITS_EXPIRY_DAYS * 86_400_000).toISOString() : null
+
 const addCreditsLedgerEntry = async (args: {
   uid: string
+  /** The organization that pays for this grant, when one does. Omitted = personal wallet. */
+  orgId?: string
   delta: number
   source: string
   bucket?: "purchased" | "included"
@@ -249,6 +281,7 @@ const addCreditsLedgerEntry = async (args: {
 
   await grantBillingCredits({
     uid: args.uid,
+    orgId: args.orgId,
     amount: normalizedDelta,
     bucket,
     ledger: {
@@ -262,6 +295,10 @@ const addCreditsLedgerEntry = async (args: {
       plan: args.plan || null,
       interval: args.interval || null,
       createdAt: args.createdAt || FieldValue.serverTimestamp(),
+      // Purchased credits are a liability, so they carry a date; plan credits reset with
+      // the cycle that granted them and expire with the plan. Promotional grants come
+      // through here as `purchased` deliberately - a gift still expires.
+      expiresAt: bucket === "purchased" ? creditsExpiryFromNow() : null,
       idempotencyKey,
     },
   })
@@ -349,10 +386,6 @@ const TRIAL_DEFAULT_CREDITS = toPositiveInteger(env.BILLING_TRIAL_DEFAULT_CREDIT
 const TRIAL_DEFAULT_CREDIT_CAP_EUR = toPositiveInteger(env.BILLING_TRIAL_DEFAULT_CREDIT_CAP_EUR, 160)
 const CUSTOM_CREDITS_MIN = toPositiveInteger(env.BILLING_CUSTOM_CREDITS_MIN, 50)
 const CUSTOM_CREDITS_MAX = toPositiveInteger(env.BILLING_CUSTOM_CREDITS_MAX, 5000)
-// Per-credit price for custom amounts, in EUR minor units. Held level with the
-// largest pack rather than at the old EUR0.19, so a custom amount cannot be the
-// most expensive way to buy the same credit.
-const CUSTOM_CREDIT_UNIT_AMOUNT_EUR = toPositiveInteger(env.BILLING_CUSTOM_CREDIT_UNIT_AMOUNT_EUR, 1)
 const BILLING_RESTRICTED_ROLE_KEYWORDS = ["manager", "editor"]
 const billingAllowedOrigins = env.IS_PRODUCTION ?
   [
@@ -387,7 +420,6 @@ const customCreditsCatalog: CustomCreditsCatalog = {
   enabled: true,
   minimumCredits: CUSTOM_CREDITS_MIN,
   maximumCredits: CUSTOM_CREDITS_MAX,
-  unitAmount: CUSTOM_CREDIT_UNIT_AMOUNT_EUR,
   currency: "eur",
   suggestedCredits: [100, 250, 500, 1000].filter((credits) => credits >= CUSTOM_CREDITS_MIN && credits <= CUSTOM_CREDITS_MAX),
 }
@@ -598,13 +630,15 @@ const emitUsageAlert = async (args: {
   severity?: "info" | "warning" | "error"
   metadata?: Record<string, unknown>
 }) => {
-  const alertRef = db.doc(`users/${args.uid}/usage_alerts/${args.alertId}`)
+  // Fan-out triggers on `alerts`; `usage_alerts` had no reader.
+  const alertRef = db.doc(`users/${args.uid}/alerts/${args.alertId}`)
   const exists = await alertRef.get()
   if (exists.exists) {
     return
   }
 
   await alertRef.set({
+    category: "billing",
     title: args.title,
     message: args.message,
     severity: args.severity || "info",
@@ -663,10 +697,10 @@ export const billingPlanCatalog: BillingPlanCatalog[] = [
     // `ProxyPool.next_at`), and they reach a caller only through the paid capacity tools.
     features: ["crawl_api", "extraction_suite", "structured_extraction", "session_reuse", "schema_compiler", "monitors", "ai_providers", "capacity_tools", "browser_session_dedicated", "browser_session_byo", "live_view", "credential_vault", "machine_leasing", "anti_bot", "identity_crawling", "high_concurrency", "proxy_rotation"],
     prices: {
-      payAsYouGo: buildBillingPriceConfig("starter", "payAsYouGo", 99, env.STRIPE_PRICE_STARTER_PAYG || "price_1UHrhAFVGcR0rD8fVnhA7zv9"),
-      monthly: buildBillingPriceConfig("starter", "monthly", 999, env.STRIPE_PRICE_STARTER_MONTHLY || "price_1UHrgtFVGcR0rD8fNsrFs6ul"),
-      quarterly: buildBillingPriceConfig("starter", "quarterly", 2799, env.STRIPE_PRICE_STARTER_QUARTERLY || "price_1UHrgtFVGcR0rD8fwmUPSdp2"),
-      annually: buildBillingPriceConfig("starter", "annually", 9999, env.STRIPE_PRICE_STARTER_ANNUAL || "price_1UHrgtFVGcR0rD8fhw3hWx5J"),
+      payAsYouGo: buildBillingPriceConfig("starter", "payAsYouGo", 99, configuredPriceId(env.STRIPE_PRICE_STARTER_PAYG, "price_1UHrhAFVGcR0rD8fVnhA7zv9")),
+      monthly: buildBillingPriceConfig("starter", "monthly", 999, configuredPriceId(env.STRIPE_PRICE_STARTER_MONTHLY, "price_1UHrgtFVGcR0rD8fNsrFs6ul")),
+      quarterly: buildBillingPriceConfig("starter", "quarterly", 2799, configuredPriceId(env.STRIPE_PRICE_STARTER_QUARTERLY, "price_1UHrgtFVGcR0rD8fwmUPSdp2")),
+      annually: buildBillingPriceConfig("starter", "annually", 9999, configuredPriceId(env.STRIPE_PRICE_STARTER_ANNUAL, "price_1UHrgtFVGcR0rD8fhw3hWx5J")),
     },
   },
   {
@@ -676,10 +710,10 @@ export const billingPlanCatalog: BillingPlanCatalog[] = [
     // Same tools as Starter plus priority support; the real difference is 5x the credits.
     features: ["crawl_api", "extraction_suite", "structured_extraction", "session_reuse", "schema_compiler", "monitors", "ai_providers", "capacity_tools", "browser_session_dedicated", "browser_session_byo", "live_view", "credential_vault", "machine_leasing", "anti_bot", "identity_crawling", "high_concurrency", "proxy_rotation", "priority_support"],
     prices: {
-      payAsYouGo: buildBillingPriceConfig("pro", "payAsYouGo", 199, env.STRIPE_PRICE_PRO_PAYG || "price_1UHrhAFVGcR0rD8fuuBT43Nd"),
-      monthly: buildBillingPriceConfig("pro", "monthly", 1999, env.STRIPE_PRICE_PRO_MONTHLY || "price_1UHrhAFVGcR0rD8fbNX7Tbdd"),
-      quarterly: buildBillingPriceConfig("pro", "quarterly", 5599, env.STRIPE_PRICE_PRO_QUARTERLY || "price_1UHrhAFVGcR0rD8fOntoFTWQ"),
-      annually: buildBillingPriceConfig("pro", "annually", 19999, env.STRIPE_PRICE_PRO_ANNUAL || "price_1UHrhAFVGcR0rD8fVC1B257x"),
+      payAsYouGo: buildBillingPriceConfig("pro", "payAsYouGo", 199, configuredPriceId(env.STRIPE_PRICE_PRO_PAYG, "price_1UHrhAFVGcR0rD8fuuBT43Nd")),
+      monthly: buildBillingPriceConfig("pro", "monthly", 1999, configuredPriceId(env.STRIPE_PRICE_PRO_MONTHLY, "price_1UHrhAFVGcR0rD8fbNX7Tbdd")),
+      quarterly: buildBillingPriceConfig("pro", "quarterly", 5599, configuredPriceId(env.STRIPE_PRICE_PRO_QUARTERLY, "price_1UHrhAFVGcR0rD8fOntoFTWQ")),
+      annually: buildBillingPriceConfig("pro", "annually", 19999, configuredPriceId(env.STRIPE_PRICE_PRO_ANNUAL, "price_1UHrhAFVGcR0rD8fVC1B257x")),
     },
   },
   {
@@ -729,10 +763,27 @@ export const billingPlanCatalog: BillingPlanCatalog[] = [
 // plan, not a 76x spread on the same unit.
 // Exported for the price-ladder spec: the ratios are the contract, not the amounts.
 export const creditPackCatalog: CreditPackCatalog[] = [
-  { id: "credits_100", label: "100 credits", credits: 100, amount: 150, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_100 || "price_1USYnOFVGcR0rD8ftaVb1clf" },
-  { id: "credits_500", label: "500 credits", credits: 500, amount: 600, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_500 || "price_1USYnZFVGcR0rD8f6vkdtUkF" },
-  { id: "credits_2000", label: "2000 credits", credits: 2000, amount: 2000, currency: "eur", stripePriceId: env.STRIPE_PRICE_CREDITS_2000 || "price_1USYnZFVGcR0rD8fvGPpkx01" },
+  { id: "credits_100", label: "100 credits", credits: 100, amount: 150, currency: "eur", stripePriceId: configuredPriceId(env.STRIPE_PRICE_CREDITS_100, "price_1USYnOFVGcR0rD8ftaVb1clf") },
+  { id: "credits_500", label: "500 credits", credits: 500, amount: 600, currency: "eur", stripePriceId: configuredPriceId(env.STRIPE_PRICE_CREDITS_500, "price_1USYnZFVGcR0rD8f6vkdtUkF") },
+  { id: "credits_2000", label: "2000 credits", credits: 2000, amount: 2000, currency: "eur", stripePriceId: configuredPriceId(env.STRIPE_PRICE_CREDITS_2000, "price_1USYnZFVGcR0rD8fvGPpkx01") },
 ]
+
+/**
+ * The price of an arbitrary credit amount, in EUR minor units.
+ *
+ * Custom credits used to carry a flat per-credit amount from an env var, and that variable
+ * still defaulted to the pre-retier EUR0.19 while this file's own fallback said EUR0.01 --
+ * so the effective price was 19x the best pack and 48x Pro for the same unit, which is the
+ * spread the pack retier exists to prevent. Pricing a quantity at the rate of the largest
+ * pack it reaches makes a custom amount a pack by another name: never cheaper, never dearer.
+ * @param {number} credits Requested custom credits.
+ * @return {number} Total in EUR minor units.
+ */
+export const customCreditsTotalMinor = (credits: number): number => {
+  const packs = [...creditPackCatalog].sort((a, b) => b.credits - a.credits)
+  const tier = packs.find((pack) => credits >= pack.credits) ?? packs[packs.length - 1]
+  return Math.round((credits * tier.amount) / tier.credits)
+}
 
 // Every price above carries a hardcoded TEST-mode price id (account
 // acct_1Qag9KFVGcR0rD8f, `livemode: false`, verified against the Stripe API on
@@ -1210,6 +1261,98 @@ const ensureStripeCustomerId = async (
     metadata: { uid, firebaseUID: uid },
   })
   await db.doc(`users/${uid}`).set({ stripeId: customer.id }, { merge: true })
+  return customer.id
+}
+
+/**
+ * The organization a Stripe object is billed to, when it is billed to one.
+ *
+ * Every webhook case used to answer "which USER is this?" and nothing else, so a workspace
+ * could hold credits but never a plan. The org id rides in the same `metadata` that already
+ * carries `uid` and is copied by Stripe onto the subscription and its invoices, which is why
+ * this is one key read rather than a `stripe_subjects` reverse index that would have to be
+ * written, kept in step and swept for a value Stripe already echoes back.
+ *
+ * shortcut: metadata is the only path, so a subscription created BY HAND in the Stripe
+ * dashboard cannot be attributed to an org; add the reverse index when operators start
+ * creating org subscriptions outside checkout.
+ * @param {*} source Any Stripe object exposing optional string metadata.
+ * @return {string | undefined} The paying organization, or undefined for a personal purchase.
+ */
+export const stripeSubjectOrgId = (
+  source: {metadata?: Record<string, string> | null} | null | undefined,
+): string | undefined => {
+  const orgId = source?.metadata?.["orgId"]
+  return typeof orgId === "string" && orgId.trim() ? orgId.trim() : undefined
+}
+
+/**
+ * The organization an invoice was raised for.
+ *
+ * `invoice.metadata` is empty on subscription invoices - Stripe puts the subscription's
+ * metadata on `parent.subscription_details` instead - so reading only the invoice is how an
+ * org invoice would be attributed to the member who happened to buy it.
+ * @param {*} invoice A Stripe invoice.
+ * @return {string | undefined} The paying organization, or undefined for a personal invoice.
+ */
+export const invoiceSubjectOrgId = (invoice: Stripe.Invoice): string | undefined => {
+  // Cast for the same reason `getInvoiceSubscriptionId` casts: the API version in use does
+  // not declare `parent`, but the payload carries it.
+  const parent = (invoice as {
+    parent?: {subscription_details?: {metadata?: Record<string, string> | null} | null} | null
+  }).parent
+
+  return stripeSubjectOrgId(invoice) ||
+    stripeSubjectOrgId(parent?.subscription_details) ||
+    undefined
+}
+
+/**
+ * The Stripe customer an organization's subscription is billed to, minting one on first use.
+ *
+ * Symmetric with `ensureStripeCustomerId` but deliberately not folded into it: the two store
+ * the id in different documents (`users/{uid}.stripeId` vs
+ * `organizations/{orgId}.stripeCustomerId`) and stamp a different metadata key, which is the
+ * key every webhook reads back.
+ *
+ * @param {*} stripe Initialised Stripe client.
+ * @param {string} orgId Organization id, written as `stripeCustomerId` and in metadata.
+ * @param {*} org Organization document, for the display name Stripe shows.
+ * @return {*} A customer id this Stripe account can use.
+ */
+const ensureOrgStripeCustomerId = async (
+  stripe: Stripe,
+  orgId: string,
+  org: Record<string, unknown> | undefined,
+): Promise<string> => {
+  const orgRef = db.doc(`organizations/${orgId}`)
+  const existing = typeof org?.["stripeCustomerId"] === "string" ?
+    org["stripeCustomerId"] as string :
+    undefined
+
+  if (existing) {
+    try {
+      const customer = await stripe.customers.retrieve(existing)
+      if (!customer.deleted) {
+        return existing
+      }
+    } catch (error) {
+      if ((error as {code?: string} | null)?.code !== "resource_missing") {
+        throw error
+      }
+    }
+
+    // Same reasoning as `resolveStripeCustomerId`: the id only exists in the account that
+    // minted it, and this project runs live and sandbox against one Firestore.
+    console.warn(`[billing] stripeCustomerId ${existing} is not a customer in this account; clearing it for org ${orgId}`)
+    await orgRef.set({stripeCustomerId: FieldValue.delete()}, {merge: true})
+  }
+
+  const customer = await stripe.customers.create({
+    name: typeof org?.["name"] === "string" ? org["name"] as string : undefined,
+    metadata: {orgId},
+  })
+  await orgRef.set({stripeCustomerId: customer.id}, {merge: true})
   return customer.id
 }
 
@@ -1748,6 +1891,45 @@ export const getMyEntitlements = onCallv2(
     const user = userSnap.data() as Users & { billing?: UserBilling } | undefined
     const tokenRole = getTokenRole(req)
 
+    // Whose wallet the API will actually charge. Asked through the same resolver the
+    // paid routes use, so the client cannot be told "free" while the server debits a
+    // funded workspace -- that mismatch is a paywall in front of a paying customer.
+    // The org id is caller-supplied, and `resolveOrgWallet` checks membership and the
+    // spending role before it is trusted.
+    const requestedOrgId = (req.data as {orgId?: unknown} | undefined)?.orgId
+    const orgWallet = await resolveOrgWallet(
+      userId,
+      typeof requestedOrgId === "string" ? requestedOrgId : undefined,
+    )
+
+    /**
+     * The answer, with the organization's wallet substituted when it is the payer.
+     * @param {*} billing The personal wallet this function resolved.
+     * @return {*} The entitlement payload.
+     */
+    const entitlements = (billing: UserBilling | Partial<UserBilling> | undefined) => {
+      const payerBilling = orgWallet?.billing ?? billing
+      return {
+        billing: payerBilling ? {...payerBilling, creditsExpireAt: nextCreditsExpiry} : payerBilling,
+        payerOrgId: orgWallet?.orgId ?? null,
+        userId,
+      }
+    }
+
+    // When the paying wallet's next credit batch lapses, so the passes page can say so.
+    //
+    // A single-field range query on purpose: `expiresAt` has an automatic index, whereas
+    // `operation == grant` beside it would need a composite one that a single-collection
+    // query cannot borrow from the collection-group index the sweep uses. Only purchased
+    // grants carry a date, and `expireStaleCredits` clears it once that batch is taken
+    // back, so an empty answer means "nothing is going to expire".
+    const expirySnap = await db.collection(ledgerCollectionPath(userId, orgWallet?.orgId))
+      .where("expiresAt", ">", new Date().toISOString())
+      .orderBy("expiresAt")
+      .limit(1)
+      .get()
+    const nextCreditsExpiry = (expirySnap.docs[0]?.get("expiresAt") as string | undefined) ?? null
+
     // Prefer billing snapshot embedded in user doc; fall back to subcollection on first call
     let existingBilling = user?.billing as UserBilling | undefined
     let billingDocExists = existingBilling !== undefined
@@ -1786,7 +1968,7 @@ export const getMyEntitlements = onCallv2(
         }, { merge: true }),
       ])
 
-      return { billing: restrictedBilling, userId }
+      return entitlements(restrictedBilling)
     }
 
     if (!billingDocExists) {
@@ -1796,7 +1978,7 @@ export const getMyEntitlements = onCallv2(
         billingRef.set(billing, { merge: true }),
         syncBillingToUserDoc(userRef, billing),
       ])
-      return { billing, userId }
+      return entitlements(billing)
     }
 
     if (hasTrialExpired(existingBilling)) {
@@ -1811,7 +1993,7 @@ export const getMyEntitlements = onCallv2(
           updated_At: new Date(),
         }, { merge: true }),
       ])
-      return { billing: nextBilling, userId }
+      return entitlements(nextBilling)
     }
 
     const shouldInferPaygPlan =
@@ -1871,7 +2053,7 @@ export const getMyEntitlements = onCallv2(
             }, { merge: true }),
           ])
 
-          return { billing: inferredBilling, userId }
+          return entitlements(inferredBilling)
         }
 
         const paymentIntents = await stripe.paymentIntents.list({
@@ -1907,14 +2089,14 @@ export const getMyEntitlements = onCallv2(
             }, { merge: true }),
           ])
 
-          return { billing: paygBilling, userId }
+          return entitlements(paygBilling)
         }
       } catch (error) {
         console.warn("Entitlement inference from successful pay-as-you-go payments failed:", error)
       }
     }
 
-    return { billing: existingBilling, userId }
+    return entitlements(existingBilling)
   }
 )
 
@@ -2025,6 +2207,33 @@ export type MeteredUsageTotal = {
 }
 
 /**
+ * One machine's share of the period.
+ *
+ * The session meter writes `machineId` on every block it charges, so the question
+ * "what is this machine costing me" is answerable from the ledger that already
+ * exists — no state-event collection, no second writer, no pruning policy.
+ */
+export type MeteredMachineTotal = {
+  machineId: string
+  credits: number
+  events: number
+}
+
+/**
+ * One day of the reporting period, for the history chart.
+ *
+ * Days with no ledger rows are ABSENT rather than zero, and that is deliberate:
+ * this is a sparse map of what happened, not a calendar. A caller that wants a
+ * continuous axis fills the gaps itself, where it also knows the window.
+ */
+export type MeteredUsageDay = {
+  /** UTC `YYYY-MM-DD`. UTC because the ledger stores epoch millis, not a zone. */
+  date: string
+  credits: number
+  events: number
+}
+
+/**
  * Totals, and a per-capability breakdown, from one pass over the consume ledger.
  *
  * The ledger already records why a credit was taken — `reason` is the pricing policy's own
@@ -2049,9 +2258,16 @@ export type MeteredUsageTotal = {
 export const summarizeMeteredConsumes = (
   rows: MeteredConsumeRow[],
   window: {startMs: number, endMs: number},
-): {creditsUsed: number, metered: MeteredUsageTotal[]} => {
+): {
+  creditsUsed: number,
+  metered: MeteredUsageTotal[],
+  series: MeteredUsageDay[],
+  byMachine: MeteredMachineTotal[],
+} => {
   const totals = new Map<string, MeteredUsageTotal>()
   const machinesByKey = new Map<string, Set<string>>()
+  const byDay = new Map<string, MeteredUsageDay>()
+  const byMachine = new Map<string, MeteredMachineTotal>()
   let creditsUsed = 0
 
   for (const row of rows) {
@@ -2066,6 +2282,16 @@ export const summarizeMeteredConsumes = (
 
     const credits = Math.abs(Number(row.delta || 0))
     creditsUsed += credits
+
+    // Bucketed BEFORE the zero-credit skip: a day on which a tool ran and cost
+    // nothing is still a day the caller used the product, and dropping it would
+    // draw a gap that reads as "no activity".
+    const date = new Date(at).toISOString().slice(0, 10)
+    const day = byDay.get(date) || {date, credits: 0, events: 0}
+    day.credits += credits
+    day.events += 1
+    byDay.set(date, day)
+
     if (credits <= 0) {
       continue
     }
@@ -2082,11 +2308,27 @@ export const summarizeMeteredConsumes = (
       seen.add(machineId)
       machinesByKey.set(key, seen)
       current.machines = seen.size
+
+      const machine = byMachine.get(machineId) || {
+        machineId,
+        credits: 0,
+        events: 0,
+      }
+      machine.credits += credits
+      machine.events += 1
+      byMachine.set(machineId, machine)
     }
   }
 
   const metered = [...totals.values()].sort((a, b) => b.credits - a.credits)
-  return {creditsUsed, metered}
+  // Oldest first: a chart reads left to right, and a caller that reverses it has
+  // to reverse it consistently for both axes.
+  const series = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date))
+  // Dearest first: the only useful ordering for a cost breakdown is "what should
+  // I look at".
+  const machineRows = [...byMachine.values()]
+    .sort((a, b) => b.credits - a.credits)
+  return {creditsUsed, metered, series, byMachine: machineRows}
 }
 
 export const getBillingUsage = onCallv2(
@@ -2112,6 +2354,16 @@ export const getBillingUsage = onCallv2(
     const user = userSnap.data() as Users | undefined
     assertBillingAllowed(user, getTokenRole(req))
 
+    // Whose ledger this report reads. A workspace that pays must also be able to show
+    // what it paid for, so the report follows the same resolver the charge does --
+    // otherwise a member sees their own empty ledger while the org is being debited.
+    const requestedOrgId = (req.data as {orgId?: unknown} | undefined)?.orgId
+    const wallet = await resolveOrgWallet(
+      userId,
+      typeof requestedOrgId === "string" ? requestedOrgId : undefined,
+    )
+    const walletOrgId = wallet?.orgId
+
     const secret: string | undefined = stripeSecrets.find((entry) => entry.name === "STRIPE_SECRET_KEY")?.value()
     const stripe = getStripe(secret)
     // A customer from the other mode is not retrievable here, so this clears it rather than
@@ -2129,24 +2381,58 @@ export const getBillingUsage = onCallv2(
     // automatic single-field index serves it; adding the `operation` equality alongside the
     // range would need a composite index this project does not declare, so
     // `summarizeMeteredConsumes` drops the non-consume rows instead.
-    const consumeLedger = await db.collection(`users/${userId}/credits_ledger`)
+    const consumeLedger = await db.collection(ledgerCollectionPath(userId, walletOrgId))
       .where("createdAt", ">=", new Date(window.startMs))
       .where("createdAt", "<=", new Date(window.endMs))
       .orderBy("createdAt", "desc")
       .limit(USAGE_LEDGER_SCAN_LIMIT)
       .get()
     const consumeRows = consumeLedger.docs.map((entry) => entry.data() as MeteredConsumeRow)
-    const {creditsUsed: creditsUsedInRange, metered} = summarizeMeteredConsumes(consumeRows, window)
+    const {creditsUsed: creditsUsedInRange, metered, series, byMachine} = summarizeMeteredConsumes(consumeRows, window)
 
-    const creditsSnap = await db.doc(`users/${userId}/billing/current`).get()
-    const credits = creditsSnap.data() as UserBilling | undefined
+    // What subscribing actually bought, against buying the same credits as packs.
+    //
+    // Both prices come from the catalogs checkout uses, so the page cannot claim a
+    // saving the till would not honour. The plan cost is scaled to the REPORTING
+    // WINDOW: a 90-day usage compared against one month's price would triple the
+    // number. The pack rate is the CHEAPEST pack, which is the best case for
+    // pay-as-you-go and therefore the smallest saving that is still true.
+    const planId = mapPlanIdToTier(user?.plan || "free")
+    const planMonthlyMinor = Number(
+      billingPlanCatalog.find((entry) => entry.id === planId)
+        ?.prices?.monthly?.amount || 0,
+    )
+    const windowDays = Math.max(1, (window.endMs - window.startMs) / 86_400_000)
+    const packMinorPerCredit = Math.min(
+      ...creditPackCatalog.map((pack) => pack.amount / pack.credits),
+    )
+    const savings = estimatePlanSavings({
+      creditsUsed: creditsUsedInRange,
+      planMinor: Math.round((planMonthlyMinor * windowDays) / 30),
+      packMinorPerCredit,
+    })
+
+    // The balances must come from the wallet the numbers came from, or the page
+    // reports a workspace's spend next to a person's remaining credits.
+    const credits = wallet?.billing ?? (await db.doc(billingDocPath(userId)).get())
+      .data() as UserBilling | undefined
     const usage = {
+      // Which wallet produced this report: null means the caller's own credits.
+      payerOrgId: walletOrgId ?? null,
       currentUsage: Number(user?.currentUsage || 0),
       usageCap: Number(usageCapsByPlan[mapPlanIdToTier(user?.plan || "free")] || 0),
       includedCredits: getIncludedCreditsAvailable(credits),
       purchasedCredits: getPurchasedCreditsAvailable(credits),
       creditsUsedInRange,
       metered,
+      // The same rows as `metered`, ordered by day instead of by capability: the
+      // chart and the table must describe one read, not two.
+      series,
+      savings,
+      // And the same rows again, keyed by the machine that spent them. Session
+      // time is the only thing that records a machine id, so this is the browser
+      // fleet's bill and nothing else.
+      machines: byMachine,
     }
 
     const emptyResponse = {
@@ -2354,7 +2640,7 @@ export const createCheckoutSession = onCallv2(
 
     // Resolves the stored id, or mints a customer in the account this key actually owns. A
     // sandbox-era id is not retrievable with the live key, so it is dropped and replaced here.
-    const customerId = await ensureStripeCustomerId(stripe, userId, user)
+    let customerId = await ensureStripeCustomerId(stripe, userId, user)
 
     const selectedPlan = billingPlanCatalog.find((item) => item.id === planId)
     const selectedPack = creditPackCatalog.find((item) => item.id === planId)
@@ -2370,6 +2656,34 @@ export const createCheckoutSession = onCallv2(
 
     if (isCreditPack || isCustomCredits) {
       assertCreditModeAllowed(billing)
+    }
+
+    // A workspace buying its own plan.
+    //
+    // Owner-only, and checked HERE rather than trusted from the client: `organization.manage`
+    // also admits an org admin for renames and invitations, and spending the workspace's money
+    // is not a rename. Same actor rule `deleteOrganization` applies.
+    const requestedOrgId = String((req.data as {orgId?: unknown})?.orgId || "").trim()
+    const subjectOrgId = requestedOrgId || undefined
+    if (subjectOrgId) {
+      if (isCreditPack || isCustomCredits) {
+        // Credits reach a workspace by purchase-then-transfer, which is already built and
+        // keeps one ledger rule. A second card-funded path into the same balance would need
+        // its own refund reversal and its own fraud surface.
+        throw new HttpsError(
+          "failed-precondition",
+          "Credit packs are bought on a personal account and transferred into a workspace",
+        )
+      }
+
+      const membership = await db.doc(`memberships/${organizationMembershipId(userId, subjectOrgId)}`).get()
+      const orgSnap = await db.doc(`organizations/${subjectOrgId}`).get()
+      const isOwner = membership.get("role") === "owner" || orgSnap.get("ownerId") === userId
+      if (!orgSnap.exists || !isOwner) {
+        throw new HttpsError("permission-denied", "Only the organization's owner can buy a plan for it")
+      }
+
+      customerId = await ensureOrgStripeCustomerId(stripe, subjectOrgId, orgSnap.data())
     }
 
     if (isCustomCredits) {
@@ -2428,7 +2742,7 @@ export const createCheckoutSession = onCallv2(
     const checkoutMode: Stripe.Checkout.SessionCreateParams.Mode = (isCreditPack || isPayAsYouGoPlan || isCustomCredits) ? "payment" : "subscription"
 
     let trialPeriodDays: number | undefined
-    if (checkoutMode === "subscription" && selectedPlan?.id === "pro") {
+    if (checkoutMode === "subscription" && !subjectOrgId && selectedPlan?.id === "pro") {
       const alreadyUsedTrial = Boolean(
         billing?.trialUsedAt ||
         billing?.plan === "trial" ||
@@ -2442,6 +2756,10 @@ export const createCheckoutSession = onCallv2(
 
     const checkoutMetadata = {
       uid: userId,
+      // Read back by every webhook case: present means the subscription belongs to this
+      // workspace, absent means it is personal. Empty string is Stripe's way of saying
+      // "no value" and `stripeSubjectOrgId` treats it as absent.
+      orgId: subjectOrgId || "",
       planId,
       interval,
       checkoutType: isCustomCredits ? "custom_credits" : isCreditPack ? "credits" : isPayAsYouGoPlan ? "plan_payg" : "plan",
@@ -2452,13 +2770,16 @@ export const createCheckoutSession = onCallv2(
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = isCustomCredits ? [{
       price_data: {
         currency: customCreditsCatalog.currency,
-        unit_amount: customCreditsCatalog.unitAmount,
+        // One line at the ladder price, not N lines at a per-credit rate: the rates are not
+        // whole minor units (EUR6.00 for 500 is 1.2 each), so a per-credit unit_amount would
+        // have to round every order down to whole cents.
+        unit_amount: customCreditsTotalMinor(normalizedCustomCredits),
         product_data: {
           name: "DeepScrape Custom Credits",
           description: `${normalizedCustomCredits} custom credits for usage-based access on the free plan`,
         },
       },
-      quantity: normalizedCustomCredits,
+      quantity: 1,
     }] : [{
       price: stripePriceId,
       // Always one. The webhook credits `pack.credits` exactly once, and both the
@@ -2531,7 +2852,7 @@ export const createCheckoutSession = onCallv2(
       client_reference_id: userId,
       allow_promotion_codes: true,
     }, {
-      idempotencyKey: `checkout_${userId}_${planId}_${interval}_${isCustomCredits ? normalizedCustomCredits : 1}_${normalizedCheckoutRequestId}`,
+      idempotencyKey: `checkout_${userId}_${subjectOrgId || "self"}_${planId}_${interval}_${isCustomCredits ? normalizedCustomCredits : 1}_${normalizedCheckoutRequestId}`,
     })
 
     return {
@@ -2551,7 +2872,7 @@ export const createBillingPortalSession = onCallv2(
       throw new HttpsError("unauthenticated", "User must be authenticated")
     }
 
-    const { returnUrl } = req.data as { returnUrl?: string }
+    const { returnUrl, orgId } = req.data as { returnUrl?: string, orgId?: string }
     if (!returnUrl) {
       throw new HttpsError("invalid-argument", "Missing returnUrl")
     }
@@ -2560,10 +2881,29 @@ export const createBillingPortalSession = onCallv2(
     const userSnap = await db.doc(`users/${userId}`).get()
     const user = userSnap.data() as Users | undefined
     assertBillingAllowed(user, getTokenRole(req))
-    // No dead end: a customer minted under the previously-configured account is not retrievable
-    // here, so resolve-or-mint instead of throwing - "add payment method" must still open the
-    // portal for every account that registered before livemode was switched on.
-    const customerId = await ensureStripeCustomerId(stripe, userId, user)
+
+    // A workspace subscription is managed through the workspace's customer. Without this the
+    // owner could buy a plan for the workspace and then have no way to change its card or
+    // cancel it - the portal would open the buyer's personal customer, which owns nothing.
+    const requestedOrgId = String(orgId || "").trim()
+    let customerId: string
+    if (requestedOrgId) {
+      const membership = await db.doc(`memberships/${organizationMembershipId(userId, requestedOrgId)}`).get()
+      const orgSnap = await db.doc(`organizations/${requestedOrgId}`).get()
+      const isOwner = membership.get("role") === "owner" || orgSnap.get("ownerId") === userId
+      if (!orgSnap.exists || !isOwner) {
+        throw new HttpsError("permission-denied", "Only the organization's owner can manage its billing")
+      }
+      if (typeof orgSnap.get("stripeCustomerId") !== "string") {
+        throw new HttpsError("failed-precondition", "This workspace has no subscription to manage")
+      }
+      customerId = orgSnap.get("stripeCustomerId") as string
+    } else {
+      // No dead end: a customer minted under the previously-configured account is not retrievable
+      // here, so resolve-or-mint instead of throwing - "add payment method" must still open the
+      // portal for every account that registered before livemode was switched on.
+      customerId = await ensureStripeCustomerId(stripe, userId, user)
+    }
 
     const portal = await stripe.billingPortal.sessions.create({
       customer: customerId,
@@ -2638,15 +2978,30 @@ export const resumeSubscriptionCancellation = onCallv2(
     }
 
     const userRef = db.doc(`users/${userId}`)
-    const billingRef = db.doc(`users/${userId}/billing/current`)
     // FIX #3: single read — billing cached in user.billing after first write
     const userSnap = await userRef.get()
 
     const user = userSnap.data() as Users & { billing?: UserBilling } | undefined
     assertBillingAllowed(user, getTokenRole(req))
 
-    const billing = user?.billing as UserBilling | undefined
-    const subscriptionId = billing?.subscriptionId || user?.subscriptionId || null
+    // A workspace subscription is resumed by its owner, against the workspace's wallet.
+    const requestedOrgId = String((req.data as {orgId?: unknown} | undefined)?.orgId || "").trim()
+    let resumeOrgId: string | undefined
+    let billing: UserBilling | undefined
+    if (requestedOrgId) {
+      const membership = await db.doc(`memberships/${organizationMembershipId(userId, requestedOrgId)}`).get()
+      const orgSnap = await db.doc(`organizations/${requestedOrgId}`).get()
+      const isOwner = membership.get("role") === "owner" || orgSnap.get("ownerId") === userId
+      if (!orgSnap.exists || !isOwner) {
+        throw new HttpsError("permission-denied", "Only the organization's owner can manage its billing")
+      }
+      resumeOrgId = requestedOrgId
+      billing = (await db.doc(billingDocPath(userId, resumeOrgId)).get()).data() as UserBilling | undefined
+    } else {
+      billing = user?.billing as UserBilling | undefined
+    }
+
+    const subscriptionId = billing?.subscriptionId || (resumeOrgId ? null : user?.subscriptionId) || null
     if (!subscriptionId) {
       throw new HttpsError("failed-precondition", "No active subscription found")
     }
@@ -2694,15 +3049,24 @@ export const resumeSubscriptionCancellation = onCallv2(
       updatedAt: FieldValue.serverTimestamp(),
     }
 
+    const billingRef = db.doc(billingDocPath(userId, resumeOrgId))
+
     await Promise.all([
       billingRef.set(updatedBilling, { merge: true }),
-      userRef.set({
-        billing: updatedBilling,
-        plan: effectivePlan,
-        status: updatedSubscription.status,
-        subscriptionId: updatedSubscription.id,
-        updated_At: new Date(),
-      }, { merge: true }),
+      resumeOrgId ?
+        db.doc(`organizations/${resumeOrgId}`).set({
+          plan: effectivePlan,
+          status: updatedSubscription.status,
+          subscriptionId: updatedSubscription.id,
+          updated_At: new Date(),
+        }, { merge: true }) :
+        userRef.set({
+          billing: updatedBilling,
+          plan: effectivePlan,
+          status: updatedSubscription.status,
+          subscriptionId: updatedSubscription.id,
+          updated_At: new Date(),
+        }, { merge: true }),
     ])
 
     return {
@@ -2839,14 +3203,19 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     const checkoutType = session.metadata?.checkoutType
     const selectedPlanId = session.metadata?.planId || "free"
     const selectedInterval = (session.metadata?.interval as BillingInterval) || "monthly"
-    const billingRef = db.doc(`users/${uid}/billing/current`)
-    const userRef = db.doc(`users/${uid}`)
+    // A workspace plan writes the SAME shape into the workspace's own documents: the wallet
+    // every member is already charged from, plus the org identity doc so the client's
+    // organization list can show the plan without a second read.
+    const subjectOrgId = stripeSubjectOrgId(session)
+    const billingRef = db.doc(billingDocPath(uid, subjectOrgId))
+    const userRef = subjectOrgId ? db.doc(`organizations/${subjectOrgId}`) : db.doc(`users/${uid}`)
 
     if (checkoutType === "credits" || checkoutType === "custom_credits") {
       const pack = creditPackCatalog.find((item) => item.id === selectedPlanId)
       const incrementBy = checkoutType === "custom_credits" ? Math.floor(Number(session.metadata?.customCredits || 0)) : (pack?.credits || 0)
       await addCreditsLedgerEntry({
         uid,
+        orgId: subjectOrgId,
         delta: incrementBy,
         source: checkoutType === "custom_credits" ? "custom_credits_checkout" : "stripe_checkout",
         bucket: "purchased",
@@ -2894,21 +3263,32 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
         updatedAt: FieldValue.serverTimestamp(),
       }
 
+      // The mirror on the subject's identity document. A workspace gets SCALARS only: its
+      // authoritative billing object is the wallet document, and copying a partial object
+      // over `organizations/{orgId}.billing` would erase the period every renewal wrote.
+      const subjectMirror = subjectOrgId ? {
+        plan: effectivePlan,
+        status: effectiveStatus,
+        subscriptionId: effectiveSubscriptionId,
+        updated_At: new Date(),
+      } : {
+        billing: checkoutBilling,
+        plan: effectivePlan,
+        status: effectiveStatus,
+        subscriptionId: effectiveSubscriptionId,
+        updated_At: new Date(),
+      }
+
       await Promise.all([
         billingRef.set(checkoutBilling, { merge: true }),
-        userRef.set({
-          billing: checkoutBilling,
-          plan: effectivePlan,
-          status: effectiveStatus,
-          subscriptionId: effectiveSubscriptionId,
-          updated_At: new Date(),
-        }, { merge: true }),
+        userRef.set(subjectMirror, { merge: true }),
       ])
 
       if (checkoutType === "plan_payg") {
         const includedCredits = getIncludedCreditsForPlanInterval(selectedPlan, "payAsYouGo")
         await addCreditsLedgerEntry({
           uid,
+          orgId: subjectOrgId,
           delta: includedCredits,
           source: "plan_payg_checkout",
           bucket: "included",
@@ -2948,10 +3328,14 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       graceUntil,
       updatedAt: FieldValue.serverTimestamp(),
     }
+    const failedOrgId = invoiceSubjectOrgId(invoice)
     await Promise.all([
-      db.doc(`users/${uid}/billing/current`).set(pastDueBilling, { merge: true }),
-      // Sync billing to embedded user doc field (set replaces the whole billing object for consistency)
-      db.doc(`users/${uid}`).set({ billing: pastDueBilling }, { merge: true }),
+      db.doc(billingDocPath(uid, failedOrgId)).set(pastDueBilling, { merge: true }),
+      // A workspace mirror is scalars only; its billing object lives on the wallet document.
+      failedOrgId ?
+        db.doc(`organizations/${failedOrgId}`).set({ status: "past_due", updated_At: new Date() }, { merge: true }) :
+        // Sync billing to embedded user doc field (set replaces the whole billing object for consistency)
+        db.doc(`users/${uid}`).set({ billing: pastDueBilling }, { merge: true }),
     ])
 
     await recordBillingIncident({
@@ -2993,7 +3377,11 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       break
     }
 
-    const billingRef = db.doc(`users/${uid}/billing/current`)
+    // Read before the plan is resolved: the wallet this invoice renews is the workspace's
+    // when the subscription says so, and a workspace plan must not be renewed into a
+    // member's personal wallet.
+    const paidOrgId = invoiceSubjectOrgId(invoice)
+    const billingRef = db.doc(billingDocPath(uid, paidOrgId))
     const billingSnap = await billingRef.get()
     const billing = billingSnap.data() as UserBilling | undefined
 
@@ -3054,12 +3442,19 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
         graceUntil: null,
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true }),
-      syncBillingToUserDoc(db.doc(`users/${uid}`), invoicePaidBilling),
+      paidOrgId ?
+        db.doc(`organizations/${paidOrgId}`).set({
+          status: "active",
+          ...(plan ? { plan } : {}),
+          updated_At: new Date(),
+        }, { merge: true }) :
+        syncBillingToUserDoc(db.doc(`users/${uid}`), invoicePaidBilling),
     ])
 
     if (shouldGrantIncludedCredits && plan && planInterval) {
       await addCreditsLedgerEntry({
         uid,
+        orgId: paidOrgId,
         delta: getIncludedCreditsForPlanInterval(plan, planInterval),
         source: "subscription_cycle",
         bucket: "included",
@@ -3071,7 +3466,10 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       })
     }
 
-    if (plan) {
+    // `users/{uid}.plan` is what the admin surfaces read as "this person's plan". A
+    // workspace plan is not the buyer's, so it must not be promoted into that field: the
+    // member would show as a paying subscriber on a card the workspace owns.
+    if (plan && !paidOrgId) {
       await db.doc(`users/${uid}`).set({
         plan,
         status: "active",
@@ -3188,6 +3586,10 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       break
     }
 
+    // Present when the subscription was bought for a workspace: the plan then belongs to
+    // the org's wallet, not to the member who clicked.
+    const subjectOrgId = stripeSubjectOrgId(subscription)
+
     const protectedUserSnap = await db.doc(`users/${uid}`).get()
     const protectedUser = protectedUserSnap.data() as Users | undefined
     if (isBillingRestrictedUser(protectedUser)) {
@@ -3256,14 +3658,21 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
     }
 
     await Promise.all([
-      db.doc(`users/${uid}/billing/current`).set(subscriptionBilling, { merge: true }),
-      db.doc(`users/${uid}`).set({
-        billing: subscriptionBilling,
-        plan: effectivePlan,
-        status: subscription.status,
-        subscriptionId: subscription.id,
-        updated_At: new Date(),
-      }, { merge: true }),
+      db.doc(billingDocPath(uid, subjectOrgId)).set(subscriptionBilling, { merge: true }),
+      subjectOrgId ?
+        db.doc(`organizations/${subjectOrgId}`).set({
+          plan: effectivePlan,
+          status: subscription.status,
+          subscriptionId: subscription.id,
+          updated_At: new Date(),
+        }, { merge: true }) :
+        db.doc(`users/${uid}`).set({
+          billing: subscriptionBilling,
+          plan: effectivePlan,
+          status: subscription.status,
+          subscriptionId: subscription.id,
+          updated_At: new Date(),
+        }, { merge: true }),
     ])
     break
   }
@@ -3284,15 +3693,23 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
       updatedAt: FieldValue.serverTimestamp(),
     }
 
+    const cancelledOrgId = stripeSubjectOrgId(subscription)
     await Promise.all([
-      db.doc(`users/${uid}/billing/current`).set(cancelledBilling, { merge: true }),
-      db.doc(`users/${uid}`).set({
-        billing: cancelledBilling,
-        plan: "free",
-        status: "inactive",
-        subscriptionId: null,
-        updated_At: new Date(),
-      }, { merge: true }),
+      db.doc(billingDocPath(uid, cancelledOrgId)).set(cancelledBilling, { merge: true }),
+      cancelledOrgId ?
+        db.doc(`organizations/${cancelledOrgId}`).set({
+          plan: "free",
+          status: "inactive",
+          subscriptionId: null,
+          updated_At: new Date(),
+        }, { merge: true }) :
+        db.doc(`users/${uid}`).set({
+          billing: cancelledBilling,
+          plan: "free",
+          status: "inactive",
+          subscriptionId: null,
+          updated_At: new Date(),
+        }, { merge: true }),
     ])
     break
   }
@@ -3354,6 +3771,67 @@ const processStripeEvent = async (stripe: Stripe, event: Stripe.Event): Promise<
         evidenceRequiredBy: dispute.evidence_details?.due_by ? new Date(dispute.evidence_details.due_by * 1000).toISOString() : null,
       },
     })
+
+    // Freeze the wallet until the dispute closes. Buying credits and then disputing the
+    // charge while the credits are spent is the whole abuse: the money is already being
+    // clawed back, so the balance it bought must stop being spendable. Written to both
+    // copies of the billing document because the paid-route gate reads the subcollection
+    // and `getMyEntitlements` reads the denormalised one on the user doc.
+    const heldBilling = (await db.doc(billingDocPath(disputeUid)).get())
+      .data() as UserBilling | undefined
+    if (heldBilling) {
+      const held = {
+        ...heldBilling,
+        hold: true,
+        holdReason: "charge.dispute.created",
+        heldAt: new Date().toISOString(),
+      }
+      await Promise.all([
+        db.doc(billingDocPath(disputeUid)).set(held, {merge: true}),
+        db.doc(`users/${disputeUid}`).set({billing: held}, {merge: true}),
+      ])
+    }
+    break
+  }
+  case "charge.dispute.closed": {
+    const closedDispute = event.data.object as Stripe.Dispute
+    const closedCharge = typeof closedDispute.charge === "string" ?
+      await stripe.charges.retrieve(closedDispute.charge) :
+      closedDispute.charge as Stripe.Charge | null
+    const closedUid = closedDispute.metadata?.uid ||
+      closedCharge?.metadata?.uid ||
+      await resolveUidByStripeCustomer(closedCharge?.customer)
+    if (!closedUid) {
+      break
+    }
+
+    await recordBillingIncident({
+      type: "charge.dispute.closed",
+      severity: closedDispute.status === "won" ? "info" : "warning",
+      eventId: event.id,
+      eventType: event.type,
+      uid: closedUid,
+      message: `Dispute ${closedDispute.id} closed as ${closedDispute.status}; wallet released`,
+      metadata: {
+        disputeId: closedDispute.id,
+        status: closedDispute.status,
+        amount: closedDispute.amount,
+        currency: closedDispute.currency,
+      },
+    })
+
+    // Released on ANY outcome, deliberately. A lost dispute does not need the freeze
+    // continued: the credits are gone and the balance is already zero-or-less, so leaving
+    // the hold on would only stop the customer from buying their way out of it.
+    const frozenBilling = (await db.doc(billingDocPath(closedUid)).get())
+      .data() as UserBilling | undefined
+    if (frozenBilling?.hold) {
+      const released = {...frozenBilling, hold: false, holdReason: null, heldAt: null}
+      await Promise.all([
+        db.doc(billingDocPath(closedUid)).set(released, {merge: true}),
+        db.doc(`users/${closedUid}`).set({billing: released}, {merge: true}),
+      ])
+    }
     break
   }
   case "charge.refunded": {

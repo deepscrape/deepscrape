@@ -51,6 +51,11 @@ import {validateCallableData} from "../infrastructure/validate"
 import {clearAccountDeletion, markAccountDeleted} from "../infrastructure/account-tombstone"
 import {renderEmail, renderEmailText, sendEmail} from "../infrastructure/email"
 import {purgeAccountBlobs} from "../infrastructure/blob-purge"
+import {
+  listOwnedOrganizations,
+  purgeInvitationsForEmail,
+  releaseOwnedOrganizations,
+} from "../infrastructure/organization-lifecycle"
 import {accountSecrets} from "../domain/account-secrets.domain"
 import {canPerform} from "../domain/authz.domain"
 import {
@@ -61,11 +66,13 @@ import {
   erasedAuthEmail,
   evaluateAccountDeletionEligibility,
   isPurgeDue,
+  requiresForfeitAcknowledgement,
   resolvePurgeAfter,
   type AccountDeletionActor,
   type RetainedAccountData,
 } from "../domain/account-deletion.domain"
 import {performSessionRevoke, resolveActorSessionAccess, type ActorSessionAccess} from "./sessions"
+import {getIncludedCreditsAvailable, getPurchasedCreditsAvailable} from "../domain"
 import {
   ACCOUNT_DELETION_ATTEMPT_MAX,
   ACCOUNT_DELETION_ATTEMPT_WINDOW_SECONDS,
@@ -586,6 +593,44 @@ const pickRetained = (userData: UserDoc): RetainedAccountData => ({
   profileStatus: userData?.profileStatus,
 })
 
+/**
+ * The one place that decides whether an account may enter the deletion lifecycle.
+ *
+ * Both phases ask it — the request, so a blocked account hears it before it is
+ * emailed a code, and the lock, so nothing slips through the days between them.
+ * Two copies of these rules is how a request accepted at phase 1 came to be
+ * refused at phase 2, after the customer had already confirmed.
+ * @param {string} uid The account under consideration.
+ * @param {UserDoc} [userData] Its document, already read by the caller.
+ * @return {Promise<object>} The Auth record, for the caller's own use.
+ */
+const assertAccountDeletionEligible = async (
+  uid: string,
+  userData: UserDoc | undefined,
+): Promise<{authUser: Awaited<ReturnType<typeof adminAuth.getUser>> | null}> => {
+  const authUser = await adminAuth.getUser(uid).catch(() => null)
+
+  // Awaited BEFORE the literal rather than inside it: two awaits inside one object
+  // literal run one after the other, and these two queries are independent.
+  const [platformAdminCount, soleOwnedOrgIdsWithOtherMembers] = await Promise.all([
+    countPlatformAdmins(),
+    findSoleOwnedSharedOrgs(uid),
+  ])
+
+  const eligibility = evaluateAccountDeletionEligibility({
+    isDeleted: Boolean(userData?.profileStatus?.isDeleted),
+    isPlatformAdmin: userData?.role === "admin" || isBootstrapAdminEmail(authUser?.email),
+    platformAdminCount,
+    soleOwnedOrgIdsWithOtherMembers,
+  })
+
+  if (!eligibility.allowed) {
+    throw new HttpsError("failed-precondition", eligibility.message)
+  }
+
+  return {authUser}
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2 — lock and flag
 // ---------------------------------------------------------------------------
@@ -605,6 +650,8 @@ async function performAccountDeletion(params: {
   actor: AccountDeletionActor
   deletedBy: string
   reason?: string
+  /** Required to erase an account that still holds purchased credits. */
+  forfeitCredits?: boolean
 }): Promise<{ deletionId: string; purgeAfter: string; sessionsRevoked: number }> {
   const {targetUid, actor, deletedBy, reason} = params
 
@@ -616,24 +663,30 @@ async function performAccountDeletion(params: {
   }
 
   const userData = userSnapshot.data() as UserDoc
-  const authUser = await adminAuth.getUser(targetUid).catch(() => null)
+  const {authUser} = await assertAccountDeletionEligible(targetUid, userData)
 
-  // Awaited BEFORE the literal rather than inside it: two awaits inside one object literal run
-  // one after the other, and these two queries are independent of each other.
-  const [platformAdminCount, soleOwnedOrgIdsWithOtherMembers] = await Promise.all([
-    countPlatformAdmins(),
-    findSoleOwnedSharedOrgs(targetUid),
-  ])
+  // What the account is about to give up, read BEFORE the first side effect: the purge
+  // deletes the wallet, so this is the only moment the number can be known.
+  const wallet = (await db.doc(`users/${targetUid}/billing/current`).get()).data()
+  const creditsAtDeletion = {
+    purchased: getPurchasedCreditsAvailable(wallet),
+    included: getIncludedCreditsAvailable(wallet),
+  }
 
-  const eligibility = evaluateAccountDeletionEligibility({
-    isDeleted: Boolean(userData?.profileStatus?.isDeleted),
-    isPlatformAdmin: userData?.role === "admin" || isBootstrapAdminEmail(authUser?.email),
-    platformAdminCount,
-    soleOwnedOrgIdsWithOtherMembers,
-  })
-
-  if (!eligibility.allowed) {
-    throw new HttpsError("failed-precondition", eligibility.message)
+  // A self-service deletion destroys paid credits. Refusing outright would be hostile
+  // -- the right to leave is not ours to withhold -- so it takes an explicit forfeit,
+  // which is what keeps "delete my account" from being a silent refund request.
+  // An admin-initiated erasure is not confirmed by this flag; the audit records the
+  // balance either way, so the loss is never invisible.
+  if (requiresForfeitAcknowledgement({
+    actor,
+    credits: creditsAtDeletion,
+    acknowledged: params.forfeitCredits,
+  })) {
+    throw new HttpsError(
+      "failed-precondition",
+      `This account still holds ${creditsAtDeletion.purchased} purchased credits, and deleting it destroys them. Confirm the forfeiture to continue.`,
+    )
   }
 
   // 1. Money, before the door is locked.
@@ -677,6 +730,9 @@ async function performAccountDeletion(params: {
     reason: reason ?? (actor === "self" ? "self_service_request" : "admin_action"),
     purgeAfter: Timestamp.fromDate(purgeAfter),
     sessionsRevoked,
+    // The balance at the moment the door was locked. The purge may find less (the
+    // grace window is long enough to spend it), which is why it records its own.
+    creditsAtDeletion,
     // Retained so support can identify the account and restore it inside the grace
     // window. Scrubbed at purge time — see `purgeDeletedAccounts`.
     originalEmail,
@@ -763,12 +819,12 @@ export const requestMyAccountDeletion = onCall(CALLABLE_OPTIONS, async (request)
   }
 
   const userData = userSnapshot.data() as UserDoc
-  if (userData?.profileStatus?.isDeleted) {
-    throw new HttpsError("failed-precondition", "This account is already scheduled for deletion.")
-  }
+  // Refused here rather than at confirmation. The rules are the same ones phase 2
+  // applies, asked early so a request that can only end in a refusal — an owner who
+  // still has teammates — says so while the customer is still looking at the page.
+  const {authUser} = await assertAccountDeletionEligible(uid, userData)
 
-  const authUser = await adminAuth.getUser(uid)
-  const recipient = authUser.email
+  const recipient = authUser?.email
   if (!recipient) {
     throw new HttpsError(
       "failed-precondition",
@@ -797,6 +853,18 @@ export const requestMyAccountDeletion = onCall(CALLABLE_OPTIONS, async (request)
     reason: reason ?? null,
   })
 
+  // Named before the code is sent. An org this account solely owns is erased with
+  // it, wallet and all, and this email is the last place the customer sees that.
+  const ownedOrgs = await listOwnedOrganizations(uid)
+  const details = [
+    {label: "Confirmation code", value: code},
+    {label: "Expires", value: `${expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC`},
+    ...(ownedOrgs.length > 0 ? [{
+      label: "Deleted with this account",
+      value: `${ownedOrgs.map((org) => org.name).join(", ")} — including any credits these organizations hold.`,
+    }] : []),
+  ]
+
   const delivery = await sendEmail({
     to: recipient,
     subject: "Confirm account deletion",
@@ -804,10 +872,7 @@ export const requestMyAccountDeletion = onCall(CALLABLE_OPTIONS, async (request)
       preheader: "Enter this code to confirm closing your account.",
       heading: "Confirm account deletion",
       intro: "Use the code below to confirm that you want to close this account. It expires in 24 hours.",
-      details: [
-        {label: "Confirmation code", value: code},
-        {label: "Expires", value: `${expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC`},
-      ],
+      details,
       callout: {
         tone: "warning",
         text: "If you did not request this, do not share the code with anyone. Your account is not affected until the code is confirmed.",
@@ -818,10 +883,7 @@ export const requestMyAccountDeletion = onCall(CALLABLE_OPTIONS, async (request)
       preheader: "Enter this code to confirm closing your account.",
       heading: "Confirm account deletion",
       intro: "Use the code below to confirm that you want to close this account. It expires in 24 hours.",
-      details: [
-        {label: "Confirmation code", value: code},
-        {label: "Expires", value: `${expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC`},
-      ],
+      details,
     }),
     fromName: "deepscrape Accounts",
   })
@@ -848,8 +910,12 @@ export const confirmMyAccountDeletion = onCall(CALLABLE_OPTIONS, async (request)
     throw new HttpsError("unauthenticated", "You must be signed in.")
   }
 
-  const {code, reason} = validateCallableData(
-    z.object({code: z.string().min(4).max(12), reason: z.string().max(280).optional()}),
+  const {code, reason, forfeitCredits} = validateCallableData(
+    z.object({
+      code: z.string().min(4).max(12),
+      reason: z.string().max(280).optional(),
+      forfeitCredits: z.boolean().optional(),
+    }),
     request.data,
   )
 
@@ -891,6 +957,7 @@ export const confirmMyAccountDeletion = onCall(CALLABLE_OPTIONS, async (request)
     actor: "self",
     deletedBy: "self",
     reason: (reason ?? String(requestSnapshot.get("reason") || "")) || undefined,
+    forfeitCredits,
   })
 
   return {success: true, ...result}
@@ -1501,6 +1568,8 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
   secretsPurged: number
   blobsDeleted: number
   authDeleted: boolean
+  organizationsDeleted: string[]
+  organizationsTransferred: string[]
 }> {
   const userRef = db.collection("users").doc(uid)
 
@@ -1510,6 +1579,16 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
   ])
 
   const userData = userSnapshot.data() as UserDoc
+
+  // Read before the subcollections go: `billing` is one of them, and after the sweep
+  // there is no record anywhere of what the account held. The audit document is the
+  // only surviving answer to "what did this customer give up".
+  const walletSnapshot = await db.doc(`users/${uid}/billing/current`).get()
+  const wallet = walletSnapshot.data()
+  const creditsForfeited = {
+    purchased: getPurchasedCreditsAvailable(wallet),
+    included: getIncludedCreditsAvailable(wallet),
+  }
 
   // Two sources, and BOTH are needed. `apikeys` is data-driven: a BYOK AI key has
   // no derivable id, so its `secretPath` is the only record of it and has to be
@@ -1602,8 +1681,59 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
     db.doc(`deletion_requests/${uid}`).delete(),
   ])
 
+  // Organizations BEFORE memberships: the release reads this account's `owner` rows
+  // and the sweep below deletes them. A sole-member org goes with the account — the
+  // alternative is an organization whose ownerId names a deleted account, whose
+  // wallet nobody can spend, and whose only trace is a document support would have
+  // to find by hand.
+  const organizations = await releaseOwnedOrganizations(uid)
+  if (organizations.deletedOrgIds.length > 0) {
+    collectionsDeleted.push("organizations")
+  }
+
+  for (const transfer of organizations.transferred) {
+    const heirEmail = (await adminAuth
+      .getUser(transfer.heirUid)
+      .catch(() => null))?.email ?? null
+
+    // The one person who can now administer the org, and the only one who can fix
+    // anything it needs — so the handover is announced rather than left to be found.
+    await notifyAccountNotice({
+      uid: transfer.heirUid,
+      to: heirEmail,
+      subject: `You now own ${transfer.orgName}`,
+      content: {
+        preheader: `${transfer.orgName} was handed to you.`,
+        heading: `You now own ${transfer.orgName}`,
+        intro: "The account that owned this organization was permanently deleted, so ownership passed to its longest-standing member.",
+        details: [
+          {label: "Organization", value: transfer.orgName},
+          {label: "Org id", value: transfer.orgId},
+        ],
+        footnote: "Its members, credits and settings are unchanged. You can administer it from your workspace.",
+      },
+      alertCategory: "organization_ownership_transferred",
+      alertTitle: `You now own ${transfer.orgName}`,
+      alertMessage: "The previous owner's account was deleted, so ownership passed to you.",
+    })
+  }
+
   // shortcut: one page of 500 per collection; an account holding more needs a second run.
   // Turn this into a paged loop when a real account exceeds that.
+  const deletionId = String(userData?.profileStatus?.deletionId || "")
+
+  // Pending invitations addressed to this mailbox live in OTHER organizations'
+  // namespaces, so nothing above reaches them, and each one carries the address this
+  // purge promised to shred. The audit row is the last surviving copy of it — and it
+  // is scrubbed at the end of this function, so it has to be read first.
+  if (deletionId) {
+    const auditSnap = await db.collection("admin_audit").doc(deletionId).get()
+    const originalEmail = String(auditSnap.get("originalEmail") || "").toLowerCase()
+    if (originalEmail && await purgeInvitationsForEmail(originalEmail) > 0) {
+      collectionsDeleted.push("invitations")
+    }
+  }
+
   for (const collection of ["device_verifications", "memberships"]) {
     const page = await db.collection(collection).where("userId", "==", uid).limit(500).get()
     if (page.empty) continue
@@ -1671,7 +1801,6 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
   // The audit record is the retained proof that the erasure happened. Its identifying
   // fields exist only to support a restore inside the grace window, so they go now that
   // the window has closed — the record keeps the fact, not the person.
-  const deletionId = String(userData?.profileStatus?.deletionId || "")
   if (deletionId) {
     await db.collection("admin_audit").doc(deletionId).set({
       purgedAt: Timestamp.fromDate(now),
@@ -1682,13 +1811,32 @@ async function purgeOneAccount(uid: string, now: Date): Promise<{
       // Durable, not just a log line: this is the only surviving record of machines
       // handed to the reaper instead of being released by the purge.
       machinesToRelease: orphanedMachines,
+      // And the only surviving record of the purchased balance this erasure destroyed.
+      creditsForfeited,
+      // Which organizations went with the account, and which were handed on. Without
+      // this an orphan leaves no trace of having been created, which is how the first
+      // ones went unnoticed.
+      organizationsDeleted: organizations.deletedOrgIds,
+      organizationsTransferred: organizations.transferred.map(
+        (transfer) => `${transfer.orgId}->${transfer.heirUid}`,
+      ),
       retentionScrubbedAt: Timestamp.fromDate(now),
       originalEmail: null,
       originalUsername: null,
     }, {merge: true})
   }
 
-  return {uid, collectionsDeleted, secretsPurged, blobsDeleted, authDeleted}
+  return {
+    uid,
+    collectionsDeleted,
+    secretsPurged,
+    blobsDeleted,
+    authDeleted,
+    organizationsDeleted: organizations.deletedOrgIds,
+    organizationsTransferred: organizations.transferred.map(
+      (transfer) => `${transfer.orgId}->${transfer.heirUid}`,
+    ),
+  }
 }
 
 /**
@@ -1746,7 +1894,10 @@ export const purgeDeletedAccounts = onSchedule(
         purged += 1
         console.log(
           `Purged account ${result.uid}: deleted [${result.collectionsDeleted.join(", ")}], ` +
-          `${result.secretsPurged} secrets, ${result.blobsDeleted} blobs, auth=${result.authDeleted}`,
+          `${result.secretsPurged} secrets, ${result.blobsDeleted} blobs, ` +
+          `auth=${result.authDeleted}, ` +
+          `orgs deleted [${result.organizationsDeleted.join(", ")}], ` +
+          `orgs transferred [${result.organizationsTransferred.join(", ")}]`,
         )
       } catch (error) {
         failed += 1

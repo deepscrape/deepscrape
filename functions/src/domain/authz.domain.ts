@@ -4,6 +4,17 @@ import {DecodedIdToken} from "firebase-admin/auth"
 export type OrgRole = "owner" | "admin" | "member" | "viewer"
 export type EffectiveRole = OrgRole | "self"
 
+/**
+ * The org roles whose requests may be charged to the organization's wallet.
+ *
+ * A `viewer` reads; it does not spend. Without this the read-only seat would be the
+ * cheapest way to burn a team's balance, and the role would mean nothing about money
+ * at the one point where money is taken.
+ * @param {OrgRole | undefined} role The caller's role in the organization.
+ * @return {boolean} True when the org may pay for this caller's request.
+ */
+export const orgRoleMaySpend = (role: OrgRole | undefined): boolean => role === "owner" || role === "admin" || role === "member"
+
 export type AuthorizationSubject = {
     uid: string
     isPlatformAdmin: boolean

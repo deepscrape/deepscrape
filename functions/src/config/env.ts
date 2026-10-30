@@ -274,6 +274,12 @@ const getEnv = () => {
     // Where a browser machine is placed. Arachnefly already falls back to `iad`
     // when the value is not a 3-letter region, so this mirrors that rather than
     // inventing a different default that would silently disagree with it.
+    //
+    // Moving this needs a matching static egress pair in the new region
+    // (`fly ips allocate-egress -a deepscrape-browser-session -r <region>`).
+    // Machines only use egress IPs allocated in their OWN region, so a region
+    // change without one silently drops every session back to Fly's unstable
+    // NAT'd source addresses — nothing fails, the addresses just stop being ours.
     BROWSER_MACHINE_REGION: getConfigValue("BROWSER_MACHINE_REGION", "iad"),
 
     // Tigris (S3-compatible) object storage — the artifact bucket behind
@@ -424,7 +430,6 @@ const getEnv = () => {
     BILLING_PRICING_RULES_JSON: getConfigValue("BILLING_PRICING_RULES_JSON", ""),
     BILLING_CUSTOM_CREDITS_MIN: getConfigValue("BILLING_CUSTOM_CREDITS_MIN", "50"),
     BILLING_CUSTOM_CREDITS_MAX: getConfigValue("BILLING_CUSTOM_CREDITS_MAX", "5000"),
-    BILLING_CUSTOM_CREDIT_UNIT_AMOUNT_EUR: getConfigValue("BILLING_CUSTOM_CREDIT_UNIT_AMOUNT_EUR", "19"),
     BILLING_CREDIT_EXPIRY_DAYS: getConfigValue("BILLING_CREDIT_EXPIRY_DAYS", "365"),
     IP_GEO_API_URL: getConfigValue("IP_GEO_API_URL", "https://ip.deepscrape.dev/api/geo/lookup"),
     IPREGISTRY_API_KEY: getConfigValue("IPREGISTRY_API_KEY"),

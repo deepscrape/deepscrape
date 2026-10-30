@@ -9,6 +9,7 @@ import {
   erasedAuthEmail,
   evaluateAccountDeletionEligibility,
   isPurgeDue,
+  requiresForfeitAcknowledgement,
   resolvePurgeAfter,
   type DeletionEligibilityInput,
 } from "./account-deletion.domain"
@@ -180,4 +181,38 @@ test("retention list keeps invoices and destroys everything else by default", ()
 test("the erased Auth email can never be delivered and never collides", () => {
   assert.equal(erasedAuthEmail("uid1"), "deleted+uid1@deleted.invalid")
   assert.ok(erasedAuthEmail("uid1").endsWith("@deleted.invalid"))
+})
+
+/**
+ * Erasure destroys paid credits, so it takes an explicit acknowledgement -- but only
+ * from the person whose credits they are. Getting this backwards either lets money
+ * vanish silently or blocks support from closing an abusive account.
+ */
+test("a self-service erasure with purchased credits needs an acknowledgement", () => {
+  assert.equal(requiresForfeitAcknowledgement({
+    actor: "self",
+    credits: {purchased: 40, included: 0},
+  }), true)
+})
+
+test("the same erasure proceeds once the forfeit is acknowledged", () => {
+  assert.equal(requiresForfeitAcknowledgement({
+    actor: "self",
+    credits: {purchased: 40, included: 0},
+    acknowledged: true,
+  }), false)
+})
+
+test("an empty wallet needs no acknowledgement", () => {
+  assert.equal(requiresForfeitAcknowledgement({
+    actor: "self",
+    credits: {purchased: 0, included: 120},
+  }), false)
+})
+
+test("an admin erasure never asks the admin to forfeit someone else's credits", () => {
+  assert.equal(requiresForfeitAcknowledgement({
+    actor: "admin",
+    credits: {purchased: 40, included: 0},
+  }), false)
 })

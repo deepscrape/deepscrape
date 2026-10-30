@@ -11,7 +11,8 @@
  */
 import {describe, it} from "node:test"
 import assert from "node:assert/strict"
-import {findUnusableCatalogPrices, lookupKeyForCredits, lookupKeyForPlan, resolvePriceId} from "./stripe-price-resolution"
+import {configuredPriceId, findUnusableCatalogPrices, lookupKeyForCredits, lookupKeyForPlan, resolvePriceId} from "./stripe-price-resolution"
+import {env} from "../config/env"
 
 /**
  * stripe price lookup keys
@@ -133,5 +134,32 @@ describe("findUnusableCatalogPrices", () => {
 
     assert.equal(unusable.length, 1)
     assert.match(unusable[0], /no fallback id/)
+  })
+})
+
+/**
+ * catalog ids come from the environment, with a sandbox-only default
+ *
+ * Every hardcoded id in the catalog is test-mode. Off production that is a useful default
+ * (an emulator with no env vars still sells something). In production it is a live
+ * checkout aimed at a price the live account has never heard of, so the honest answer is
+ * no id at all and the caller refuses. Asserted because the difference is invisible until
+ * a customer tries to pay.
+ */
+describe("configured price ids", () => {
+  it("prefers the configured id", () => {
+    assert.equal(configuredPriceId("price_live", "price_sandbox", true), "price_live")
+  })
+
+  it("falls back to the sandbox id outside production", () => {
+    assert.equal(configuredPriceId(undefined, "price_sandbox", false), "price_sandbox")
+  })
+
+  it("yields no id at all in production", () => {
+    assert.equal(configuredPriceId(undefined, "price_sandbox", true), undefined)
+  })
+
+  it("reads the deployment's own mode by default", () => {
+    assert.equal(configuredPriceId(undefined, "price_sandbox"), env.IS_PRODUCTION ? undefined : "price_sandbox")
   })
 })

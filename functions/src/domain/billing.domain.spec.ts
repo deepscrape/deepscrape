@@ -142,6 +142,26 @@ describe("billing.domain", () => {
     assert.equal(getBillingAccessMode({plan: "free"}, now), "free")
   })
 
+  it("holds a disputed wallet shut, above every other grant", () => {
+    const now = Date.UTC(2026, 2, 19)
+
+    // Each of these is otherwise spendable; the hold is the only reason they are not.
+    // Pinned per-branch because the check has to run BEFORE the plan test, and moving it
+    // would leave the most expensive case (a live plan bought with a disputed card) open.
+    assert.equal(getBillingAccessMode({plan: "pro", hold: true}, now), "free")
+    assert.equal(
+      getBillingAccessMode({plan: "free", hold: true, credits: {purchasedBalance: 10}}, now),
+      "free",
+    )
+    assert.equal(
+      getBillingAccessMode({plan: "free", hold: true, graceUntil: "2099-01-01T00:00:00.000Z"}, now),
+      "free",
+    )
+    // A cleared hold changes nothing else: the wallet comes back as it was.
+    assert.equal(getBillingAccessMode({plan: "pro", hold: false}, now), "plan")
+    assert.equal(getBillingAccessMode({plan: "pro"}, now), "plan")
+  })
+
   it("withholds the plan once the subscription has ended, however the plan name reads", () => {
     const now = Date.UTC(2026, 2, 19)
 

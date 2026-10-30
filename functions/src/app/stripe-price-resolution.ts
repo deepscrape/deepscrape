@@ -16,6 +16,8 @@
  * keys only remove the need to redeploy with different ids.
  */
 
+import {env} from "../config/env"
+
 /** Interval names are shortened to match the keys that are actually live in Stripe. */
 const SHORT_INTERVAL: Record<string, string> = {
   monthly: "monthly",
@@ -63,6 +65,28 @@ export const lookupKeyForCredits = (credits: number): string => `ds_credits_${cr
 // entry goes stale is transferring a lookup_key to a different price, which needs a cold
 // start (or redeploy) to be picked up.
 const priceIdCache = new Map<string, string>()
+
+/**
+ * A catalog price id, with the hardcoded fallback allowed only outside production.
+ *
+ * Every id in the catalog is test-mode. Off production those ids are a harmless default;
+ * in production a missing env var behind one of them is a live checkout aimed at a price
+ * the live account has never heard of, which fails as "No such price" at the worst
+ * possible moment. So in production the honest answer is `undefined` - the catalog entry
+ * has no id, and both the hourly health check and `createCheckoutSession` refuse instead
+ * of guessing.
+ *
+ * @param {string | undefined} configured Value read from the environment.
+ * @param {string} sandboxFallback The test-mode id this slot used to default to.
+ * @param {boolean} production Whether this deployment is live. Defaults to the real one;
+ * the parameter exists so the rule can be asserted without mutating process-wide state.
+ * @return {string | undefined} The id the catalog should carry.
+ */
+export const configuredPriceId = (
+  configured: string | undefined,
+  sandboxFallback: string,
+  production: boolean = env.IS_PRODUCTION,
+): string | undefined => configured || (production ? undefined : sandboxFallback)
 
 /**
  * Resolve a price id by lookup_key, falling back to the catalog id.

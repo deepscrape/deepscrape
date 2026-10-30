@@ -1,13 +1,24 @@
 /* eslint-disable max-len */
 import test from "node:test"
 import assert from "node:assert/strict"
-import {canPerform, AuthorizationSubject} from "./authz.domain"
+import {canPerform, orgRoleMaySpend, AuthorizationSubject} from "./authz.domain"
 
 const baseSubject: AuthorizationSubject = {
   uid: "u_1",
   isPlatformAdmin: false,
   memberships: {},
 }
+
+test("only the roles that do the work may spend the org's balance", () => {
+  assert.equal(orgRoleMaySpend("owner"), true)
+  assert.equal(orgRoleMaySpend("admin"), true)
+  assert.equal(orgRoleMaySpend("member"), true)
+
+  // A viewer reads. If it could spend, the read-only seat would be the cheapest way
+  // to empty a team's wallet, and the role would say nothing about money.
+  assert.equal(orgRoleMaySpend("viewer"), false)
+  assert.equal(orgRoleMaySpend(undefined), false)
+})
 
 test("allows self-owned machine deploy without org membership", () => {
   const allowed = canPerform(baseSubject, "machine", "deploy", {

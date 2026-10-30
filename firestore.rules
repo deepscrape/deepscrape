@@ -117,6 +117,13 @@ service cloud.firestore {
         return hasRole('admin');
     }
 
+    // The caller owns this login session. One `get()` per check, which is cheaper than
+    // mirroring every activity point under `users/{uid}` just to read it back.
+    function isLoginSessionOwner(sessionId) {
+        return isAuthenticated()
+            && get(/databases/$(database)/documents/loginSessions/$(sessionId)).data.userId == request.auth.uid;
+    }
+
     function isValidCreatePhoneNumber() {
       return !request.resource.data.keys().hasAny(['phoneNumber'])
         || (
@@ -168,6 +175,21 @@ service cloud.firestore {
     match /invitations/{inviteId} {
       allow read: if isAdmin() || hasOrgRole(resource.data.orgId, ['owner', 'admin']);
       allow create, update, delete: if false;
+    }
+
+    // `orgs/{orgId}` is the CREDIT WALLET (`billing/current`, `credits_ledger`), and it
+    // had no rule at all — so it was denied by the recursive catch-all. That is correct
+    // and accidental: the first person to write a rule for this path would have opened
+    // money without anything noticing. Stated here so that edit has to delete this.
+    //
+    // Wallets are read and moved only through `/api/orgs`, which runs on the Admin SDK
+    // and therefore never consults these rules. A client has no business here at all.
+    match /orgs/{orgId} {
+      allow read, write: if false;
+
+      match /{orgDocument=**} {
+        allow read, write: if false;
+      }
     }
     
     match /login_metrics/{docId} {
@@ -229,6 +251,15 @@ service cloud.firestore {
       // Clients cannot directly write; all mutations go through callable functions
       allow read: if isAdmin();
       allow create, update, delete: if false; // Cloud Functions handle all mutations
+
+      // Activity points are a SUBCOLLECTION, and rules never cascade: the `read` above
+      // covers this document and nothing beneath it. `session-activity` reads this path
+      // straight from the browser, so without this block every render logged
+      // "Missing or insufficient permissions" -- for the owner AND for admins.
+      match /activity/{pointId} {
+        allow read: if isAdmin() || isLoginSessionOwner(sessionId);
+        allow write: if false;
+      }
     }
 
     match /users/{userId} {

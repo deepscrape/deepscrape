@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "browserSessions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "idleDeadline", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "metrics_daily",
       "queryScope": "COLLECTION",
       "fields": [
@@ -282,6 +290,14 @@
   ],
   "fieldOverrides": [
     {
+      "collectionGroup": "operations",
+      "fieldPath": "status",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "billing",
       "fieldPath": "status",
       "indexes": [
@@ -324,6 +340,7 @@
       "collectionGroup": "browserSessions",
       "fieldPath": "state",
       "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
     },
@@ -331,6 +348,7 @@
       "collectionGroup": "machines",
       "fieldPath": "created_at",
       "indexes": [
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
         { "order": "DESCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
     }

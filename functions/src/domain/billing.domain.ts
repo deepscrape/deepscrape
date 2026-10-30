@@ -50,6 +50,16 @@ export type BillingSnapshot = {
    * deal that justified it.
    */
   unlimitedUntil?: string | null
+  /**
+   * Set while a payment dispute is open. No spending is authorised until it clears.
+   *
+   * A boolean rather than a mode: it is orthogonal to plan/credits/grace, and a wallet can
+   * be held while holding any of them. `getBillingAccessMode` folds it into `free`, which
+   * is the single verdict every charging path already reads.
+   */
+  hold?: boolean | null
+  holdReason?: string | null
+  heldAt?: string | null
 }
 
 const paidPlans = new Set<BillingPlanTier>(["trial", "starter", "pro", "enterprise"])
@@ -311,6 +321,14 @@ export const canPurchaseStandaloneCredits = (billing: BillingSnapshot | undefine
 }
 
 export const getBillingAccessMode = (billing: BillingSnapshot | undefined, now = Date.now()): BillingAccessMode => {
+  // A disputed charge freezes the wallet, and this check goes FIRST so no plan, grace
+  // window or purchased balance can outrank it. Spending credits that a chargeback is
+  // already reclaiming is how a dispute turns into a loss. Buying is untouched (checkout
+  // never asks this question), so a held customer can still pay their way out.
+  if (billing?.hold === true) {
+    return "free"
+  }
+
   // `status` was never read here, and the plan NAME was the only input. Dunning
   // ends at `unpaid`, which matched neither the sweep's `past_due` nor `free`, so a
   // subscription that stopped paying kept full plan access forever. `past_due`

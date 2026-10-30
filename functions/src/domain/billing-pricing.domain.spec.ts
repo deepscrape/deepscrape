@@ -3,6 +3,7 @@ import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {
   estimateBillingCost,
+  estimatePlanSavings,
   getBillingPricingRules,
   getDefaultPricingRate,
   getPublicPricingRates,
@@ -195,5 +196,57 @@ describe("billing-pricing.domain", () => {
     const anonymous = estimateBillingCost("POST", "/api/crawl", undefined)
     assert.equal(anonymous.chargeable, false)
     assert.equal(anonymous.accessMode, "free")
+  })
+})
+
+describe("estimatePlanSavings", () => {
+  it("prices the same credits both ways and reports the difference", () => {
+    // 2000 credits at 1 minor each = 2000; a EUR9.99 plan = 999. Saving 1001.
+    const result = estimatePlanSavings({
+      creditsUsed: 2000,
+      planMinor: 999,
+      packMinorPerCredit: 1,
+    })
+
+    assert.equal(result.payAsYouGoMinor, 2000)
+    assert.equal(result.planMinor, 999)
+    assert.equal(result.savingMinor, 1001)
+    assert.equal(result.savingPercent, 50)
+  })
+
+  it("reports a NEGATIVE saving when the plan cost more than the usage", () => {
+    // The honest answer for a quiet month: the subscription did not pay for itself.
+    const result = estimatePlanSavings({
+      creditsUsed: 10,
+      planMinor: 1999,
+      packMinorPerCredit: 1,
+    })
+
+    assert.ok(result.savingMinor < 0)
+    assert.equal(result.savingPercent < 0, true)
+  })
+
+  it("claims no percentage when there was no usage to price", () => {
+    const result = estimatePlanSavings({
+      creditsUsed: 0,
+      planMinor: 999,
+      packMinorPerCredit: 1,
+    })
+
+    assert.equal(result.payAsYouGoMinor, 0)
+    assert.equal(result.savingPercent, 0)
+    assert.equal(result.savingMinor, -999)
+  })
+
+  it("treats garbage as zero rather than producing NaN in a customer's face", () => {
+    const result = estimatePlanSavings({
+      creditsUsed: Number.NaN,
+      planMinor: -50,
+      packMinorPerCredit: Number.POSITIVE_INFINITY,
+    })
+
+    assert.equal(result.payAsYouGoMinor, 0)
+    assert.equal(result.planMinor, 0)
+    assert.equal(Number.isNaN(result.savingMinor), false)
   })
 })

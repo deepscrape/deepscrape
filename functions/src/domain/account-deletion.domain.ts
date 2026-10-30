@@ -304,3 +304,21 @@ export function buildErasedUserRecord(input: ErasedAccountInput): Record<string,
  * @return {string} A syntactically valid, permanently undeliverable address.
  */
 export const erasedAuthEmail = (uid: string): string => `deleted+${uid}@deleted.invalid`
+
+/**
+ * Whether erasing this account needs an explicit forfeit acknowledgement.
+ *
+ * A self-service deletion destroys paid credits, and "delete my account" must not be
+ * usable as a silent refund request — nor may it quietly take money. An admin-initiated
+ * erasure does not ask: the actor is not the person losing the balance, and the audit
+ * records what was there either way.
+ * @param {*} args Who is deleting, what the wallet holds, and whether that was acknowledged.
+ * @return {boolean} True when the deletion must be refused until it is acknowledged.
+ */
+export const requiresForfeitAcknowledgement = (args: {
+  actor: AccountDeletionActor
+  credits: {purchased: number, included: number}
+  acknowledged?: boolean
+}): boolean => args.actor === "self" &&
+  args.credits.purchased > 0 &&
+  args.acknowledged !== true

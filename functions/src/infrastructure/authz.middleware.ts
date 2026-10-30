@@ -192,11 +192,15 @@ async function loadMemberships(uid: string): Promise<Record<string, OrgRole>> {
 }
 
 /**
- * getOrgIdFromRequest
+ * The organization a request names, from the most specific place it can appear.
+ *
+ * Exported because the billing gate needs the same answer: which org is paying has to
+ * be derived exactly the way which org is being authorised is, or a request can be
+ * authorised against one tenant and charged to another.
  * @param {*} req
- * @return {*}
+ * @return {*} The org id, or undefined.
  */
-function getOrgIdFromRequest(req: Request): string | undefined {
+export function getOrgIdFromRequest(req: Request): string | undefined {
   if (typeof req.params?.orgId === "string" && req.params.orgId.trim().length > 0) {
     return req.params.orgId.trim()
   }

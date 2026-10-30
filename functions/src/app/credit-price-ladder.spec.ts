@@ -17,7 +17,7 @@
  */
 import {describe, it} from "node:test"
 import assert from "node:assert/strict"
-import {billingPlanCatalog, creditPackCatalog} from "./stripe"
+import {billingPlanCatalog, creditPackCatalog, customCreditsTotalMinor} from "./stripe"
 
 /**
  * Euros per credit for a plan interval, or null when it has no price.
@@ -90,6 +90,26 @@ describe("credit price ladder", () => {
 
       assert.ok(annual < monthly, `${plan}: annual should cost less per credit than monthly`)
       assert.ok(annual > monthly / 2, `${plan}: annual is under half the monthly rate`)
+    }
+  })
+
+  it("prices a custom amount exactly like the pack of the same size", () => {
+    // Custom credits were priced from an env var whose default had not moved with the pack
+    // retier, so 500 credits cost EUR95.00 as a custom amount and EUR6.00 as a pack. The
+    // ladder is the only rate there is now, and this is the equality that says so.
+    for (const pack of creditPackCatalog) {
+      assert.equal(customCreditsTotalMinor(pack.credits), pack.amount, pack.id)
+    }
+  })
+
+  it("never sells a custom amount cheaper per credit than the best pack", () => {
+    // Below the smallest pack a custom order is proportionally identical to it, never a
+    // discount -- otherwise the packs are dominated and nobody buys one.
+    const best = Math.min(...creditPackCatalog.map((pack) => pack.amount / pack.credits))
+
+    for (const credits of [50, 99, 100, 250, 499, 500, 1999, 2000, 5000]) {
+      const rate = customCreditsTotalMinor(credits) / credits
+      assert.ok(rate >= best, `${credits} credits at ${rate.toFixed(4)}/credit is under ${best.toFixed(4)}`)
     }
   })
 })

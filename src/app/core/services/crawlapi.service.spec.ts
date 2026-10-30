@@ -44,9 +44,8 @@ describe('CrawlAPIService', () => {
 
   it('should map enqueue response into CrawlTask shape', (done) => {
     const operationData = { id: 'op-1' } as any;
-    const crawlPack = { config: { value: { markdown: true } } } as any;
 
-    service.multiCrawlEnqueue(['https://example.com'], operationData, crawlPack).subscribe((task) => {
+    service.multiCrawlEnqueue(['https://example.com'], operationData).subscribe((task) => {
       expect(task.id).toBe('task-10');
       expect(task.operationId).toBe('op-1');
       done();
@@ -54,6 +53,10 @@ describe('CrawlAPIService', () => {
 
     const req = httpMock.expectOne((request) => request.method === 'POST' && request.url.endsWith('/crawl/stream/job'));
     expect(req.request.body.urls).toEqual(['https://example.com']);
+    // The body carries the operation and nothing else. A crawl pack's config used to
+    // be spread in here and webrain ignores every field of it, so this pins that no
+    // crawl4ai-shaped key comes back.
+    expect(Object.keys(req.request.body).sort()).toEqual(['operation_data', 'urls']);
     req.flush({ task_id: 'task-10', operation_id: 'op-1' });
   });
 

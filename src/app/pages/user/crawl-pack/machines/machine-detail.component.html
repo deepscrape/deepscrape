@@ -1,0 +1,282 @@
+<section class="space-y-6">
+  <a
+    [routerLink]="['..']"
+    class="inline-flex items-center gap-1 text-sm text-gray-600 underline-offset-2 hover:underline dark:text-gray-300">
+    <mat-icon class="!size-4 !text-base">arrow_back</mat-icon>
+    {{ 'MACHINE_DETAIL.BACK' | translate }}
+  </a>
+
+  @if (loading()) {
+    <div class="flex min-h-[240px] items-center justify-center">
+      <mat-spinner [diameter]="40" class="stroke-sky-700 dark:stroke-sky-400"></mat-spinner>
+    </div>
+  } @else if (failed()) {
+    <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+      <p class="text-sm font-medium text-rose-700 dark:text-rose-300">
+        {{ 'MACHINE_DETAIL.LOAD_FAILED' | translate }}
+      </p>
+      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        {{ 'MACHINE_DETAIL.LOAD_FAILED_HINT' | translate }}
+      </p>
+    </div>
+  } @else if (machine(); as m) {
+    <header class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div class="min-w-0">
+        <h1 class="truncate text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {{ m.name || machineId() }}
+        </h1>
+        <p class="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+          {{ machineId() }}
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="rounded-full px-3 py-1 text-xs font-medium" [ngClass]="stateClass()">
+          {{ m.state }}
+        </span>
+        <span
+          class="rounded-full bg-gray-500/10 px-3 py-1 text-xs text-gray-600 dark:text-gray-300">
+          {{ m.region }}
+        </span>
+        <span
+          class="rounded-full bg-sky-500/10 px-3 py-1 text-xs text-sky-700 dark:text-sky-300">
+          {{ (sessionOwned() ? 'MACHINE_DETAIL.KIND_SESSION' : 'MACHINE_DETAIL.KIND_CONTAINER') | translate }}
+        </span>
+      </div>
+    </header>
+
+    <mat-tab-group animationDuration="0ms">
+      <mat-tab [label]="'MACHINE_DETAIL.TAB_OVERVIEW' | translate">
+        <div class="space-y-6 pt-6">
+          <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+              {{ 'MACHINE_DETAIL.OVERVIEW_TITLE' | translate }}
+            </h2>
+            <dl class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.REGION' | translate }}
+                </dt>
+                <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {{ m.region }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.INSTANCE_ID' | translate }}
+                </dt>
+                <dd class="mt-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
+                  {{ m.instance_id || '—' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.PRIVATE_IP' | translate }}
+                </dt>
+                <dd class="mt-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
+                  {{ m.private_ip || '—' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.GUEST' | translate }}
+                </dt>
+                <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {{ guestLabel() }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.IMAGE' | translate }}
+                </dt>
+                <dd class="mt-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {{ imageLabel() }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.DIGEST' | translate }}
+                </dt>
+                <dd class="mt-1 truncate font-mono text-xs text-gray-600 dark:text-gray-300">
+                  {{ shortDigest() }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.CREATED' | translate }}
+                </dt>
+                <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {{ m.created_at ? (m.created_at | date : 'medium') : '—' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ 'MACHINE_DETAIL.UPDATED' | translate }}
+                </dt>
+                <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {{ m.updated_at ? (m.updated_at | date : 'medium') : '—' }}
+                </dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+              {{ 'MACHINE_DETAIL.CHECKS' | translate }}
+            </h2>
+            @if (checks().length) {
+              <table class="mt-3 w-full text-left text-sm">
+                <thead class="border-b border-gray-200 text-xs uppercase text-gray-500 dark:border-gray6 dark:text-gray-400">
+                  <tr>
+                    <th class="py-2 pr-4 font-medium">{{ 'MACHINE_DETAIL.CHECK_NAME' | translate }}</th>
+                    <th class="py-2 pr-4 font-medium">{{ 'MACHINE_DETAIL.CHECK_STATUS' | translate }}</th>
+                    <th class="py-2 font-medium">{{ 'MACHINE_DETAIL.CHECK_WHEN' | translate }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (check of checks(); track check.name) {
+                    <tr class="border-b border-gray-100 last:border-0 dark:border-gray6/60">
+                      <td class="py-2 pr-4 font-mono text-xs">{{ check.name }}</td>
+                      <td class="py-2 pr-4">{{ check.status }}</td>
+                      <td class="py-2 text-gray-500 dark:text-gray-400">
+                        {{ check.updated_at ? (check.updated_at | date : 'medium') : '—' }}
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            } @else {
+              <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                {{ 'MACHINE_DETAIL.NO_CHECKS' | translate }}
+              </p>
+            }
+          </div>
+        </div>
+      </mat-tab>
+
+      <mat-tab [label]="'MACHINE_DETAIL.TAB_SESSION' | translate">
+        <div class="space-y-6 pt-6">
+          <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+              {{ 'MACHINE_DETAIL.SESSION_TITLE' | translate }}
+            </h2>
+            @if (sessionOwned()) {
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                {{ 'MACHINE_DETAIL.SESSION_NOTE' | translate }}
+              </p>
+              <p class="mt-3 break-all font-mono text-xs text-gray-700 dark:text-gray-200">
+                {{ ownership()?.sessionId }}
+              </p>
+            } @else {
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                {{ 'MACHINE_DETAIL.CONTAINER_NOTE' | translate }}
+              </p>
+            }
+            <p class="mt-4 border-t border-gray-200 pt-3 text-sm text-gray-500 dark:border-gray6 dark:text-gray-400">
+              {{ 'MACHINE_DETAIL.STATS_PENDING' | translate }}
+            </p>
+          </div>
+
+          @if (sessionOwned()) {
+            <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+              <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+                {{ 'MACHINE_DETAIL.RUNTIME' | translate }}
+              </h2>
+              @if (stats(); as runtime) {
+                @if (runtime.available === false) {
+                  <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    {{ 'MACHINE_DETAIL.RUNTIME_UNSUPPORTED' | translate }}
+                  </p>
+                } @else {
+                  <dl class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <dt class="text-sm text-gray-500 dark:text-gray-400">
+                        {{ 'MACHINE_DETAIL.RUNTIME_LOAD' | translate }}
+                      </dt>
+                      <dd class="mt-1 font-mono text-sm text-gray-900 dark:text-gray-100">
+                        {{ runtime.load?.m1 }} / {{ runtime.load?.m5 }} / {{ runtime.load?.m15 }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt class="text-sm text-gray-500 dark:text-gray-400">
+                        {{ 'MACHINE_DETAIL.RUNTIME_MEMORY' | translate }}
+                      </dt>
+                      <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {{ runtime.memory?.available_mb }} / {{ runtime.memory?.total_mb }} MB
+                      </dd>
+                    </div>
+                    <div>
+                      <dt class="text-sm text-gray-500 dark:text-gray-400">
+                        {{ 'MACHINE_DETAIL.RUNTIME_PROCESSES' | translate }}
+                      </dt>
+                      <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {{ runtime.processes?.total }} ({{
+                          'MACHINE_DETAIL.RUNTIME_BROWSERS' | translate : { count: runtime.processes?.browser_processes }
+                        }})
+                      </dd>
+                    </div>
+                    <div>
+                      <dt class="text-sm text-gray-500 dark:text-gray-400">
+                        {{ 'MACHINE_DETAIL.RUNTIME_UPTIME' | translate }}
+                      </dt>
+                      <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {{ runtime.uptime_s }} s
+                      </dd>
+                    </div>
+                  </dl>
+                }
+              } @else {
+                <div class="mt-3 space-y-3" aria-hidden="true">
+                  <div class="loading-line-short"></div>
+                  <div class="loading-key"></div>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      </mat-tab>
+
+      <mat-tab [label]="'MACHINE_DETAIL.TAB_EVENTS' | translate">
+        <div class="pt-6">
+          <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+              {{ 'MACHINE_DETAIL.EVENTS' | translate }}
+              <span class="ml-1 text-sm font-normal text-gray-500 dark:text-gray-400">
+                ({{ events().length }})
+              </span>
+            </h2>
+            @if (events().length) {
+              <table class="mt-3 w-full text-left text-sm">
+                <thead class="border-b border-gray-200 text-xs uppercase text-gray-500 dark:border-gray6 dark:text-gray-400">
+                  <tr>
+                    <th class="py-2 pr-4 font-medium">{{ 'MACHINE_DETAIL.EVENT_WHEN' | translate }}</th>
+                    <th class="py-2 pr-4 font-medium">{{ 'MACHINE_DETAIL.EVENT_TYPE' | translate }}</th>
+                    <th class="py-2 pr-4 font-medium">{{ 'MACHINE_DETAIL.EVENT_STATUS' | translate }}</th>
+                    <th class="py-2 font-medium">{{ 'MACHINE_DETAIL.EVENT_SOURCE' | translate }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (event of events(); track $index) {
+                    <tr class="border-b border-gray-100 last:border-0 dark:border-gray6/60">
+                      <td class="py-2 pr-4 text-gray-500 dark:text-gray-400">
+                        {{ event.timestamp ? (event.timestamp * 1000 | date : 'medium') : '—' }}
+                      </td>
+                      <td class="py-2 pr-4 font-mono text-xs">{{ event.type || '—' }}</td>
+                      <td class="py-2 pr-4">{{ event.status || '—' }}</td>
+                      <td class="py-2 text-xs text-gray-500 dark:text-gray-400">
+                        {{ event.source || '—' }}
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            } @else {
+              <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                {{ 'MACHINE_DETAIL.NO_EVENTS' | translate }}
+              </p>
+            }
+          </div>
+        </div>
+      </mat-tab>
+    </mat-tab-group>
+  }
+</section>

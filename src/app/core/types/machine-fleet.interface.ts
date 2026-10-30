@@ -97,3 +97,27 @@ export interface MineMachinesResponse {
   status: 'ok'
   machines: MineMachine[]
 }
+
+/**
+ * One destroyed machine, as `machines_history` recorded it.
+ *
+ * The record is written by arachnefly's `DeleteMachine` at the moment of
+ * destruction, so its `state` is `destroyed` and it is not addressable: there is
+ * nothing left on Fly to act on. It exists to answer "what did I have, and when
+ * did it go", which is why there is no action column on the page that renders it.
+ */
+export interface MachineHistoryEntry {
+  /** Fly's machine id. The document key, and the only id worth showing. */
+  id: string
+  name: string
+  state: string
+  region: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** The reply to a "my destroyed machines" read. */
+export interface MachineHistoryResponse {
+  status: 'ok'
+  machines: MachineHistoryEntry[]
+}

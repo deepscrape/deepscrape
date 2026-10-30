@@ -1,5 +1,5 @@
-import { AsyncPipe, DatePipe, DecimalPipe, JsonPipe, NgClass } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostBinding, SimpleChanges, ViewChild, computed, effect, inject } from '@angular/core'
+import { AsyncPipe, DatePipe, DecimalPipe, NgClass } from '@angular/common';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostBinding, SimpleChanges, ViewChild, computed, effect, inject, signal } from '@angular/core'
 import { toSignal } from '@angular/core/rxjs-interop'
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms'
 import { FirestoreService } from 'src/app/core/services'
@@ -7,7 +7,7 @@ import { MatIcon } from '@angular/material/icon'
 import { MatProgressBarModule } from '@angular/material/progress-bar'
 import { MatProgressSpinner } from '@angular/material/progress-spinner'
 import { RouterLink, Router, ActivatedRoute } from '@angular/router'
-import { BehaviorSubject, combineLatest, map, Observable, of, Subject, Subscription, tap, timer } from 'rxjs'
+import { BehaviorSubject, combineLatest, debounceTime, distinctUntilChanged, map, Observable, of, Subject, Subscription, takeUntil, tap, timer } from 'rxjs'
 import { DropdownComponent, GinputComponent, LoadingDotsComponent, PromptareaComponent, SnackBarType, StinputComponent } from 'src/app/core/components'
 import { FeatureGateComponent } from 'src/app/core/components/feature-gate/feature-gate.component'
 import {
@@ -17,17 +17,17 @@ import {
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
 import { Outsideclick, RippleDirective } from 'src/app/core/directives'
 import { CrawlOperationStatus } from 'src/app/core/enum'
-import { crawlOperationStatusColor, isArray, setOperationStatusList } from 'src/app/core/functions'
+import { isArray, setOperationStatusList, statusBadgeClass } from 'src/app/core/functions'
 import { FormControlPipe } from 'src/app/core/pipes'
 import { AiModelsService, AuthService, AuthzService, BillingService, CacheService, CrawlAPIService, CrawlStoreService, ScrollService, SnackbarService, TaskStatus, WebSocketService } from 'src/app/core/services'
-import { AIModel, CrawlConfig, CrawlOperation, CrawlPack, CrawlTask, DropDownOption, Users } from 'src/app/core/types'
+import { AIModel, CrawlConfig, CrawlOperation, CrawlPack, CrawlTask, DropDownOption, JobResult, Users } from 'src/app/core/types'
 import { MatInputModule } from '@angular/material/input'
 import { MatFormFieldModule } from '@angular/material/form-field'
 import { provideNativeDateAdapter } from '@angular/material/core'
 import { MatDatepickerModule } from '@angular/material/datepicker'
 import { MatTimepickerModule, provideNativeDateTimeAdapter } from '@dhutaryan/ngx-mat-timepicker'
 import { UserInfo } from '@angular/fire/auth'
-import { listStaggerAnimation } from 'src/app/animations'
+import { expandCollapseAnimation, listStaggerAnimation } from 'src/app/animations'
 import {
   DocumentData,
   Firestore,
@@ -43,6 +43,7 @@ import {
   orderBy,
   query,
   startAfter,
+  where,
   writeBatch,
 } from '@angular/fire/firestore'
 
@@ -57,7 +58,7 @@ type OperationPageCursor = {
   selector: 'app-operations',
   imports: [DatePipe, RippleDirective, MatIcon, NgClass, AsyncPipe, MatProgressBarModule, LoadingDotsComponent, StinputComponent, FormControlPipe, GinputComponent, DropdownComponent, RouterLink, PromptareaComponent, ReactiveFormsModule, MatFormFieldModule, Outsideclick, MatProgressSpinner, MatInputModule, DecimalPipe, MatTimepickerModule, MatDatepickerModule, TranslateModule, FeatureGateComponent],
   providers: [provideNativeDateAdapter(), provideNativeDateTimeAdapter()],
-  animations: [listStaggerAnimation],
+  animations: [listStaggerAnimation, expandCollapseAnimation],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './operations.component.html',
   styleUrl: './operations.component.scss'
@@ -150,6 +151,18 @@ export class OperationsComponent {
 
   protected operationsForm: FormGroup
 
+  /**
+   * The badge classes for a status, for the template.
+   *
+   * The row used to render `'operation-' + operation.color`, where `color` was a
+   * colour NAME stored on the document. A row written by the server carries a
+   * hex default (`#64748b`), which produced `operation-#64748b` -- a class that
+   * does not exist, so the badge rendered with no background at all. Driving the
+   * tone from the STATUS removes the second source of truth that could disagree
+   * with the word printed inside the badge.
+   */
+  protected readonly statusBadgeClass = statusBadgeClass
+
   private destroy$ = new Subject<void>()
   private crawlSubs: Subscription
   private pagesSubs: Subscription
@@ -193,6 +206,174 @@ export class OperationsComponent {
   })
 
   protected readonly canRunOperations = computed(() => this.operationsGate()?.allowed ?? true)
+
+  /**
+   * Navigation for a row.
+   *
+   * The id is PUSHED onto this page's own url rather than built from an
+   * absolute `/operations/:id`: `appPageRoutes` is mounted in both the bare tree
+   * and the `/{orgId}` tree, so an absolute path would drop the org prefix for
+   * every org-scoped user.
+   */
+  private readonly router = inject(Router)
+
+  /**
+   * Which row is expanded, and what has been read for every row ever opened.
+   *
+   * ONE id, not a set: the box is an accordion, so opening a row is also the
+   * act of closing the previous one -- a signal makes that a single write and
+   * the animation follows the state on its own.
+   *
+   * The read results are kept for rows that have since COLLAPSED. Dropping them
+   * with the id would empty the panel in the same change-detection pass that
+   * starts the collapse, so the box would snap shut instead of animating. A
+   * `null` value means "opened, still reading".
+   */
+  protected readonly openId = signal<string | null>(null)
+  protected readonly openResults = signal<Record<string, JobResult | null>>({})
+  /** The ids whose read failed, so a row can say so instead of showing nothing. */
+  protected readonly openErrors = signal<Record<string, boolean>>({})
+  /** The row whose cancel is in flight, so a second press is ignored. */
+  protected readonly cancelingId = signal<string | null>(null)
+
+  /**
+   * Fold a row open, or shut if it is the open one.
+   *
+   * The job is read ONCE per row and cached: this is a peek at what a run
+   * produced, not a live view -- the detail page follows a running job, and
+   * re-reading here on every toggle would only repeat a document.
+   * @param {CrawlOperation} operation The row that was clicked.
+   * @return {void}
+   */
+  protected toggleOperation(operation: CrawlOperation): void {
+    const id = operation.id
+
+    if (!id)
+      return
+
+    if (this.openId() === id) {
+      this.openId.set(null)
+      return
+    }
+
+    this.openId.set(id)
+
+    const taskId = operation.task_id
+    if (!taskId || id in this.openResults())
+      return
+
+    this.openResults.update((rows) => ({ ...rows, [id]: null }))
+    this.crawlService.getJobResult(taskId).subscribe({
+      next: (result) => this.openResults.update((rows) => ({ ...rows, [id]: result })),
+      error: (failure: unknown) => {
+        console.error('Error reading job results:', failure)
+        // The row keeps saying "reading" only while a read is in flight, so a
+        // failure has to remove the placeholder rather than leave it there.
+        this.openResults.update((rows) => {
+          const next = { ...rows }
+          delete next[id]
+          return next
+        })
+        this.openErrors.update((errors) => ({ ...errors, [id]: true }))
+      },
+    })
+  }
+
+  /**
+   * Whether this run can still be stopped.
+   *
+   * Read from the JOB, not the stored row: the row is only rewritten when a
+   * worker settles it, so offering "cancel" on a finished job is a button that
+   * answers "already finished".
+   * @param {JobResult | null} result The job that was read for this row.
+   * @return {boolean} True while it is still running.
+   */
+  protected isLive(result: JobResult | null): boolean {
+    const status = result?.status
+    return status === CrawlOperationStatus.IN_PROGRESS ||
+      status === CrawlOperationStatus.STARTED
+  }
+
+  /**
+   * Stop a run from the list.
+   *
+   * The server records the decision and every remaining delivery checks it, so
+   * the local status is set from the REPLY and the list is refreshed rather than
+   * assumed stopped.
+   * @param {CrawlOperation} operation The row whose run should stop.
+   * @return {void}
+   */
+  protected cancelOperation(operation: CrawlOperation): void {
+    const taskId = operation.task_id
+    const id = operation.id
+
+    if (!taskId || !id || this.cancelingId() === id)
+      return
+
+    this.cancelingId.set(id)
+    this.crawlService.cancelTask(taskId).subscribe({
+      next: () => {
+        this.cancelingId.set(null)
+        // The peek keeps its rows, so its status has to move with the cancel or
+        // it keeps offering a button for a run that has stopped.
+        this.openResults.update((rows) => {
+          const found = rows[id]
+          return found ?
+            { ...rows, [id]: { ...found, status: CrawlOperationStatus.CANCELED } } :
+            rows
+        })
+        this.refreshOperationList()
+      },
+      error: (failure: unknown) => {
+        console.error('Error canceling the operation:', failure)
+        this.cancelingId.set(null)
+      },
+    })
+  }
+
+  /**
+   * The rows worth showing in the peek: five at most.
+   *
+   * A crawl batch can land fifty targets, and the box is inside the list -- the
+   * full set is what the detail page is for. `rest` is what is left over, so
+   * the panel can say how many without pretending they are shown.
+   * @param {JobResult | null | undefined} result The job, when it has landed.
+   * @return {{shown: JobResult['items'], rest: number}} The slice to render.
+   */
+  protected peek(result: JobResult | null | undefined): { shown: JobResult['items'], rest: number } {
+    const items = result?.items ?? []
+    return { shown: items.slice(0, 5), rest: Math.max(0, items.length - 5) }
+  }
+
+  /**
+   * Whether this row is the expanded one.
+   *
+   * `CrawlOperation.id` is optional, and a template cannot index a record with
+   * `string | undefined`, so the three lookups the panel needs are methods.
+   * @param {string | undefined} id The row id.
+   * @return {boolean} True when its box is open.
+   */
+  protected isOpen(id: string | undefined): boolean {
+    return id !== undefined && this.openId() === id
+  }
+
+  /**
+   * What has been read for a row, or `undefined` when nothing has.
+   * @param {string | undefined} id The row id.
+   * @return {JobResult | null | undefined} The job, `null` while reading.
+   */
+  protected resultFor(id: string | undefined): JobResult | null | undefined {
+    return id !== undefined ? this.openResults()[id] : undefined
+  }
+
+  /**
+   * Whether the read for a row failed.
+   * @param {string | undefined} id The row id.
+   * @return {boolean} True when the last read failed.
+   */
+  protected failedFor(id: string | undefined): boolean {
+    return id !== undefined && this.openErrors()[id] === true
+  }
 
   constructor(
     private route: ActivatedRoute,
@@ -344,6 +525,185 @@ export class OperationsComponent {
       }],
       filters: [''],
     })
+
+    // The search box had NO subscriber: `search` was a control the template
+    // rendered and nothing read, so typing filtered nothing while the FILTERS
+    // button beside it had no handler at all. Both are wired below, against the
+    // two index-free queries `browse()` documents.
+    this.operationsForm.get('search')?.valueChanges
+      .pipe(
+        debounceTime(300),
+        distinctUntilChanged(),
+        takeUntil(this.destroy$),
+      )
+      .subscribe((term) => void this.browse(term, this.statusFilter()))
+  }
+
+  /**
+   * Whether the FILTERS popover is open.
+   *
+   * A signal rather than a plain boolean so the button and the row it reveals
+   * move together under OnPush.
+   */
+  protected readonly filtersOpen = signal(false)
+
+  /** The status the list is filtered to, or `null` for every status. */
+  protected readonly statusFilter = signal<CrawlOperationStatus | null>(null)
+
+  /**
+   * A browse is IN PROGRESS or claimed: either a search term or a status filter.
+   *
+   * While one is set the list shows that result set instead of a page, because
+   * a filtered list has no meaningful page arithmetic -- the pages belong to the
+   * unfiltered ordering.
+   */
+  protected readonly browsing = computed(() =>
+    this.browseTerm().length > 0 || this.statusFilter() !== null
+  )
+
+  /** The term last applied, so the header can say what is being shown. */
+  protected readonly browseTerm = signal('')
+
+  /** Rows from the last browse; `null` means "not browsing". */
+  private readonly browseSubject = new BehaviorSubject<CrawlOperation[] | null>(null)
+
+  protected readonly browseBusy = signal(false)
+
+  /** The statuses the filter offers. The enum's own values are the labels, as
+   * everywhere else on this page, so no new i18n keys are invented for them. */
+  protected readonly statusChoices: CrawlOperationStatus[] = [
+    CrawlOperationStatus.SCHEDULED,
+    CrawlOperationStatus.IN_PROGRESS,
+    CrawlOperationStatus.COMPLETED,
+    CrawlOperationStatus.FAILED,
+    CrawlOperationStatus.CANCELED,
+  ]
+
+  /**
+   * How many rows one search or filter may return.
+   *
+   * A cap rather than full paging: a name search is answered by a single-field
+   * range query (no composite index to deploy) and 50 rows is more than a person
+   * scrolls for a name they half-remember.
+   */
+  private readonly BROWSE_LIMIT = 50
+
+  /**
+   * Fold the browse result into the one stream the template iterates.
+   *
+   * `null` in the subject means "no browse is active", so the paged list passes
+   * through untouched. One binding in the template instead of two lists keeps
+   * the row markup -- and everything hanging off a row -- in one place.
+   */
+  protected list$!: Observable<CrawlOperation[] | null | undefined>
+
+  /**
+   * Show or hide the status chips.
+   * @return {void}
+   */
+  protected toggleFilters(): void {
+    this.filtersOpen.update((open) => !open)
+  }
+
+  /**
+   * Apply one status filter, or clear it with `null`.
+   *
+   * Clears the search box, because a name range plus a status equality is a
+   * COMPOSITE index -- and a query that 400s the whole list is worse than one
+   * control at a time. `browse()` still honours both when they arrive together,
+   * by filtering the second one in memory.
+   * @param {CrawlOperationStatus | null} status The status, or null for all.
+   * @return {void}
+   */
+  protected setStatusFilter(status: CrawlOperationStatus | null): void {
+    this.statusFilter.set(status)
+    void this.browse(this.browseTerm(), status)
+  }
+
+  /**
+   * Drop the browse and go back to the paged list.
+   * @return {void}
+   */
+  protected clearBrowse(): void {
+    this.statusFilter.set(null)
+    this.browseTerm.set('')
+    this.operationsForm.get('search')?.setValue('', { emitEvent: false })
+    this.browseSubject.next(null)
+    this.cdr.markForCheck()
+  }
+
+  /**
+   * One index-free query for a search term and/or a status.
+   *
+   * What this deliberately does NOT do is build a single Firestore query out of
+   * both predicates. A range on `name` ordered by `name` plus an equality on
+   * `status` needs a composite index, and a missing index fails the WHOLE read
+   * with a 400 -- so the list would go blank for everyone until a deploy landed.
+   * The name range is the query and the status is applied to its rows in memory;
+   * the other order (status equality first) is what `setStatusFilter` uses when
+   * no term is present.
+   *
+   * Sorting is in memory for the same reason: `orderBy('created_At')` on top of
+   * an equality filter is the same composite index in a different shape.
+   * @param {string} rawTerm What the user typed.
+   * @param {CrawlOperationStatus | null} status The status filter, if any.
+   * @return {Promise<void>} Resolves once the result is in `browseSubject`.
+   */
+  private async browse(
+    rawTerm: string,
+    status: CrawlOperationStatus | null,
+  ): Promise<void> {
+    const uid = this.user?.uid
+    const term = rawTerm.trim()
+    this.browseTerm.set(term)
+
+    if (!uid || (!term && !status)) {
+      this.browseSubject.next(null)
+      this.cdr.markForCheck()
+      return
+    }
+
+    this.browseBusy.set(true)
+    this.cdr.markForCheck()
+
+    try {
+      const operationsRef = collection(this.db, `users/${uid}/operations`)
+      const snapshot = term
+        ? await getDocs(query(
+          operationsRef,
+          where('name', '>=', term),
+          where('name', '<=', `${term}\uf8ff`),
+          orderBy('name'),
+          limit(this.BROWSE_LIMIT),
+        ))
+        : await getDocs(query(
+          operationsRef,
+          where('status', '==', status),
+          limit(this.BROWSE_LIMIT),
+        ))
+
+      const rows = snapshot.docs
+        .map((operationDoc) => this.mapOperationDoc(operationDoc))
+        .filter((row) => !status || !term || row.status === status)
+        .sort((a, b) => (b.created_At ?? 0) - (a.created_At ?? 0))
+
+      this.browseSubject.next(rows)
+    } catch (error) {
+      // An empty result is a legitimate answer and a failed read is not, so the
+      // failure clears the browse rather than pretending nothing matched.
+      console.error('Error searching Crawl Operations:', error)
+      this.showSnackbar(
+        this.translate.instant('OPERATIONS.ERROR_LOAD'),
+        SnackBarType.error,
+        '',
+        5000,
+      )
+      this.browseSubject.next(null)
+      this.browseTerm.set('')
+    } finally {
+      this.browseBusy.set(false)
+      this.cdr.markForCheck()
+    }
   }
 
   private padZero(value: number): string {
@@ -399,7 +759,6 @@ export class OperationsComponent {
             return {
               ...op,
               status: taskStatus.status as CrawlOperationStatus,
-              color: crawlOperationStatusColor(taskStatus.status as CrawlOperationStatus)
             }
           }
           return op
@@ -423,6 +782,13 @@ export class OperationsComponent {
 
     this.totalOpePages$ = this.totalPagesSubject.asObservable()
     this.inTotal$ = this.inTotalSubject.asObservable()
+
+    // One stream for the template: the browse result when a search or a status
+    // filter is active, the paged list otherwise. Built HERE rather than as a
+    // field initializer because it folds `operations$`, which is assigned above.
+    this.list$ = combineLatest([this.operations$, this.browseSubject]).pipe(
+      map(([page, hits]) => hits ?? page),
+    )
 
     this.totalOperPerPage = 10 // set a default value and update it later based on the user selection or local storage
     this.isOperOptionsLoading = false
@@ -554,19 +920,17 @@ export class OperationsComponent {
    * refused does not leave a row behind claiming to be running.
    *
    * @param {CrawlOperation} operationData The validated operation to enqueue.
-   * @param {CrawlPack} pack The configured pack the request body is built from.
    */
-  private enqueueCrawlOperation(operationData: CrawlOperation, pack: CrawlPack): void {
+  private enqueueCrawlOperation(operationData: CrawlOperation): void {
 
     this.crawlSubs = this.crawlService
-      .multiCrawlEnqueue(operationData.urls, operationData, pack)
+      .multiCrawlEnqueue(operationData.urls, operationData)
       .subscribe({
         next: (task: CrawlTask) => {
           operationData.task_id = task.id
           // The chosen action fixes the stored status; later changes arrive via
           // `taskStatus$`, keyed on the id attached just above.
           operationData.status = CrawlOperationStatus.STARTED
-          operationData.color = crawlOperationStatusColor(CrawlOperationStatus.STARTED)
         },
         error: (error: unknown) => {
           console.error('Error enqueuing crawl operation:', error)
@@ -580,6 +944,52 @@ export class OperationsComponent {
   }
 
 
+
+  /**
+   * Open one operation on its own page.
+   *
+   * A row that can be opened is the whole point of the detail route: the list
+   * shows a name and a status, while everything that describes the run -- every
+   * target, what each returned, the prompt, the ids -- lives on that page.
+   * @param {CrawlOperation} operation The row that was clicked.
+   * @return {void}
+   */
+  protected openOperation(operation: CrawlOperation): void {
+    if (!operation.id)
+      return
+
+    const base = this.router.url.split('?')[0].replace(/\/+$/, '')
+    void this.router.navigateByUrl(`${base}/${operation.id}`)
+  }
+
+  /**
+   * Whether a rendered value is an address.
+   *
+   * A crawl row's value is a url; a TOOL row's is a label (`spider · https://…`),
+   * which is not linkable. Binding `null` rather than a bogus href is what lets
+   * one template serve both without a second copy of the markup.
+   * @param {string | string[]} value The row's first value.
+   * @return {boolean} True when it can be used as an href.
+   */
+  protected isHttpUrl(value: string | string[]): boolean {
+    return typeof value === 'string' && /^https?:\/\//i.test(value)
+  }
+
+  /**
+   * The row's link, or `null` when its first value is not an address.
+   *
+   * `getOperation` answers an ARRAY for a single-target row (its `isArray` test
+   * asks for MORE than one), so this unwraps first rather than testing the
+   * array. A tool row's value is a label, and `href` on one was a link to a
+   * string that is not an address.
+   * @param {CrawlOperation} operation The row.
+   * @return {string | null} A url to open, or nothing.
+   */
+  protected hrefFor(operation: CrawlOperation): string | null {
+    const first = this.getOperation(operation)
+    const value = Array.isArray(first) ? first[0] : first
+    return this.isHttpUrl(value) ? value as string : null
+  }
 
   getOperation(operation: CrawlOperation): string | string[] {
     return this.isArray(operation.urls) ? operation.urls[0] : operation.urls
@@ -756,7 +1166,6 @@ export class OperationsComponent {
       prompt: this.userprompt.value, // 
       scheduled_At,  // 30 * 60 * 1000
       status: this.operationStatus.value.code as CrawlOperationStatus,
-      color: crawlOperationStatusColor(this.operationStatus.value.code as CrawlOperationStatus),
       // metadata: this.crawlPack.value,
       // metadata: {
       //   crawler: {
@@ -793,22 +1202,16 @@ export class OperationsComponent {
       return
     }
 
-    // Run needs the pack: `multiCrawlEnqueue` builds the request body from
-    // `pack.config.value`, so without one there is nothing to enqueue. The
-    // template hides the picker when no packs exist, but the action dropdown
-    // stays usable, so this branch is reachable and has to refuse.
-    const pack = this.packsByCode.get(this.crawlPack.value?.code ?? '')
-
-    if (!pack) {
-      this.showSnackbar(this.translate.instant('OPERATIONS.INVALID_INPUT'), SnackBarType.error, '', 5000)
-      return
-    }
-
+    // No crawl pack is required to Run. The job body is the URL list plus
+    // `operation_data`; a pack's `crawler_config`/`browser_config` are Crawl4AI's
+    // shape and the job route is served by webrain, which reads neither. Demanding
+    // one blocked every fresh account -- packs can no longer be created -- and
+    // changed nothing about the request when one was supplied.
     // disable the form
     this.disableForm()
 
     // enqueue the Crawl operation on the paid job surface
-    this.enqueueCrawlOperation(operationData, pack)
+    this.enqueueCrawlOperation(operationData)
   }
 
   private enableForm() {

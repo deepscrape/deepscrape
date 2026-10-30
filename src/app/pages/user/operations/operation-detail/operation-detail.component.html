@@ -1,0 +1,454 @@
+<div class="mx-auto mt-8 flex w-full max-w-4xl flex-col gap-6">
+  <button
+    type="button"
+    (click)="back()"
+    class="inline-flex w-fit items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100/80 hover:text-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:text-gray-300 dark:hover:bg-gray6/60 dark:hover:text-cyan-300">
+    <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">arrow_back</mat-icon>
+    {{ 'OPERATION_DETAIL.BACK' | translate }}
+  </button>
+
+  @if (loading()) {
+    <p class="text-sm text-gray-600 dark:text-gray-300" role="status">
+      {{ 'OPERATION_DETAIL.LOADING' | translate }}
+    </p>
+  }
+
+  @if (error()) {
+    <p class="text-sm text-red-700 dark:text-red-300" role="alert">
+      {{ error() | translate }}
+    </p>
+  }
+
+  @if (operation(); as op) {
+    <!--
+      The run's own identity, and the one action that can still change it.
+      The status shown is the JOB's when there is a job: the stored row only
+      moves when a worker settles it, so it lags a finished run by design.
+    -->
+    <div
+      class="rounded-2xl border border-gray-200/70 bg-white/60 p-5 shadow-sm backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="flex min-w-0 flex-col gap-1">
+          <h1 class="break-words text-2xl font-medium text-gray-700 dark:text-gray-200">
+            {{ op.name }}
+          </h1>
+          <p class="text-sm text-gray-600 dark:text-gray-400">
+            {{ op.author.displayName || 'Anonymous :)' }}
+            · {{ op.created_At | date : 'MMMM dd, yyyy hh:mm a' }}
+          </p>
+        </div>
+        <div class="flex items-center gap-3">
+          @if (running()) {
+            <app-loading-dots></app-loading-dots>
+          }
+          <span
+            [ngClass]="statusBadgeClass(op.status)">
+            {{ op.status }}
+          </span>
+        </div>
+      </div>
+
+      <!--
+        Keep the result. A tool run's output lives in the job document and its
+        artefacts are filenames on the worker's disk, so this is the only way a
+        caller can hold the answer after the row is gone.
+      -->
+      @if (job()) {
+        <button
+          type="button"
+          [disabled]="savingResult() || savedKey() !== ''"
+          (click)="saveResult()"
+          [attr.title]="savedKey()"
+          class="mt-4 inline-flex items-center gap-2 rounded-full bg-cyan-600/[.12] px-4 py-2 text-sm font-medium text-cyan-800 transition-colors hover:bg-cyan-600/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-cyan-300">
+          <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">
+            {{ savedKey() ? 'check' : 'save' }}
+          </mat-icon>
+          {{ (savedKey() ? 'COMMON.OK' : 'COMMON.SAVE') | translate }}
+        </button>
+      }
+
+      @if (canRun() && running() && op.task_id) {
+        <button
+          type="button"
+          [disabled]="canceling()"
+          (click)="cancel()"
+          class="mt-4 inline-flex items-center gap-2 rounded-full bg-rose-500/[.12] px-4 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-300">
+          <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">stop_circle</mat-icon>
+          {{ 'OPERATION_DETAIL.CANCEL' | translate }}
+        </button>
+      }
+
+      <!--
+        A plan can be edited until it runs. The dispatcher reads
+        `scheduled_At` off this document, so moving the time is a write to the
+        row — no route, and nothing to re-queue.
+      -->
+      @if (canRun() && planned()) {
+        <!-- A saved plan runs on a click, not only on its clock. -->
+        <div class="mt-4">
+          <button
+            type="button"
+            [disabled]="starting()"
+            (click)="runNow()"
+            class="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700">
+            <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">play_arrow</mat-icon>
+            {{ 'OPERATIONS.ACT_RUN' | translate }}
+          </button>
+        </div>
+        <div class="mt-4 flex flex-wrap items-end gap-3">
+          <label class="flex flex-col gap-1">
+            <span class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              {{ 'OPERATION_DETAIL.SCHEDULED_AT' | translate }}
+            </span>
+            <input
+              type="datetime-local"
+              [value]="newTime()"
+              (input)="newTime.set($any($event.target).value)"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray6 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:border-gray-600 dark:bg-gray7 dark:text-white" />
+          </label>
+          <button
+            type="button"
+            [disabled]="savingTime()"
+            (click)="reschedule()"
+            class="inline-flex items-center gap-2 rounded-full bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700">
+            <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">schedule</mat-icon>
+            {{ 'OPERATION_DETAIL.RESCHEDULE' | translate }}
+          </button>
+          <button
+            type="button"
+            [disabled]="savingTime()"
+            (click)="stopPlanned()"
+            class="inline-flex items-center gap-2 rounded-full bg-rose-500/[.12] px-4 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-300">
+            <mat-icon class="!h-5 !w-5 text-xl leading-5" aria-hidden="true">cancel</mat-icon>
+            {{ 'OPERATION_DETAIL.STOP_PLANNED' | translate }}
+          </button>
+        </div>
+      }
+
+      @if (timeError()) {
+        <p class="mt-2 text-sm text-rose-700 dark:text-rose-300" role="alert">
+          {{ timeError() | translate }}
+        </p>
+      }
+    </div>
+
+    <!-- What the run was asked to do. -->
+    <section
+      class="rounded-2xl border border-gray-200/70 bg-white/60 p-5 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+      <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">
+        {{ 'OPERATION_DETAIL.REQUEST' | translate }}
+      </h2>
+      <dl class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ 'OPERATION_DETAIL.TYPE' | translate }}
+          </dt>
+          <dd class="text-sm text-gray-700 dark:text-gray-200">{{ op.type }}</dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ 'OPERATION_DETAIL.TOOL' | translate }}
+          </dt>
+          <dd class="text-sm text-gray-700 dark:text-gray-200">
+            {{ job()?.tool || '—' }}
+          </dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ 'OPERATION_DETAIL.MODEL' | translate }}
+          </dt>
+          <dd class="text-sm text-gray-700 dark:text-gray-200">
+            {{ op.modelAI?.name || '—' }}
+          </dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ 'OPERATION_DETAIL.TARGETS' | translate }}
+          </dt>
+          <dd class="text-sm text-gray-700 dark:text-gray-200">
+            {{ op.urls.length }}
+          </dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ 'OPERATION_DETAIL.UPDATED' | translate }}
+          </dt>
+          <dd class="text-sm text-gray-700 dark:text-gray-200">
+            @if (updatedAt(); as updated) {
+              {{ updated | date : 'MMMM dd, yyyy HH:mm:ss' }}
+            } @else {
+              —
+            }
+          </dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ 'OPERATION_DETAIL.DURATION' | translate }}
+          </dt>
+          <dd class="text-sm text-gray-700 dark:text-gray-200">
+            @if (durationSeconds(); as seconds) {
+              {{ seconds | number : '1.0-1' }} s
+            } @else {
+              —
+            }
+          </dd>
+        </div>
+        <!-- The modes this run used. Read off the units, because one operation
+             can hold several tool runs and the job record names only one. -->
+        @if (modes().length) {
+          <div class="flex flex-col">
+            <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              {{ 'OPERATION_DETAIL.TOOL' | translate }}
+            </dt>
+            <dd class="text-sm text-gray-700 dark:text-gray-200">
+              {{ modes().join(' · ') }}
+            </dd>
+          </div>
+        }
+        <!--
+          What the run cost. Stamped by the enqueue, not derived here: a price
+          recomputed from the table would disagree with the ledger the moment a
+          rate changed. Absent on a run nobody charged (a free tool), which is
+          why the whole cell is conditional rather than showing 0.
+        -->
+        @if (op.credits !== undefined) {
+          <div class="flex flex-col">
+            <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              {{ 'OPERATION_DETAIL.CREDITS' | translate }}
+            </dt>
+            <dd class="text-sm text-gray-700 dark:text-gray-200">
+              {{ op.credits }}
+              @if (op.billing_action) {
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                  · {{ op.billing_action }}
+                </span>
+              }
+            </dd>
+          </div>
+        }
+      </dl>
+
+      @if (op.prompt) {
+        <p class="mt-4 whitespace-pre-wrap break-words rounded-xl bg-slate-100/60 p-3 text-sm text-gray6 dark:bg-gray7/80 dark:text-gray-100">{{ op.prompt }}</p>
+      }
+
+      @if (op.error) {
+        <p class="mt-4 text-sm text-rose-700 dark:text-rose-300">{{ op.error }}</p>
+      }
+    </section>
+
+    <!--
+      Every target, with what it returned. This is the section the list could
+      never offer: one row per unit of work, read from the job rather than from
+      the tab that started it.
+    -->
+    <section
+      class="rounded-2xl border border-gray-200/70 bg-white/60 p-5 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">
+          {{ 'OPERATIONS.RESULTS_TITLE' | translate }}
+        </h2>
+        @if (job(); as result) {
+          <span class="text-xs text-gray-500 dark:text-gray-400">
+            {{ result.items.length }}/{{ result.total }}
+          </span>
+        }
+      </div>
+
+      @if (targets().length) {
+        <ul class="mt-3 flex flex-col gap-3">
+          @for (item of targets(); track item.url) {
+            <li
+              class="rounded-xl border border-gray-200/70 p-3 dark:border-gray-700/60">
+              <div class="flex flex-wrap items-center gap-2 text-sm">
+                <span
+                  [ngClass]="item.status === 'ok' ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'"
+                  class="font-semibold">{{ item.status }}</span>
+                <span class="break-all text-gray-700 dark:text-gray-200">{{ item.label }}</span>
+                @if (item.tool) {
+                  <span class="rounded-full bg-cyan-600/[.12] px-2 py-0.5 text-xs font-medium text-cyan-800 dark:text-cyan-300">
+                    {{ item.tool }}
+                  </span>
+                }
+                @if (item.ms) {
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ item.ms }} {{ 'TOOLS.META_MS' | translate }}
+                  </span>
+                }
+                @if (item.tokens?.est_tokens; as tokens) {
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ tokens }} {{ 'TOOLS.META_TOKENS' | translate }}
+                  </span>
+                }
+              </div>
+              @if (item.message) {
+                <p class="mt-1 text-sm text-rose-700 dark:text-rose-300">{{ item.message }}</p>
+              }
+              <details class="mt-2">
+                <summary
+                  class="cursor-pointer text-xs font-medium text-cyan-700 dark:text-cyan-300">
+                  {{ 'OPERATION_DETAIL.PAYLOAD' | translate }}
+                </summary>
+                <pre
+                  class="mt-2 max-h-80 overflow-auto rounded-lg bg-slate-100/60 p-3 text-xs leading-5 text-gray6 dark:bg-gray7/90 dark:text-gray-100">{{ item.data | json }}</pre>
+              </details>
+            </li>
+          }
+        </ul>
+      } @else if (op.urls.length) {
+        <!-- A saved or scheduled row has targets and no job behind them yet. -->
+        <ul class="mt-3 flex flex-col gap-1 text-sm">
+          @for (url of op.urls; track url) {
+            <li class="break-all text-gray-700 dark:text-gray-200">{{ url }}</li>
+          }
+        </ul>
+      } @else {
+        <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">
+          {{ 'OPERATIONS.RESULTS_EMPTY' | translate }}
+        </p>
+      }
+    </section>
+
+    <!-- What was stored from this run, when anything was. -->
+    <section
+      class="rounded-2xl border border-gray-200/70 bg-white/60 p-5 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+      <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">
+        {{ 'OPERATION_DETAIL.STORAGE' | translate }}
+      </h2>
+
+      @if (files().length) {
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ 'OPERATION_DETAIL.STORAGE_TOTAL' | translate : { size: (storageBytes() | number) + ' B', count: files().length } }}
+        </p>
+      }
+
+      @if (op.storage?.length) {
+        <ul class="mt-3 flex flex-col gap-2 text-sm">
+          @for (file of op.storage; track file.metadata.key_name) {
+            <li class="flex flex-wrap items-center gap-2">
+              <mat-icon class="!h-5 !w-5 text-xl leading-5 text-gray-500" aria-hidden="true">insert_drive_file</mat-icon>
+              <span class="break-all text-gray-700 dark:text-gray-200">{{ file.metadata.file_name }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ file.metadata.file_size | number }} B
+              </span>
+              @if (file.url) {
+                <a
+                  [href]="file.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-xs font-medium text-cyan-700 hover:underline dark:text-cyan-300">
+                  {{ 'OPERATION_DETAIL.OPEN_FILE' | translate }}
+                </a>
+              }
+              @if (file.error) {
+                <span class="text-xs text-rose-700 dark:text-rose-300">{{ file.error }}</span>
+              }
+            </li>
+          }
+        </ul>
+      } @else {
+        <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">
+          {{ 'OPERATION_DETAIL.STORAGE_EMPTY' | translate }}
+        </p>
+      }
+    </section>
+
+    <!--
+      What ran the work. Three kinds, because they cost differently: the shared
+      platform worker everyone queues behind, a pool worker held for the call,
+      and a machine the caller leased (already theirs, already billed by the
+      minute). Listed from the job's own rows, so a batch that spanned the pool
+      reports every worker it touched.
+    -->
+    <section
+      class="rounded-2xl border border-gray-200/70 bg-white/60 p-5 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+      <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">
+        {{ 'OPERATION_DETAIL.WORKER' | translate }}
+      </h2>
+
+      @if (workers().length) {
+        <ul class="mt-3 flex flex-col gap-2 text-sm">
+          @for (worker of workers(); track worker.kind + (worker.host || worker.machineId)) {
+            <li class="flex flex-wrap items-center gap-2">
+              <mat-icon class="!h-5 !w-5 text-xl leading-5 text-gray-500" aria-hidden="true">{{ workerIcon(worker.kind) }}</mat-icon>
+              <span class="font-medium text-gray-700 dark:text-gray-200">
+                {{ workerLabelKey(worker.kind) | translate }}
+              </span>
+              <span class="break-all font-code text-xs text-gray-600 dark:text-gray-400">
+                {{ worker.host || worker.machineId || '—' }}
+              </span>
+            </li>
+          }
+        </ul>
+      } @else {
+        <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">
+          {{ 'OPERATION_DETAIL.WORKER_NONE' | translate }}
+        </p>
+      }
+    </section>
+
+    <!--
+      Everything the run said, at the levels it can say it. Built from the
+      operation's own error, the job's summary and each target's failure or
+      challenge -- not from a log store, which this platform does not have yet.
+    -->
+    <section
+      class="rounded-2xl border border-gray-200/70 bg-white/60 p-5 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+      <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">
+        {{ 'OPERATION_DETAIL.MESSAGES' | translate }}
+      </h2>
+
+      @if (messages().length) {
+        <ul class="mt-3 flex flex-col gap-2 text-sm">
+          @for (message of messages(); track $index) {
+            <li class="flex flex-wrap items-baseline gap-2">
+              <span
+                [ngClass]="message.level === 'error' ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : message.level === 'warning' ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200' : 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300'"
+                class="rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide">
+                {{ levelKey(message.level) | translate }}
+              </span>
+              @if (message.label) {
+                <span class="break-all font-code text-xs text-gray-500 dark:text-gray-400">{{ message.label }}</span>
+              }
+              <span class="break-words text-gray-700 dark:text-gray-200">{{ message.text }}</span>
+            </li>
+          }
+        </ul>
+      } @else {
+        <p class="mt-3 text-sm text-gray-600 dark:text-gray-300">
+          {{ 'OPERATION_DETAIL.MESSAGES_EMPTY' | translate }}
+        </p>
+      }
+    </section>
+
+    <!--
+      The identifiers the platform actually keeps for a run, and the one it does
+      not. Stated rather than omitted: an empty "machines" section would read as
+      a loading bug, and a populated one would be a fiction.
+    -->
+    <section
+      class="rounded-2xl border border-gray-200/70 bg-white/60 p-5 backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+      <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200">
+        {{ 'OPERATION_DETAIL.IDS' | translate }}
+      </h2>
+      <dl class="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Operation</dt>
+          <dd class="break-all font-code text-gray-700 dark:text-gray-200">{{ op.id }}</dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Job</dt>
+          <dd class="break-all font-code text-gray-700 dark:text-gray-200">{{ op.task_id || '—' }}</dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Pack</dt>
+          <dd class="break-all font-code text-gray-700 dark:text-gray-200">{{ op.metadataId || '—' }}</dd>
+        </div>
+        <div class="flex flex-col">
+          <dt class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Started from</dt>
+          <dd class="break-all font-code text-gray-700 dark:text-gray-200">{{ op.urlPath || '—' }}</dd>
+        </div>
+      </dl>
+    </section>
+  }
+</div>

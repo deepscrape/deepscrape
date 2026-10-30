@@ -1,0 +1,121 @@
+<!-- The full alert list. Same rows as the header bell, with room and paging. -->
+<section class="mx-auto flex w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
+  <header class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold text-gray7 dark:text-white">Alerts</h1>
+      <p class="mt-1 text-sm text-gray5 dark:text-gray3">
+        Crawl results, billing notices and security events, newest first.
+      </p>
+    </div>
+
+    <div class="flex items-center gap-2">
+      @if (center.unread(); as count) {
+        <button
+          type="button"
+          class="rounded-full bg-gray7 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray6 dark:bg-white dark:text-gray7 dark:hover:bg-gray2"
+          (click)="center.markAllRead()">
+          Mark all read ({{ count }})
+        </button>
+      }
+      @if (center.items().length) {
+        <button
+          type="button"
+          class="rounded-full border border-gray2/70 px-3 py-1.5 text-xs font-medium text-gray5 transition-colors hover:bg-gray1 dark:border-white/10 dark:text-gray3 dark:hover:bg-white/10"
+          (click)="center.clear()">
+          Clear
+        </button>
+      }
+    </div>
+  </header>
+
+  <!-- Same pill pair as the bell, so the two surfaces read as one feature. -->
+  <div role="tablist" class="flex gap-1.5">
+    @for (tab of tabs; track tab) {
+      <button
+        type="button"
+        role="tab"
+        [attr.aria-selected]="filter() === tab"
+        class="rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors duration-200"
+        [class]="filter() === tab
+          ? 'bg-gray7 text-white dark:bg-white dark:text-gray7'
+          : 'bg-gray2/50 text-gray5 hover:bg-gray2/80 dark:bg-white/10 dark:text-gray3 dark:hover:bg-white/20'"
+        (click)="setFilter(tab)">
+        {{ tab }}
+      </button>
+    }
+  </div>
+
+  @if (!filtered().length) {
+    <p class="rounded-xl border border-gray2/70 px-4 py-14 text-center text-sm text-gray4 dark:border-white/10 dark:text-gray3">
+      @if (filter() === 'unread') {
+        You're all caught up.
+      } @else {
+        Nothing yet. Crawl results and security notices land here.
+      }
+    </p>
+  } @else {
+    <!-- `scrollbar` is the repository's global scrollbar mixin, not a new utility. -->
+    <ul class="scrollbar max-h-[60vh] divide-y divide-gray2/60 overflow-y-auto rounded-xl border border-gray2/70 dark:divide-white/10 dark:border-white/10">
+      @for (item of visible(); track item.id) {
+        <li>
+          <a
+            [routerLink]="item.link || []"
+            class="flex gap-3 px-4 py-3 transition-colors duration-150 hover:bg-gray1 dark:hover:bg-white/5"
+            [class]="item.read ? '' : 'bg-rose-50/60 dark:bg-rose-500/[0.07]'">
+            <span
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+              [class]="metaFor(item.kind).circle">
+              <mat-icon class="!h-[18px] !w-[18px] !text-[18px] leading-none" [class]="metaFor(item.kind).ring">
+                {{ metaFor(item.kind).icon }}
+              </mat-icon>
+            </span>
+
+            <span class="min-w-0 flex-1">
+              <span class="flex items-start gap-2">
+                <span
+                  class="min-w-0 flex-1 text-[13px] leading-5 text-gray7 dark:text-gray1"
+                  [class]="item.read ? 'font-normal' : 'font-semibold'">
+                  {{ item.title }}
+                </span>
+                @if (!item.read) {
+                  <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-rose-600" aria-label="Unread"></span>
+                }
+              </span>
+              @if (item.body) {
+                <span class="mt-0.5 block text-xs leading-5 text-gray4 dark:text-gray3">{{ item.body }}</span>
+              }
+              <span class="mt-1 block text-[11px] text-gray4/80 dark:text-gray3/70">{{ center.ago(item.at) }}</span>
+            </span>
+          </a>
+        </li>
+      }
+    </ul>
+
+    <footer class="flex items-center justify-between gap-3">
+      <p class="text-xs text-gray5 dark:text-gray3">
+        {{ rangeLabel() }} of {{ filtered().length }}
+      </p>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          [disabled]="currentPage() === 0"
+          class="inline-flex items-center gap-1 rounded-full border border-gray2/70 px-3 py-1.5 text-xs font-medium text-gray5 transition-colors hover:bg-gray1 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:text-gray3 dark:hover:bg-white/10"
+          (click)="go(-1)">
+          <mat-icon class="!h-4 !w-4 !text-base leading-4">chevron_left</mat-icon>
+          Previous
+        </button>
+        <span class="text-xs text-gray5 dark:text-gray3">
+          Page {{ currentPage() + 1 }} / {{ pageCount() }}
+        </span>
+        <button
+          type="button"
+          [disabled]="currentPage() >= pageCount() - 1"
+          class="inline-flex items-center gap-1 rounded-full border border-gray2/70 px-3 py-1.5 text-xs font-medium text-gray5 transition-colors hover:bg-gray1 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:text-gray3 dark:hover:bg-white/10"
+          (click)="go(1)">
+          Next
+          <mat-icon class="!h-4 !w-4 !text-base leading-4">chevron_right</mat-icon>
+        </button>
+      </div>
+    </footer>
+  }
+</section>

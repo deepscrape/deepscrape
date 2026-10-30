@@ -1,0 +1,95 @@
+<section class="space-y-6">
+  <a
+    [routerLink]="['../']"
+    class="inline-flex items-center gap-1 text-sm text-gray-600 underline-offset-2 hover:underline dark:text-gray-300">
+    {{ 'MACHINE_HISTORY.BACK' | translate }}
+  </a>
+
+  <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      {{ 'MACHINE_HISTORY.TITLE' | translate }}
+    </h2>
+    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+      {{ 'MACHINE_HISTORY.SUBTITLE' | translate }}
+    </p>
+
+    @if (!busy() && !failed() && rows().length > 0) {
+      <div class="mt-4">
+        <label class="block text-sm text-gray-600 dark:text-gray-300" for="machine-history-filter">
+          {{ 'MACHINE_HISTORY.FILTER_LABEL' | translate }}
+        </label>
+        <input
+          id="machine-history-filter"
+          type="search"
+          class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-primary focus:outline-none dark:border-gray5 dark:bg-gray7 dark:text-gray-100"
+          [placeholder]="'MACHINE_HISTORY.FILTER_PLACEHOLDER' | translate"
+          [value]="query()"
+          (input)="onFilter($event)" />
+      </div>
+    }
+
+    @if (busy()) {
+      <div class="mt-4 space-y-3" aria-busy="true">
+        <div class="loading-surface loading-line-long"></div>
+        <div class="loading-surface loading-line-mid"></div>
+        <div class="loading-surface loading-line-short"></div>
+      </div>
+    } @else if (failed()) {
+      <p class="mt-4 text-sm text-red-600 dark:text-red-400">
+        {{ 'MACHINE_HISTORY.ERROR' | translate }}
+      </p>
+    } @else if (rows().length === 0) {
+      <p class="mt-4 text-sm text-gray-500 dark:text-gray-400">
+        {{ 'MACHINE_HISTORY.EMPTY' | translate }}
+      </p>
+    } @else if (filtered().length === 0) {
+      <p class="mt-4 text-sm text-gray-500 dark:text-gray-400">
+        {{ 'MACHINE_HISTORY.NO_MATCH' | translate }}
+      </p>
+    } @else {
+      <div class="mt-4 overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-gray3/35 dark:border-gray5/40">
+            <tr class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <th scope="col" class="py-2 pr-4 font-semibold">
+                {{ 'MACHINE_HISTORY.COL_MACHINE' | translate }}
+              </th>
+              <th scope="col" class="py-2 pr-4 font-semibold">
+                {{ 'MACHINE_HISTORY.COL_REGION' | translate }}
+              </th>
+              <th scope="col" class="py-2 pr-4 font-semibold">
+                {{ 'MACHINE_HISTORY.COL_CREATED' | translate }}
+              </th>
+              <th scope="col" class="py-2 font-semibold">
+                {{ 'MACHINE_HISTORY.COL_DESTROYED' | translate }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of filtered(); track row.id) {
+              <tr class="border-b border-gray3/35 last:border-b-0 dark:border-gray5/40">
+                <td class="py-2 pr-4">
+                  <span class="font-mono text-gray-700 dark:text-gray-200" [title]="row.id">
+                    {{ shortId(row.id) }}
+                  </span>
+                  @if (row.name) {
+                    <span class="block text-xs text-gray-500 dark:text-gray-400">
+                      {{ row.name }}
+                    </span>
+                  }
+                </td>
+                <td class="py-2 pr-4 text-gray-600 dark:text-gray-300">{{ row.region || '-' }}</td>
+                <td class="py-2 pr-4 text-gray-600 dark:text-gray-300">
+                  {{ row.createdAt || '-' }}
+                </td>
+                <td class="py-2 text-gray-600 dark:text-gray-300">
+                  {{ row.updatedAt || '-' }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+</section>

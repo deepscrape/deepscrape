@@ -10,6 +10,7 @@ import {
   signal,
 } from '@angular/core'
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
+import { RouterLink } from '@angular/router'
 import { TranslateModule } from '@ngx-translate/core'
 import { MachineFleetService } from '../../core/services/machine-fleet.service'
 import { FleetMachine } from '../../core/types/machine-fleet.interface'
@@ -79,7 +80,7 @@ const parseWhen = (raw: string): Date | null => {
 @Component({
   selector: 'app-admin-machines',
   standalone: true,
-  imports: [DatePipe, TranslateModule, ResultEnvelopeComponent],
+  imports: [DatePipe, RouterLink, TranslateModule, ResultEnvelopeComponent],
   templateUrl: './admin-machines.component.html',
   styleUrl: './admin-machines.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

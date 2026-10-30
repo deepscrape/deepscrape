@@ -1,0 +1,75 @@
+<section class="space-y-6">
+  <a
+    [routerLink]="['..']"
+    class="inline-flex items-center gap-1 text-sm text-gray-600 underline-offset-2 hover:underline dark:text-gray-300">
+    <mat-icon class="!size-4 !text-base">arrow_back</mat-icon>
+    {{ 'MACHINE_DETAIL.BACK' | translate }}
+  </a>
+
+  @if (loading()) {
+    <div class="flex min-h-[200px] items-center justify-center">
+      <mat-spinner [diameter]="40" class="stroke-sky-700 dark:stroke-sky-400"></mat-spinner>
+    </div>
+  } @else if (machine(); as row) {
+    <header class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div class="min-w-0">
+        <h1 class="truncate text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {{ row.name || row.id }}
+        </h1>
+        <p class="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">{{ row.id }}</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <span
+          class="rounded-full bg-gray-500/10 px-3 py-1 text-xs text-gray-600 dark:text-gray-300">
+          {{ row.state }}
+        </span>
+        <span
+          class="rounded-full bg-gray-500/10 px-3 py-1 text-xs text-gray-600 dark:text-gray-300">
+          {{ row.region }}
+        </span>
+      </div>
+    </header>
+
+    <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+      <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+        {{ 'MACHINE_DETAIL.OVERVIEW_TITLE' | translate }}
+      </h2>
+      <dl class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div>
+          <dt class="text-sm text-gray-500 dark:text-gray-400">
+            {{ 'MACHINE_DETAIL.REGION' | translate }}
+          </dt>
+          <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">{{ row.region }}</dd>
+        </div>
+        <div>
+          <dt class="text-sm text-gray-500 dark:text-gray-400">
+            {{ 'MACHINE_DETAIL.CREATED' | translate }}
+          </dt>
+          <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ row.createdAt ? (row.createdAt | date : 'medium') : '—' }}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-sm text-gray-500 dark:text-gray-400">
+            {{ 'MACHINE_DETAIL.UPDATED' | translate }}
+          </dt>
+          <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ row.updatedAt ? (row.updatedAt | date : 'medium') : '—' }}
+          </dd>
+        </div>
+        <div class="sm:col-span-2 lg:col-span-3">
+          <dt class="text-sm text-gray-500 dark:text-gray-400">Owner</dt>
+          <dd class="mt-1 break-all font-mono text-xs text-gray-700 dark:text-gray-200">
+            {{ row.uid }}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  } @else {
+    <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+      <p class="text-sm text-gray-600 dark:text-gray-300">
+        {{ 'MACHINE_DETAIL.LOAD_FAILED_HINT' | translate }}
+      </p>
+    </div>
+  }
+</section>

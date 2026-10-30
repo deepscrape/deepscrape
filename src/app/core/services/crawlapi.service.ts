@@ -5,7 +5,7 @@ import { catchError, map, tap, filter, switchMap, scan, mergeMap, finalize } fro
 import { from, Observable, throwError } from 'rxjs'
 import { AuthService } from './auth.service'
 import { handleError } from '../functions'
-import { CrawlOperation, CrawlPack, CrawlStatus, CrawlStreamBatch, CrawlTask, JinaOptions } from '../types'
+import { CrawlOperation, CrawlPack, CrawlStatus, CrawlStreamBatch, CrawlTask, JinaOptions, JobResult } from '../types'
 import { API_BASE_URL } from '../variables'
 
 @Injectable({
@@ -240,7 +240,7 @@ export class CrawlAPIService {
     )
   }
   
-  multiCrawlEnqueue(urls: string[], operationData: CrawlOperation, crawlPack: CrawlPack ): Observable<CrawlTask> {
+  multiCrawlEnqueue(urls: string[], operationData: CrawlOperation): Observable<CrawlTask> {
 
     const crawl4AiReaderEndpoint: string = this.jobEnqueuePath
 
@@ -254,7 +254,11 @@ export class CrawlAPIService {
       "urls": urls,
       "operation_data": operationData,
       // "priority": 10,
-      ...crawlPack.config.value,
+      // A crawl PACK used to be spread in here. Its `crawler_config` and
+      // `browser_config` are Crawl4AI's shape and the job route is served by
+      // webrain, which reads neither -- so every setting the operator chose was
+      // transmitted and dropped. The pack is not read anywhere on this path now,
+      // and the two callers no longer ask for one.
     }
     // console.log(crawl4AiReaderEndpoint, body)
     return this.http.post(crawl4AiReaderEndpoint, body, { headers/* , transferCache: true */ })
@@ -274,6 +278,62 @@ export class CrawlAPIService {
         // delivers the HttpErrorResponse the callers inspect.
         return throwError(() => error)
       }))
+  }
+
+  /**
+   * Queue ONE playground tool call: `POST /api/job/tool`.
+   *
+   * `tool` is the panel's tab id (`search`, `spider`, ...) and `body` is the
+   * same body the tool's own route takes. The server maps it with the same
+   * argument mapper, so a queued call and a direct call cannot disagree.
+   *
+   * Why queue at all: the direct call lives exactly as long as this tab. A run
+   * started here used to be lost the moment the mode changed, and a long one
+   * (`spider`, `batch`, `watch`) could not be left at all.
+   * @param {string} tool The tool id from the panel's own descriptor table.
+   * @param {Record<string, unknown>} body The tool's HTTP arguments.
+   * @param {CrawlOperation} operationData The row `/operations` should list.
+   * @return {Observable<CrawlTask>} The queued job, carrying its task id.
+   */
+  enqueueTool(
+    tool: string,
+    body: Record<string, unknown>,
+    operationData: CrawlOperation,
+  ): Observable<CrawlTask> {
+    const endpoint: string = this.crawl4AiEndpoint.replace('/crawl', '/job') + '/tool'
+
+    const headers = new HttpHeaders({
+      'Authorization': `Bearer ${this.authService.token}`,
+      'Accept': 'application/json',
+    })
+
+    return this.http.post(endpoint, { tool, body, operation_data: operationData }, { headers })
+      .pipe(
+        map((job: any) => ({ id: job.task_id, operationId: job.operation_id, ...job } as CrawlTask)),
+        catchError(error => {
+          console.error('Error queuing a tool job:', error)
+          return throwError(() => error)
+        }))
+  }
+
+  /**
+   * `GET /api/job/:taskId/result` — the whole job as JSON.
+   *
+   * The SSE routes answer a client that is watching. `/operations` is not: it
+   * re-opens a job that finished while the page was closed, which is precisely
+   * when no stream exists to listen to.
+   * @param {string} taskId The job.
+   * @return {Observable<JobResult>} Its status and its rows.
+   */
+  getJobResult(taskId: string): Observable<JobResult> {
+    const endpoint: string = this.crawl4AiEndpoint.replace('/crawl', '/job') + `/${taskId}/result`
+
+    const headers = new HttpHeaders({
+      'Authorization': `Bearer ${this.authService.token}`,
+      'Accept': 'application/json',
+    })
+
+    return this.http.get<JobResult>(endpoint, { headers })
   }
 
   streamTaskResults(taskId: string): Observable<any> {

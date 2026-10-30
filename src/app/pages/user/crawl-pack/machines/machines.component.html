@@ -12,6 +12,16 @@
     {{ 'MACHINES.SUBTITLE' | translate }}
   </p>
 
+  <!-- The archive needs a door: a page reachable only by typing its URL is the
+       mistake the admin detail page already made once. -->
+  <p class="text-center mb-4">
+    <a
+      [routerLink]="['history']"
+      class="inline-flex items-center gap-1 text-sm text-gray-600 underline-offset-2 hover:underline dark:text-gray-300">
+      {{ 'MACHINES.HISTORY_LINK' | translate }}
+    </a>
+  </p>
+
   <div class="w-full text-center inline-flex items-center justify-center">
     <mat-icon
       aria-label="docker-original"
@@ -185,21 +195,18 @@
   </h3>
 
   <!--
-    Browser sessions, on the same surface as the containers.
-
-    The two are different things that both lease a Fly machine, so a customer who
-    wants "a machine" should not have to know which menu holds which. The panel
-    brings its own list, its own create form and its own actions, so this is a
-    composition rather than a reimplementation: the session routes, the idle
-    deadline and the meter are all exercised by exactly one component.
-
-    It sits ABOVE the container grid because a session is the shorter-lived thing
-    and the one a customer comes here to start.
+    No browser-session panel here. It was composed onto this page when the machine
+    console and the browser console were the same tab; they are not any more. A
+    session is created, observed and released on `/browser`, and a machine's row
+    here links to its own detail page. Rendering the panel twice is what made the
+    two pages look like one feature implemented twice.
   -->
-  <app-browser-session-panel />
 
   <!-- Machines Grid -->
-  @defer (on immediate; when machines$ | async) {
+  <!-- `when` alone: with `on immediate` as well, Angular reports NG8021 because the
+       immediate trigger already fires and makes the observable gate redundant. The
+       data gate is the one we want — the grid renders when the list arrives. -->
+  @defer (when machines$ | async) {
   <div class="flex flex-col flex-wrap justify-center bg-transparent gap-8">
     <div
       class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-x-8 gap-y-10">
@@ -213,6 +220,16 @@
             (taskPressed)="runTask($event)"
             (destroyPressed)="destroyMachine($event)"
           (stopPressed)="stopMachine($event)"></app-container-box>
+          <!-- A separate link rather than a wrapper around the card: the card holds
+               buttons, and an anchor around interactive controls is both invalid
+               markup and unusable by keyboard. Relative, so it resolves under
+               `/{orgId}/machines` as well as bare `/machines`. -->
+          <a
+            [routerLink]="[machine.id]"
+            class="mt-2 inline-flex items-center gap-1 text-sm text-sky-700 underline-offset-2 hover:underline dark:text-sky-400">
+            <mat-icon class="!size-4 !text-base">insights</mat-icon>
+            {{ 'MACHINES.DETAILS' | translate }}
+          </a>
         </div>
 
         } @empty {

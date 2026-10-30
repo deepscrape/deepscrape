@@ -1,6 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { provideRouter } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
 import { Observable, Subject } from 'rxjs';
 import { MachineFleetService } from '../../core/services/machine-fleet.service';
@@ -60,6 +61,8 @@ describe('AdminMachinesComponent', () => {
         // without this EVERY render throws NG05105. Same reason the browser
         // session panel spec needs it.
         provideNoopAnimations(),
+        // Each machine id is a link to its detail page, so the row needs a router.
+        provideRouter([]),
       ],
     }).compileComponents();
 

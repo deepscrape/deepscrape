@@ -6,7 +6,7 @@ import { API_ARACHNEFLY_URL } from '../variables';
 import { catchError } from 'rxjs/internal/operators/catchError';
 import { tap } from 'rxjs/internal/operators/tap';
 import { DockerImageInfo, FlyMachine, MachineResponse } from '../types';
-import { MineMachinesResponse } from '../types/machine-fleet.interface';
+import { MachineHistoryResponse, MineMachinesResponse } from '../types/machine-fleet.interface';
 import { Observable } from 'rxjs/internal/Observable';
 import { handleError } from '../functions';
 import { map } from 'rxjs/internal/operators/map';
@@ -50,6 +50,27 @@ export class DeploymentService {
         throw error
       })
     );
+  }
+
+  /**
+   * The caller's DESTROYED machines, newest first.
+   *
+   * `machines_history` is a separate top-level collection that arachnefly writes
+   * at destruction time; nothing read it until this call, so a machine simply
+   * vanished from the console. Same gate as `listMine` (`paid` + `machine.read`),
+   * and the server scopes it to the caller's uid from the record's `id` field.
+   *
+   * Errors are rethrown for the same reason as `listMine`: 402 and 403 mean
+   * different things on this surface and a blanket catch would flatten them.
+   * @return {Observable<MachineHistoryResponse>} The caller's destroyed machines.
+   */
+  history(): Observable<MachineHistoryResponse> {
+    const url = `${API_ARACHNEFLY_URL}/history`
+    const headers = {
+      'Authorization': `Bearer ${this.authService.token}`,
+    }
+
+    return this.http.get<MachineHistoryResponse>(url, { headers });
   }
 
 

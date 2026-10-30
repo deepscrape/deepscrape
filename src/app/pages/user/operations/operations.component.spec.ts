@@ -1,12 +1,12 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { NEVER, of } from 'rxjs';
 
 import { OperationsComponent } from './operations.component';
 import { getTestProviders } from 'src/app/testing';
 import { CrawlAPIService, CrawlStoreService, FirestoreService, SnackbarService } from 'src/app/core/services';
 import { CrawlOperationStatus } from 'src/app/core/enum';
-import { CrawlOperation, CrawlPack, CrawlTask } from 'src/app/core/types';
+import { CrawlOperation, CrawlPack, CrawlTask, JobResult } from 'src/app/core/types';
 
 describe('OperationsComponent', () => {
   let component: OperationsComponent;
@@ -51,6 +51,133 @@ describe('OperationsComponent', () => {
 
   it('should initialize model AI control with claude provider code', () => {
     expect(component.modelAI.value.code).toBe('claude');
+  });
+
+  /**
+   * The row leads to `/operations/:id`. The id is PUSHED onto the current url
+   * rather than built as an absolute path, because `appPageRoutes` is mounted in
+   * both the bare tree and the `/{orgId}` tree -- an absolute path would drop
+   * the org prefix for every org-scoped user.
+   */
+  describe('opening a row', () => {
+    it('pushes the id onto the current url, keeping any org prefix', () => {
+      const router = TestBed.inject(Router);
+      Object.defineProperty(router, 'url', {
+        value: '/org-1/operations',
+        configurable: true,
+      });
+      const navigate = spyOn(router, 'navigateByUrl').and.resolveTo(true);
+
+      (component as unknown as { openOperation(op: { id: string }): void })
+        .openOperation({ id: 'op-9' });
+
+      expect(navigate).toHaveBeenCalledWith('/org-1/operations/op-9');
+    });
+
+    it('does nothing for a row that has no id', () => {
+      const router = TestBed.inject(Router);
+      const navigate = spyOn(router, 'navigateByUrl').and.resolveTo(true);
+
+      (component as unknown as { openOperation(op: { id?: string }): void })
+        .openOperation({});
+
+      expect(navigate).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The list is an ACCORDION: one box open at a time. Two facts have to hold --
+   * opening a second row closes the first, and a row's job is read once and
+   * kept, because dropping it on collapse would empty the panel in the same
+   * pass that starts the animation.
+   */
+  describe('the inline peek', () => {
+    const job = {
+      task_id: 't1',
+      status: CrawlOperationStatus.COMPLETED,
+      message: '',
+      total: 1,
+      items: [
+        { label: 'a', url: 'a', status: 'ok', message: '', challenge: null },
+      ],
+    } as JobResult;
+
+    type Peek = {
+      toggleOperation(op: { id: string, task_id?: string }): void
+      isOpen(id: string): boolean
+      resultFor(id: string): JobResult | null | undefined
+    };
+
+    const peek = () => component as unknown as Peek;
+
+    it('opens one row and closes the previous one', () => {
+      spyOn(TestBed.inject(CrawlAPIService), 'getJobResult').and.returnValue(of(job));
+
+      peek().toggleOperation({ id: 'a', task_id: 't1' });
+      expect(peek().isOpen('a')).toBeTrue();
+
+      peek().toggleOperation({ id: 'b', task_id: 't2' });
+
+      expect(peek().isOpen('b')).toBeTrue();
+      expect(peek().isOpen('a')).toBeFalse();
+    });
+
+    it('closes the open row when it is clicked again', () => {
+      spyOn(TestBed.inject(CrawlAPIService), 'getJobResult').and.returnValue(of(job));
+
+      peek().toggleOperation({ id: 'a', task_id: 't1' });
+      peek().toggleOperation({ id: 'a', task_id: 't1' });
+
+      expect(peek().isOpen('a')).toBeFalse();
+    });
+
+    it('reads a row once and keeps the answer for the next open', () => {
+      const crawl = TestBed.inject(CrawlAPIService);
+      const read = spyOn(crawl, 'getJobResult').and.returnValue(of(job));
+
+      peek().toggleOperation({ id: 'a', task_id: 't1' });
+      peek().toggleOperation({ id: 'a', task_id: 't1' });
+      peek().toggleOperation({ id: 'a', task_id: 't1' });
+
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(peek().resultFor('a')).toBe(job);
+    });
+
+    it('shows nothing to read for a row with no job', () => {
+      const crawl = TestBed.inject(CrawlAPIService);
+      const read = spyOn(crawl, 'getJobResult').and.returnValue(of(job));
+
+      peek().toggleOperation({ id: 'a' });
+
+      expect(peek().isOpen('a')).toBeTrue();
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it('marks the peek canceled once the server answers', () => {
+      // The peek keeps its rows across a collapse, so a cancel that only
+      // refreshed the list would leave a "Cancel this run" button on a run that
+      // had already stopped.
+      const crawl = TestBed.inject(CrawlAPIService);
+      spyOn(crawl, 'getJobResult').and.returnValue(of(job));
+      const cancel = spyOn(crawl, 'cancelTask').and.returnValue(of({}));
+
+      peek().toggleOperation({ id: 'a', task_id: 't1' });
+      (component as unknown as { cancelOperation(op: { id: string, task_id?: string }): void })
+        .cancelOperation({ id: 'a', task_id: 't1' });
+
+      expect(cancel).toHaveBeenCalledWith('t1');
+      expect(peek().resultFor('a')?.status).toBe(CrawlOperationStatus.CANCELED);
+    });
+
+    it('does not cancel a row that has no job', () => {
+      const crawl = TestBed.inject(CrawlAPIService);
+      const cancel = spyOn(crawl, 'cancelTask').and.returnValue(of({}));
+
+      (component as unknown as { cancelOperation(op: { id: string }): void })
+        .cancelOperation({ id: 'a' });
+
+      expect(cancel).not.toHaveBeenCalled();
+    });
   });
 
   /**
@@ -127,15 +254,20 @@ describe('OperationsComponent', () => {
       expect(stored.status).toBe(CrawlOperationStatus.STARTED);
     });
 
-    it('refuses Run without a pack and enqueues nothing', () => {
+    it('enqueues Run with no pack selected, because the body needs none', () => {
       const built = build([pack]);
       const enqueue = spyOn(TestBed.inject(CrawlAPIService), 'multiCrawlEnqueue').and.returnValue(of(task));
-      const store = spyOn(TestBed.inject(CrawlStoreService), 'storeCrawlOperation').and.returnValue(NEVER);
+      spyOn(TestBed.inject(CrawlStoreService), 'storeCrawlOperation').and.returnValue(NEVER);
 
+      // Deliberately no `crawlPack.setValue(...)`: a fresh account has no packs,
+      // and the crawl-pack editor is retired so none can be created. Demanding one
+      // made Run a silent no-op that returned before any message was shown.
       submit(built, CrawlOperationStatus.STARTED);
 
-      expect(enqueue).not.toHaveBeenCalled();
-      expect(store).not.toHaveBeenCalled();
+      expect(enqueue).toHaveBeenCalled();
+      // Two arguments -- urls and operation_data. A pack would be a third, and its
+      // config is a shape webrain never reads.
+      expect(enqueue.calls.mostRecent().args.length).toBe(2);
     });
 
     it('records without enqueuing when the action is Save', () => {

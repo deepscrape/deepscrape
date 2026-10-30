@@ -4,6 +4,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
+import { RouterLink } from '@angular/router';
 import { from, map, tap } from 'rxjs';
 import { Observable } from 'rxjs/internal/Observable';
 import { of } from 'rxjs/internal/observable/of';
@@ -12,7 +13,6 @@ import { catchError } from 'rxjs/internal/operators/catchError';
 import { concatMap } from 'rxjs/internal/operators/concatMap';
 import { Subscription } from 'rxjs/internal/Subscription';
 import { AppDockerStepperComponent, ContainerBoxComponent, RadioButtonComponent, SlideInModalComponent, SnackBarType } from 'src/app/core/components';
-import { BrowserSessionPanelComponent } from 'src/app/core/components/browser-session/browser-session-panel.component';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { RippleDirective, TooltipDirective } from 'src/app/core/directives';
 import { MACHNINE_STATE } from 'src/app/core/enum';
@@ -24,7 +24,7 @@ import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.compon
 
 @Component({
     selector: 'app-machines',
-    imports: [ContainerBoxComponent, NgClass, ReactiveFormsModule, MatIcon, SlideInModalComponent, RippleDirective, TooltipDirective, AppDockerStepperComponent, MatProgressSpinner, AsyncPipe, FormControlPipe, TranslateModule, BrowserSessionPanelComponent],
+    imports: [ContainerBoxComponent, NgClass, ReactiveFormsModule, MatIcon, RouterLink, SlideInModalComponent, RippleDirective, TooltipDirective, AppDockerStepperComponent, MatProgressSpinner, AsyncPipe, FormControlPipe, TranslateModule],
     templateUrl: './machines.component.html',
     styleUrl: './machines.component.scss',
     // OnPush, per the repository rule. The tab previously ran on the default strategy

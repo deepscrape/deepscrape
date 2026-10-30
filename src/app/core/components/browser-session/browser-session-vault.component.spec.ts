@@ -195,38 +195,64 @@ describe('BrowserSessionVaultComponent', () => {
     expect(state().durable()).toEqual([]);
   });
 
-  it('keeps the worker jar under the account, as the array setcookies needs', () => {
-    // The REAL reply shape, which is the point of this test. `webrain_cookies`
-    // answers `{status, count, cookies: [...]}` while `webrain_setcookies` calls
-    // `as_array()` on `cookies` and refuses anything else -- so a component that
-    // forwarded the reply verbatim would store a jar it could never restore, and
-    // every symptom would appear on the RESTORE path.
-    const jar = [{ name: 'sid', value: 'v' }];
+  it('keeps the whole profile the worker answered inline', () => {
+    // `save_state inline` answers cookies AND localStorage, which is the half a
+    // jar-only entry never had. The STATE is what gets stored, so the account's
+    // copy is what `restore_state` will be handed.
+    const saved = {
+      cookies: [{ name: 'sid', value: 'v' }],
+      localStorage: { token: 't' },
+    };
     fill({ service: 'github', profile: 'work' });
 
     state().keep();
-    // Reading the browser and writing the account are one flow, and the write
-    // cannot happen before the read has an answer.
     expect(durableBodies.length).toBe(1); // only the constructor's `list`
-    worker['cookies'].next({
+    worker['save_state'].next({
       status: 'ok',
-      data: { status: 'ok', count: 1, cookies: jar },
+      data: { status: 'ok', cookies: 1, localStorage_keys: 1, payload: saved },
     });
 
     expect(bodyFor(durableBodies, 'store')).toEqual({
       op: 'store',
       service: 'github',
       profile: 'work',
-      payload: jar,
+      payload: saved,
     });
+  });
+
+  it('keeps the jar when the worker answers no payload', () => {
+    // A worker that does not know `inline` still answers counts, so the jar is
+    // the fallback rather than a second round trip. The array is what
+    // `setcookies` will be handed.
+    const jar = [{ name: 'sid', value: 'v' }];
+    fill({ service: 'github', profile: 'work' });
+
+    state().keep();
+    worker['save_state'].next({
+      status: 'ok',
+      data: { status: 'ok', count: 1, cookies: jar },
+    });
+
+    expect(bodyFor(durableBodies, 'store')['payload']).toBe(jar);
+  });
+
+  it('asks the worker for the payload instead of a file', () => {
+    // `inline` is what keeps a credential off a worker the caller does not own,
+    // so it is part of the request rather than a worker-side default.
+    fill({ service: 'github', profile: 'work' });
+    state().keep();
+
+    const body = bodyFor(workerBodies, 'save_state');
+    expect(body['inline']).toBeTrue();
+    expect(body['service']).toBe('github');
   });
 
   it('refuses to keep an empty jar instead of sending one', () => {
     fill({ service: 'github', profile: 'work' });
     state().keep();
-    worker['cookies'].next({
+    worker['save_state'].next({
       status: 'ok',
-      data: { status: 'ok', count: 0, cookies: [] },
+      data: { status: 'ok', cookies: 0, localStorage_keys: 0 },
     });
 
     expect(state().failure()).toBe('VAULT.NOTHING_TO_KEEP');
@@ -235,12 +261,19 @@ describe('BrowserSessionVaultComponent', () => {
   });
 
   it('names the caller own browser for the cookie pair, trimmed', () => {
-    fill({ service: 'github', profile: 'work', cdp_url: '  ws://1.2.3.4:9222  ' });
-    state().keep();
+    const jar = [{ name: 'sid', value: 'v' }];
+    fill({
+      service: 'github',
+      profile: 'work',
+      url: 'https://github.com/login',
+      cdp_url: '  ws://1.2.3.4:9222  ',
+    });
+    state().restore();
+    durable['load'].next({ payload: jar });
 
     // Trimmed, because the route refuses a supplied-but-unusable address rather
     // than dropping it.
-    expect(bodyFor(workerBodies, 'cookies')['cdp_url']).toBe(
+    expect(bodyFor(workerBodies, 'setcookies')['cdp_url']).toBe(
       'ws://1.2.3.4:9222'
     );
   });
@@ -267,6 +300,27 @@ describe('BrowserSessionVaultComponent', () => {
     durable['load'].next({ payload: jar });
 
     expect(bodyFor(workerBodies, 'setcookies')['cookies']).toBe(jar);
+  });
+
+  it('restores a kept STATE through restore_state, not setcookies', () => {
+    // The whole-profile half: `restore_state` also needs no `state.json` on the
+    // machine, so this path works on a machine that never logged in. Sending the
+    // state to `setcookies` would silently drop localStorage.
+    const saved = {
+      cookies: [{ name: 'sid', value: 'v' }],
+      localStorage: { token: 't' },
+    };
+    fill({
+      service: 'github',
+      profile: 'work',
+      url: 'https://github.com/login',
+    });
+
+    state().restore();
+    durable['load'].next({ payload: saved });
+
+    expect(bodyFor(workerBodies, 'restore_state')['payload']).toEqual(saved);
+    expect(workerBodies.some((body) => body['op'] === 'setcookies')).toBeFalse();
   });
 
   it('unwraps a jar the platform stored before it was flattened', () => {
@@ -327,9 +381,14 @@ describe('BrowserSessionVaultComponent', () => {
     // caller names their own browser, and the entry ops are refused until a
     // caller has a worker of their own. One message for both would send someone
     // who forgot one field to support.
-    fill({ service: 'github', profile: 'work' });
-    state().keep();
-    worker['cookies'].error(new HttpErrorResponse({ status: 403 }));
+    fill({
+      service: 'github',
+      profile: 'work',
+      url: 'https://github.com/login',
+    });
+    state().restore();
+    durable['load'].next({ payload: [{ name: 'sid', value: 'v' }] });
+    worker['setcookies'].error(new HttpErrorResponse({ status: 403 }));
     expect(state().failure()).toBe('VAULT.NEEDS_OWN_BROWSER');
 
     state().save();
@@ -345,7 +404,7 @@ describe('BrowserSessionVaultComponent', () => {
 
     fill({ service: 'github', profile: 'work' });
     state().keep();
-    worker['cookies'].next({
+    worker['save_state'].next({
       status: 'ok',
       data: {
         status: 'ok',

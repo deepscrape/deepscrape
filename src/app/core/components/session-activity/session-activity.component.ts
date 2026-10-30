@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, Input, computed, inject, signal } from '@angular/core'
+import { ChangeDetectionStrategy, Component, OnChanges, OnInit, Input, SimpleChanges, computed, inject, signal } from '@angular/core'
 import { DatePipe, TitleCasePipe } from '@angular/common'
 import { MatCardModule } from '@angular/material/card'
 import { MatTooltipModule } from '@angular/material/tooltip'
@@ -28,7 +28,7 @@ interface DailySummary {
   styleUrl: './session-activity.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class SessionActivityComponent implements OnInit {
+export class SessionActivityComponent implements OnInit, OnChanges {
   @Input() session!: SessionDisplayInfo
 
   private firestore = inject(FirestoreService)
@@ -56,30 +56,67 @@ export class SessionActivityComponent implements OnInit {
     const minutes = Math.floor((totalSeconds % 3600) / 60)
     return `${hours}h ${minutes}m`
   })
-  readonly averageSessionDuration = computed(() => {
+  /**
+   * This used to be `totalSeconds / pointCount` labelled "Avg Session Duration",
+   * which is not a duration of anything: the points are hourly buckets of ONE
+   * session, so the value is how long the session was active inside an average
+   * bucket. Named for what it measures.
+   */
+  readonly averageActivePerHour = computed(() => {
     const data = this.activityData()
     const totalSeconds = data.reduce((sum, a) => sum + a.activeSeconds, 0)
-    const avgSeconds = totalSeconds / Math.max(data.length, 1)
-    return `${Math.round(avgSeconds / 60)}m`
+    return this.formatDuration(totalSeconds / Math.max(data.length, 1))
   })
+  /**
+   * The hour of the busiest point, read from its timestamp. This used to report
+   * the point's array INDEX as the hour, so any series that did not start at
+   * midnight named an hour that had no data behind it.
+   */
   readonly peakActivityHour = computed(() => {
+    const data = this.activityData()
     let maxActivity = 0
-    let peakHour = 0
+    let peak: ActivityData | null = null
 
-    this.activityData().forEach((act, i) => {
+    data.forEach((act) => {
       const totalAct = act.activeSeconds + act.activityCount
       if (totalAct > maxActivity) {
         maxActivity = totalAct
-        peakHour = i
+        peak = act
       }
     })
 
-    return `${peakHour.toString().padStart(2, '0')}:00`
+    if (!peak) {
+      return '--:--'
+    }
+    const hour = new Date((peak as ActivityData).timestamp).getHours()
+    return `${hour.toString().padStart(2, '0')}:00`
   })
 
   ngOnInit() {
     if (this.session?.sessionId) {
       this.loadActivityData(this.session.sessionId)
+    }
+  }
+
+  /**
+   * The parent card lets the user switch which session is visualised, and this
+   * component read the input exactly once in `ngOnInit`. Switching therefore
+   * left the previous session's chart on screen under the new session's name.
+   *
+   * @param {SimpleChanges} changes emitted by Angular on input change
+   */
+  ngOnChanges(changes: SimpleChanges): void {
+    const change = changes['session']
+    // The first change is the initial binding, which `ngOnInit` already loads.
+    if (!change || change.firstChange || change.currentValue === change.previousValue) {
+      return
+    }
+    // A new session id means the old points are somebody else's activity.
+    this.activityData.set([])
+    this.dailySummary.set([])
+    const sessionId = (change.currentValue as SessionDisplayInfo | undefined)?.sessionId
+    if (sessionId) {
+      void this.loadActivityData(sessionId)
     }
   }
 
@@ -151,7 +188,9 @@ export class SessionActivityComponent implements OnInit {
       daily.requestCount += act.activityCount
     })
 
-    return Array.from(dailyMap.values()).slice(0, 7) // Last 7 days
+    // Encounter order is the ascending query order, so the LAST seven map entries
+    // are the most recent seven days. `slice(0, 7)` kept the OLDEST seven.
+    return Array.from(dailyMap.values()).slice(-7)
   }
 
   formatDuration(seconds: number): string {
@@ -160,7 +199,11 @@ export class SessionActivityComponent implements OnInit {
     if (hours > 0) {
       return `${hours}h ${minutes}m`
     }
-    return `${minutes}m`
+    if (minutes > 0) {
+      return `${minutes}m`
+    }
+    // Whole minutes made every sub-minute value render as "0m".
+    return `${Math.round(seconds)}s`
   }
 
 }

@@ -65,36 +65,16 @@
     }
   }
 
-  .activity-legend {
-    display: flex;
-    gap: 20px;
-    padding: 10px 0;
-
-    .legend-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      color: var(--text-secondary);
-
-      .legend-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-
-        &.low {
-          background: #67e8f9;
-        }
-
-        &.medium {
-          background: #06b6d4;
-        }
-
-        &.high {
-          background: #0e7490;
-        }
-      }
-    }
+  /* The bar chart is one colour, so a Low/Medium/High legend described a scale that
+     was never drawn. Removed with the markup; this is the state that replaces it. */
+  .activity-empty {
+    margin: 12px 0;
+    padding: 16px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-align: center;
   }
 
   .activity-tables {

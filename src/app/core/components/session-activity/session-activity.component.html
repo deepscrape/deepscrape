@@ -4,33 +4,24 @@
     <span class="total-activity">{{ totalActivity() }} {{ 'SESSION_ACT.INTERACTIONS' | translate }}</span>
   </div>
 
-  <!-- Sparkline chart (simplified bar chart) -->
-  <div class="sparkline-container">
-    @for (bar of activityBars(); track bar.index) {
-      <div
-        class="sparkline-bar"
-        [style.height.%]="bar.height"
-        [matTooltip]="bar.tooltip"
-        [attr.data-hour]="bar.index"
-      ></div>
-    }
-  </div>
-
-  <!-- Activity legend -->
-  <div class="activity-legend">
-    <div class="legend-item">
-      <span class="legend-dot low"></span>
-      <span>{{ 'SESSION_ACT.LOW' | translate }}</span>
+  @if (activityData().length === 0) {
+    <!-- Nothing writes `loginSessions/{id}/activity` yet: the heartbeat only moves
+         `lastActivityAt`. Until an activity writer lands, saying so is the honest
+         state -- the chart used to render as a row of zero-height bars with all
+         metrics reading 0. -->
+    <p class="activity-empty">{{ 'SESSION_ACT.EMPTY' | translate }}</p>
+  } @else {
+    <!-- Sparkline chart (simplified bar chart) -->
+    <div class="sparkline-container">
+      @for (bar of activityBars(); track bar.index) {
+        <div
+          class="sparkline-bar"
+          [style.height.%]="bar.height"
+          [matTooltip]="bar.tooltip"
+          [attr.data-hour]="bar.index"
+        ></div>
+      }
     </div>
-    <div class="legend-item">
-      <span class="legend-dot medium"></span>
-      <span>{{ 'SESSION_ACT.MEDIUM' | translate }}</span>
-    </div>
-    <div class="legend-item">
-      <span class="legend-dot high"></span>
-      <span>{{ 'SESSION_ACT.HIGH' | translate }}</span>
-    </div>
-  </div>
 
   <!-- Daily activity breakdown -->
   <div class="activity-tables">
@@ -66,8 +57,8 @@
   <!-- Activity metrics -->
   <div class="activity-metrics">
     <div class="metric">
-      <span class="label">{{ 'SESSION_ACT.AVG_DUR' | translate }}</span>
-      <span class="value">{{ averageSessionDuration() }}</span>
+      <span class="label">{{ 'SESSION_ACT.AVG_ACTIVE' | translate }}</span>
+      <span class="value">{{ averageActivePerHour() }}</span>
     </div>
     <div class="metric">
       <span class="label">{{ 'SESSION_ACT.PEAK_HOUR' | translate }}</span>
@@ -78,4 +69,5 @@
       <span class="value">{{ totalActiveTime() }}</span>
     </div>
   </div>
+  }
 </div>

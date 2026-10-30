@@ -3,11 +3,12 @@
   the list; the alert below reports a failed action. A failed keepalive or close
   must not hide the list, because the session that needs closing is in it.
 
-  Surfaces use the repository's own neutral tokens at partial opacity
-  (gray3/gray5/gray7) rather than Tailwind's default gray scale, so this page sits
-  in the same family as the admin surfaces instead of beside them. `admin-glass-card`
-  is deliberately NOT used: it is defined per-component inside each admin page's own
-  SCSS (`:host`-scoped), so referencing it here would silently render nothing.
+  Surfaces follow the `/settings/workspace` card recipe, because this panel is mounted
+  on three surfaces (`/browser`, `/machines`, the playground's browser mode) and a
+  second palette here was the reason those pages looked like a different product.
+  `admin-glass-card` is deliberately NOT used: it is defined per-component inside each
+  admin page's own SCSS (`:host`-scoped), so referencing it here would silently render
+  nothing.
 -->
 <section class="space-y-6">
   <!--
@@ -18,10 +19,10 @@
   -->
   <header class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
     <div>
-      <h2 class="text-2xl font-bold text-gray5 dark:text-gray-100">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
         {{ 'BROWSER_SESSION.TITLE' | translate }}
       </h2>
-      <p class="mt-1 text-sm text-gray5/70 dark:text-gray-300">
+      <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
         {{ 'BROWSER_SESSION.COST_NOTE' | translate }}
       </p>
     </div>
@@ -32,7 +33,7 @@
     sessions the caller already holds.
   -->
   <form
-    class="space-y-5 rounded-xl border border-gray3/55 bg-white/75 p-5 dark:border-gray5/60 dark:bg-gray7/55"
+    class="space-y-5 rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80"
     (submit)="$event.preventDefault(); create()"
   >
     <fieldset>
@@ -145,15 +146,22 @@
       driven by the session count so a change re-triggers the `* => *` transition.
       Reusing it beats a local `@keyframes`, which the styling policy discourages.
     -->
-    <ul class="space-y-3" [@listStagger]="sessions().length">
+    <ul class="space-y-4" [@listStagger]="sessions().length">
       @for (session of sessions(); track session.id) {
-        <li
-          class="space-y-3 rounded-xl border border-gray3/55 bg-white/75 p-3 dark:border-gray5/60 dark:bg-gray7/55"
-        >
+        <!--
+          The repository's card recipe, copied from settings/workspace and
+          settings/profile rather than invented: an opaque surface, a 2xl radius,
+          p-5 and one shadow. The previous version paired a hairline border with a
+          translucent white in light mode and `gray7/55` in dark, so the row read as
+          a washed-out outline over whatever sat behind it — which is the "ugly
+          dark bg and border" this replaces. No border now: the shadow separates the
+          card from the page in light mode and `gray6/80` does it in dark.
+        -->
+        <li class="space-y-4 rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="space-y-1">
               <app-browser-session-chip [session]="session" />
-              <p class="text-xs text-gray5/70 dark:text-gray-300">
+              <p class="text-sm text-gray-600 dark:text-gray-300">
                 {{ 'BROWSER_SESSION.CREATED' | translate }}:
                 {{ session.createdAt | date: 'short' }}
                 @if (session.expiresAt) {
@@ -227,16 +235,56 @@
           @if (canFrame(session.kind)) {
             @if (isFramed(session.id)) {
               <div [id]="frameId(session.id)">
-                <app-browser-frame [sessionId]="session.id" />
+                <app-browser-frame
+                  [sessionId]="session.id"
+                  [frameIntervalMs]="session.frameIntervalMs ?? 1000" />
               </div>
             }
           } @else {
-            <p class="text-xs text-gray5/70 dark:text-gray-300">
+            <p class="text-sm text-gray-500 dark:text-gray-400">
               {{ 'BROWSER_SESSION.FRAME_UNSUPPORTED' | translate }}
             </p>
           }
         </li>
       }
     </ul>
+
+    <!--
+      What this caller has already run. Read-only by construction: a closed
+      session released its machine, so keepalive, close and the live view would
+      all answer 404 — the buttons are not disabled here, they are absent.
+
+      The section renders even when empty: hiding it made the archive invisible to
+      anyone who had not closed a session yet, which reads as "there is no history".
+    -->
+    <section class="mt-8">
+      <h3 class="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
+        {{ 'BROWSER_SESSION.HISTORY_TITLE' | translate }}
+      </h3>
+      @if (history().length === 0) {
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          {{ 'BROWSER_SESSION.HISTORY_EMPTY' | translate }}
+        </p>
+      } @else {
+        <ul class="space-y-3">
+          @for (session of history(); track session.id) {
+            <li class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="space-y-1">
+                  <app-browser-session-chip [session]="session" />
+                  <p class="text-sm text-gray-600 dark:text-gray-300">
+                    {{ 'BROWSER_SESSION.CREATED' | translate }}:
+                    {{ session.createdAt | date: 'short' }}
+                  </p>
+                </div>
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ session.mode }} &middot; {{ session.kind }}
+                </span>
+              </div>
+            </li>
+          }
+        </ul>
+      }
+    </section>
   </app-result-envelope>
 </section>

@@ -1,4 +1,5 @@
 import { DOCUMENT, isPlatformBrowser } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -6,6 +7,7 @@ import {
   ElementRef,
   PLATFORM_ID,
   computed,
+  effect,
   inject,
   input,
   signal,
@@ -156,6 +158,16 @@ export class BrowserFrameComponent {
   /** The session to view. Required: a frame with no session has nothing to show. */
   readonly sessionId = input.required<string>();
 
+  /**
+   * How often this session's tier allows a frame, from the session itself.
+   *
+   * The default is the slowest tier that serves a frame, so a caller that does not
+   * pass it gets exactly the old behaviour. Passing it is what makes the tier's cap
+   * mean something: `paid` allows 1 fps and `admin` 4, and this component used to ask
+   * for one a second on both, so an admin waited four times longer than they had to.
+   */
+  readonly frameIntervalMs = input<number>(FRAME_INTERVAL_MS);
+
   /** Whether the loop is currently asking for frames. */
   readonly live = signal(true);
 
@@ -174,13 +186,30 @@ export class BrowserFrameComponent {
    */
   readonly hidden = signal(true);
 
-  /** Bumped by each poll. Changing it is what makes the `<img>` fetch again. */
+  /** Bumped by each poll, and sent with the request so nothing caches a frame. */
   private readonly nonce = signal(0);
 
-  /** The current frame URL. */
-  readonly frameUrl = computed(() =>
-    this.sessions.frameUrl(this.sessionId(), this.nonce())
-  );
+  /**
+   * The current frame, as an object URL.
+   *
+   * Null until the first frame arrives, and that null is load-bearing: rendering
+   * the `<img>` with no source fires its `error` event, which this component reads
+   * as a failed frame and answers with a backoff.
+   */
+  readonly frameSrc = signal<string | null>(null);
+
+  /** Set while a frame request is in flight, so a slow capture cannot stack them. */
+  private fetching = false;
+
+  /**
+   * True between an action being accepted and the frame that SHOWS its result.
+   *
+   * At one frame a second the picture is stale for most of a second after a click,
+   * and a stale picture with no marker reads as "my click did nothing" — so the
+   * user clicks again, and `runTool` drops the second one without a word. This is
+   * what the surface shows instead of silence.
+   */
+  readonly awaitingFrame = signal(false);
 
   /**
    * What the surface is doing, as a key rather than a sentence.
@@ -263,12 +292,35 @@ export class BrowserFrameComponent {
   /** The delay the next failure will use. Doubles per failure up to the ceiling. */
   private backoff = FRAME_INTERVAL_MS;
 
+  /** The delay the loop is currently scheduled at, so a change can restart it once. */
+  private scheduled = FRAME_INTERVAL_MS;
+
   constructor() {
     // Read visibility BEFORE starting: `start` schedules polls, and a hidden tab must
     // not be scheduled even once.
     this.hidden.set(this.hiddenNow());
     this.start();
-    this.destroyRef.onDestroy(() => this.stop());
+
+    // The input is not bound yet in the constructor, so the loop above starts at the
+    // default. This re-schedules once the real interval arrives, and only when it
+    // differs -- an effect that restarted on every emission would reset the loop for
+    // no reason.
+    effect(() => {
+      const interval = this.frameIntervalMs();
+      if (!(interval > 0) || interval === this.scheduled) {
+        return;
+      }
+      this.scheduled = interval;
+      this.backoff = interval;
+      this.start();
+    });
+
+    this.destroyRef.onDestroy(() => {
+      this.stop();
+      // The last frame is an object URL; leaving it unreleased keeps its blob in
+      // memory for the life of the document.
+      this.revokeFrame();
+    });
 
     // Resuming on the way back is a courtesy. NOT polling while hidden is the part
     // that costs money, and `poll` enforces that on its own.
@@ -294,7 +346,7 @@ export class BrowserFrameComponent {
    */
   start(): void {
     this.stop();
-    this.subscribeWith(FRAME_INTERVAL_MS);
+    this.subscribeWith(this.scheduled);
   }
 
   /** Stop the loop. Safe to call twice, which `onDestroy` relies on. */
@@ -303,12 +355,78 @@ export class BrowserFrameComponent {
     this.polling = null;
   }
 
-  /** Ask for one more frame, unless this is a moment when nobody is looking. */
+  /**
+   * Ask for one more frame, unless this is a moment when nobody is looking.
+   *
+   * The frame is FETCHED here rather than by the template, because the route is
+   * authenticated and an `<img>` cannot send the header. One request at a time:
+   * a capture can take longer than the interval, and stacking them would bill for
+   * frames nobody ever sees.
+   */
   poll(): void {
-    if (!this.live() || this.hidden()) {
+    if (!this.live() || this.hidden() || this.fetching) {
       return;
     }
-    this.nonce.update((value) => value + 1);
+
+    const nonce = this.nonce() + 1;
+    this.nonce.set(nonce);
+    this.fetching = true;
+
+    this.sessions.frame(this.sessionId(), nonce).subscribe({
+      next: (blob) => {
+        this.fetching = false;
+        this.showFrame(blob);
+      },
+      error: (error: unknown) => {
+        this.fetching = false;
+
+        // 409 is arachnefly's "this machine cannot be running", relayed as
+        // `no_frame_source`: PERMANENT, unlike a capture that failed. Retrying it
+        // polls a machine that cannot exist, at a backoff that never gives up, so
+        // the loop stops and the surface says so.
+        if (error instanceof HttpErrorResponse && error.status === 409) {
+          this.failed.set(true);
+          this.awaitingFrame.set(false);
+          this.stop();
+          return;
+        }
+
+        // 429 is the frame PACING refusal (`frame_too_soon`), not a fault: the poll
+        // landed a few milliseconds inside the tier's interval because the previous
+        // round trip was slower than this one. Counting it as a failure marked the
+        // whole live view broken and doubled the backoff, so one early poll turned
+        // 1 fps into 2, then 4, then 8 seconds of a view that was working. The next
+        // scheduled tick is already a full interval later and is accepted.
+        if (error instanceof HttpErrorResponse && error.status === 429) {
+          return;
+        }
+
+        this.onFrameError();
+      },
+    });
+  }
+
+  /**
+   * Point the `<img>` at a new frame, and release the one it replaced.
+   *
+   * The revoke is not tidiness: an object URL pins its blob in memory until it is
+   * released, so at one to two frames a second an unrevoked stream is a leak
+   * measured in megabytes per minute of viewing.
+   * @param {Blob} blob The frame the BFF relayed.
+   * @return {void}
+   */
+  private showFrame(blob: Blob): void {
+    this.revokeFrame();
+    this.frameSrc.set(URL.createObjectURL(blob));
+    this.awaitingFrame.set(false);
+  }
+
+  /** Release the current frame's object URL, when there is one. */
+  private revokeFrame(): void {
+    const current = this.frameSrc();
+    if (current) {
+      URL.revokeObjectURL(current);
+    }
   }
 
   /** Pause or resume. A pause is deliberate, so it is not a failure. */
@@ -328,6 +446,9 @@ export class BrowserFrameComponent {
    */
   onFrameError(): void {
     this.failed.set(true);
+    // A failed view is not "waiting for the result of your click" any more: the
+    // overlay would sit over a frozen picture and promise a frame that is not coming.
+    this.awaitingFrame.set(false);
     this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
     this.stop();
     this.subscribeWith(this.backoff);
@@ -336,8 +457,8 @@ export class BrowserFrameComponent {
   /** Clear the failure once a frame arrives, and return to the normal cadence. */
   onFrameLoad(): void {
     this.failed.set(false);
-    if (this.backoff !== FRAME_INTERVAL_MS) {
-      this.backoff = FRAME_INTERVAL_MS;
+    if (this.backoff !== this.scheduled) {
+      this.backoff = this.scheduled;
       this.stop();
       this.subscribeWith(this.backoff);
     }
@@ -348,6 +469,25 @@ export class BrowserFrameComponent {
     this.polling = interval(delay)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.poll());
+  }
+
+  /**
+   * Restart the pace from now, so the next frame follows the action instead of a
+   * timer that may have just fired.
+   *
+   * Not a forced capture: one interval still separates two frames, which is what
+   * the server enforces. This only moves the phase onto the user's click.
+   *
+   * A stopped loop stays stopped. It was stopped on purpose -- a machine that
+   * cannot be running (409) -- and an action must not quietly revive polling.
+   */
+  private restartPacing(): void {
+    if (!this.polling) {
+      return;
+    }
+
+    this.stop();
+    this.subscribeWith(this.scheduled);
   }
 
   /**
@@ -363,7 +503,11 @@ export class BrowserFrameComponent {
   async clickFrame(event: MouseEvent): Promise<void> {
     const image = this.frameImage()?.nativeElement;
 
-    if (!this.canDrive() || !image?.naturalWidth || !image.naturalHeight) {
+    // `acting` is checked here and not through `canDrive`, which also gates the whole
+    // drive panel: hiding that on every click would flicker the controls. `runTool`
+    // drops a second click anyway, silently, and silence is the part worth removing.
+    if (!this.canDrive() || this.acting() ||
+      !image?.naturalWidth || !image.naturalHeight) {
       return;
     }
 
@@ -413,10 +557,11 @@ export class BrowserFrameComponent {
    * One place rather than four, so the lock, the note and the failure handling
    * cannot disagree about what "an action is running" means.
    *
-   * The frame is deliberately NOT refreshed on success. The loop asks for the next
-   * one within a second, and forcing one here would put two captures inside a
-   * single interval -- which the server refuses with `frame_too_soon`, turning a
-   * successful click into a visible failure.
+   * The frame pace is RE-ANCHORED on success rather than a second capture forced.
+   * The server spaces captures by the tier's interval and refuses one that arrives
+   * early, so the honest way to show a click's result is to pin the NEXT frame to
+   * the moment of the action: it lands one interval later instead of up to one
+   * interval plus a round trip later, which is exactly the frame the user waits for.
    *
    * Every action here is an `interact`, so the tool name is fixed and only the
    * `action` varies. Text entry goes through `typeText` instead, because it needs
@@ -447,6 +592,10 @@ export class BrowserFrameComponent {
     try {
       const reply = await firstValueFrom(this.sessions.tool(this.sessionId(), tool, args));
       this.actionNote.set('BROWSER_SESSION.ACTION_SENT');
+      // The picture is now stale until the next frame lands, and saying so is the
+      // difference between "working" and "my click did nothing".
+      this.awaitingFrame.set(true);
+      this.restartPacing();
       return reply.result;
     } catch {
       // Reported, never swallowed: a refused action and a delivered one look

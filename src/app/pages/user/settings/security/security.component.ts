@@ -1,5 +1,5 @@
 import { isPlatformBrowser, JsonPipe, NgClass, UpperCasePipe } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, DOCUMENT, inject, PLATFORM_ID, signal } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, DestroyRef, DOCUMENT, inject, PLATFORM_ID, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Auth, ConfirmationResult, GithubAuthProvider, GoogleAuthProvider, MultiFactorInfo, MultiFactorResolver, RecaptchaVerifier, TotpSecret, updateProfile, UserCredential, UserInfo } from '@angular/fire/auth';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -123,6 +123,35 @@ export class SecurityTabComponent {
   readonly activityTimeline = signal<SecurityTimelineEvent[]>([])
   readonly activityLoading = signal(false)
   readonly activityError = signal('')
+  /**
+   * Paging is client-side: the list is one capped query, not a cursor walk, so
+   * slicing it costs nothing and every page is already in memory. The window is
+   * deliberately small (10) -- the panel is a recent-history view, and the full
+   * record is what Active Sessions and the audit trail are for.
+   */
+  readonly activityPageSize = 10
+  readonly activityPage = signal(1)
+  readonly activityPageCount = computed(
+    () => Math.max(1, Math.ceil(this.activityTimeline().length / this.activityPageSize)),
+  )
+  readonly pagedActivity = computed(() => {
+    const start = (this.activityPage() - 1) * this.activityPageSize
+    return this.activityTimeline().slice(start, start + this.activityPageSize)
+  })
+  /**
+   * Five page numbers around the current one, widening to the ends so the first
+   * and last page are always reachable in one click -- the same window the
+   * operations list uses.
+   */
+  readonly activityPageNumbers = computed<number[]>(() => {
+    const total = this.activityPageCount()
+    const current = this.activityPage()
+    if (total <= 5) {
+      return Array.from({ length: total }, (_, i) => i + 1)
+    }
+    const start = Math.min(Math.max(1, current - 2), total - 4)
+    return Array.from({ length: 5 }, (_, i) => start + i)
+  })
   readonly revokingSessionId = signal('')
   readonly trustedDevices = signal<TrustedDevice[]>([])
   readonly trustedDevicesLoading = signal(false)
@@ -132,6 +161,12 @@ export class SecurityTabComponent {
   readonly passkeysLoading = signal(false)
   readonly isRegisteringPasskey = signal(false)
   readonly passkeyError = signal('')
+  /**
+   * The server only accepts a platform authenticator, so on a device without
+   * Windows Hello / Touch ID the ceremony would fail with "cancelled". Read-only
+   * view of the service's probe so the button can say why instead.
+   */
+  readonly platformPasskeyAvailable = this.webAuthnService.platformAuthenticatorAvailable
   readonly currentSessionId = signal('')
   readonly confirmationDialog = signal<'disable-mfa' | 'disable-totp-factor' | 'revoke-current-session' | null>(null)
   readonly pendingSessionToRevoke = signal<(SessionDisplayInfo & { id?: string }) | null>(null)
@@ -493,6 +528,14 @@ export class SecurityTabComponent {
   }
 
   async registerPasskey(): Promise<void> {
+    // The server pins a platform authenticator; asking anyway would surface the
+    // browser's NotAllowedError as "registration cancelled", which is not what
+    // happened.
+    if (this.platformPasskeyAvailable() === false) {
+      this.passkeyError.set(this.translate.instant('SETTINGS_SECURITY.PASSKEY_PLATFORM_ONLY'))
+      return
+    }
+
     this.isRegisteringPasskey.set(true)
     this.passkeyError.set('')
     try {
@@ -685,7 +728,9 @@ export class SecurityTabComponent {
     this.activityLoading.set(true)
     this.activityError.set('')
 
-    this.firestoreService.getMyLoginHistoryEvents(20)
+    // 50 is the service's cap: five pages of ten rather than the two that a
+    // 20-event read allowed, so the pager is worth having.
+    this.firestoreService.getMyLoginHistoryEvents(50)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (events) => {
@@ -710,6 +755,8 @@ export class SecurityTabComponent {
           })
 
           this.activityTimeline.set(timeline)
+          // A reload can return fewer events than the page the user was on.
+          this.activityPage.set(Math.min(this.activityPage(), Math.max(1, Math.ceil(timeline.length / this.activityPageSize))))
           this.activityLoading.set(false)
           this.cdr.detectChanges()
         },
@@ -719,6 +766,15 @@ export class SecurityTabComponent {
           this.cdr.detectChanges()
         }
       })
+  }
+
+  /** Clamped so a stale click cannot leave the list on an empty page. */
+  goToActivityPage(page: number): void {
+    const target = Math.floor(page)
+    if (!Number.isFinite(target)) {
+      return
+    }
+    this.activityPage.set(Math.min(Math.max(1, target), this.activityPageCount()))
   }
 
   isCurrentSession(session: SessionDisplayInfo & { id?: string }): boolean {

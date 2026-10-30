@@ -243,11 +243,23 @@ export class WebAuthnService {
       this.isAuthenticating.set(false)
     }
   }
+  /**
+   * Whether THIS device can run the ceremony the server will accept.
+   *
+   * `generateWebAuthnRegistrationOptions` pins `authenticatorAttachment:
+   * "platform"`, so a phone passkey or a USB security key is refused by the
+   * browser before the server ever sees it. Without this probe the only feedback
+   * was `NotAllowedError` -> "registration was cancelled", which blames the user
+   * for a missing capability. `null` means unprobed or unsupported.
+   */
+  readonly platformAuthenticatorAvailable = signal<boolean | null>(null)
 
   /**
    * Load the list of registered passkeys for the current user.
    */
   async loadPasskeys(): Promise<void> {
+    await this.probePlatformAuthenticator()
+
     try {
       const { credentials } = await this.firestore.callFunction<
         void,
@@ -264,6 +276,38 @@ export class WebAuthnService {
     } catch (error) {
       console.error('Failed to load passkeys:', error)
     }
+  }
+
+  /**
+   * Ask the browser once whether a built-in authenticator (Windows Hello,
+   * Touch ID, Android biometrics) is usable here.
+   *
+   * @return {Promise<boolean>} true when the device can satisfy the server policy
+   */
+  async probePlatformAuthenticator(): Promise<boolean> {
+    const support = typeof window === 'undefined'
+      ? undefined
+      : (window as unknown as {
+        PublicKeyCredential?: {
+          isUserVerifyingPlatformAuthenticatorAvailable?: () => Promise<boolean>
+        }
+      }).PublicKeyCredential
+
+    if (!support?.isUserVerifyingPlatformAuthenticatorAvailable) {
+      this.platformAuthenticatorAvailable.set(false)
+      return false
+    }
+
+    // The probe throws (not rejects-false) in a cross-origin iframe without the
+    // WebAuthn permission policy, so treat any failure as "cannot".
+    let available = false
+    try {
+      available = await support.isUserVerifyingPlatformAuthenticatorAvailable()
+    } catch {
+      available = false
+    }
+    this.platformAuthenticatorAvailable.set(available)
+    return available
   }
 
   /** Convert Firestore Timestamp-like object or ISO string to Date */

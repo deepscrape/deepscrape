@@ -9,16 +9,42 @@
     class="relative overflow-hidden rounded-xl border border-slate-200/70 bg-slate-50/30 dark:border-gray5/60 dark:bg-gray7/80"
   >
     @if (live()) {
-      <img
-        #frame
-        class="block h-auto w-full"
-        [class.cursor-crosshair]="canDrive()"
-        [src]="frameUrl()"
-        [alt]="'BROWSER_SESSION.FRAME_ALT' | translate"
-        (load)="onFrameLoad()"
-        (error)="onFrameError()"
-        (click)="clickFrame($event)"
-      />
+      <!--
+        Guarded on the first frame: an image with no source fires `error`, which
+        this component reads as a failed frame and answers with a backoff. The
+        check is a source, not a loading flag, because the blob URL is the only
+        proof the bytes actually arrived.
+      -->
+      @if (frameSrc(); as src) {
+        <img
+          #frame
+          class="block h-auto w-full"
+          [class.cursor-crosshair]="canDrive()"
+          [src]="src"
+          [alt]="'BROWSER_SESSION.FRAME_ALT' | translate"
+          (load)="onFrameLoad()"
+          (error)="onFrameError()"
+          (click)="clickFrame($event)"
+        />
+      }
+
+      <!--
+        The picture is stale from the moment an action is accepted until the frame
+        that shows its result arrives — up to a whole interval at this tier. Without
+        this the surface looks identical before and after a click, so the user clicks
+        again and the second action is dropped. `aria-hidden`: the status line below
+        is the thing a screen reader reads, and it already says the action was sent.
+      -->
+      @if (awaitingFrame()) {
+        <div
+          class="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/40 dark:bg-black/40"
+          aria-hidden="true"
+        >
+          <span
+            class="h-6 w-6 animate-spin rounded-full border-2 border-cyan-600 border-t-transparent dark:border-cyan-300 dark:border-t-transparent"
+          ></span>
+        </div>
+      }
     } @else {
       <!--
         Paused shows text, not the last frame. Keeping the last image on screen would

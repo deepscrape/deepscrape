@@ -1,11 +1,15 @@
 <!-- browser-session-vault.component.html -->
-<section class="rounded-2xl border border-gray2/60 bg-slate-50/30 p-4 dark:border-gray5/40 dark:bg-gray7/80 sm:p-6">
+<!-- The house card: opaque surface + shadow, no hairline border. The previous
+     version paired `border-gray2/60` with a translucent `slate-50/30` (light) and
+     `gray7/80` (dark), so it read as an outline over the page rather than a card
+     on it. Same defect the session rows had. -->
+<section class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80 sm:p-6">
 
   <header class="mb-4">
-    <h2 class="font-display text-xl text-gray6 dark:text-white">
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
       {{ 'VAULT.TITLE' | translate }}
     </h2>
-    <p class="mt-1 max-w-3xl text-sm text-gray4">
+    <p class="mt-1 max-w-3xl text-sm text-gray-600 dark:text-gray-300">
       {{ 'VAULT.SUBTITLE' | translate }}
     </p>
   </header>

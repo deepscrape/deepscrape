@@ -99,6 +99,32 @@ const cookieJarOf = (payload: unknown): unknown[] | undefined => {
 };
 
 /**
+ * The whole-profile state out of a `save_state` reply, or out of a kept entry.
+ *
+ * The discriminator is `localStorage`, and it is what makes this a different
+ * question from `cookieJarOf`: a state is `{cookies, localStorage}`, so a value
+ * without localStorage is either a bare jar kept by an earlier build or a jar a
+ * worker wrapped, and both of those belong on the `setcookies` path. It is also
+ * the half a cookie-only profile loses, which is why a round trip only counts as
+ * whole-profile when the field is there.
+ * @param {unknown} payload What the worker answered, or what the platform kept.
+ * @return {Record<string, unknown> | undefined} The state, or undefined.
+ */
+const savedStateOf = (
+  payload: unknown
+): Record<string, unknown> | undefined => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return undefined;
+  }
+  const state = payload as Record<string, unknown>;
+  const local = state['localStorage'];
+  if (!local || typeof local !== 'object' || Array.isArray(local)) {
+    return undefined;
+  }
+  return state;
+};
+
+/**
  * The credential vault: build it, keep it, and log in from it.
  *
  * A section rather than a page, and it composes under the session panel because
@@ -293,38 +319,48 @@ export class BrowserSessionVaultComponent {
     this.busy.set('keep');
     this.failure.set(null);
 
-    this.sessions.vault(this.cookieBody('cookies')).subscribe({
-      next: (reply) => {
-        const jar = cookieJarOf(reply?.data);
-        // A browser that never logged in has nothing to keep. Refused here
-        // rather than sent, because the route would answer 400 and "the request
-        // was malformed" is not what happened.
-        if (!jar) {
+    // `save_state` with `inline` answers cookies AND localStorage and writes no
+    // file on the worker: the platform's vault is the durable copy, so nothing
+    // is left behind on a machine the caller does not own. A worker that does
+    // not know `inline` still answers counts and no payload, so the cookie jar
+    // stays the fallback rather than costing a second round trip.
+    this.sessions
+      .vault({ op: 'save_state', service, profile, inline: true })
+      .subscribe({
+        next: (reply) => {
+          const state = savedStateOf(
+            (reply?.data as { payload?: unknown } | undefined)?.payload
+          );
+          const kept = state ?? cookieJarOf(reply?.data);
+          // A browser that never logged in has nothing to keep. Refused here
+          // rather than sent, because the route would answer 400 and "the
+          // request was malformed" is not what happened.
+          if (!kept) {
+            this.busy.set(null);
+            this.failure.set('VAULT.NOTHING_TO_KEEP');
+            return;
+          }
+          // The STATE is stored when the worker gave one, so this copy restores
+          // the whole profile; a bare jar stays a jar, which is exactly what an
+          // entry kept by an earlier build is.
+          this.sessions
+            .durableVault({ op: 'store', service, profile, payload: kept })
+            .subscribe({
+              next: () => {
+                this.busy.set(null);
+                this.refresh();
+              },
+              error: (error: unknown) => {
+                this.busy.set(null);
+                this.fail(error, 'store');
+              },
+            });
+        },
+        error: (error: unknown) => {
           this.busy.set(null);
-          this.failure.set('VAULT.NOTHING_TO_KEEP');
-          return;
-        }
-        // The ARRAY is stored, not the reply it came in: the platform's copy is
-        // what `setcookies` will be handed, so unwrapping here means the round
-        // trip has one shape rather than two.
-        this.sessions
-          .durableVault({ op: 'store', service, profile, payload: jar })
-          .subscribe({
-            next: () => {
-              this.busy.set(null);
-              this.refresh();
-            },
-            error: (error: unknown) => {
-              this.busy.set(null);
-              this.fail(error, 'store');
-            },
-          });
-      },
-      error: (error: unknown) => {
-        this.busy.set(null);
-        this.fail(error, 'cookies');
-      },
-    });
+          this.fail(error, 'save_state');
+        },
+      });
   }
 
   /**
@@ -351,6 +387,25 @@ export class BrowserSessionVaultComponent {
 
     this.sessions.durableVault({ op: 'load', service, profile }).subscribe({
       next: (reply) => {
+        // A kept STATE is restored whole: cookies AND localStorage, which is the
+        // half a jar-only entry never had. `restore_state` needs no `state.json`
+        // on the machine, so this works on a machine that never logged in.
+        const state = savedStateOf(reply?.payload);
+        if (state) {
+          this.sessions
+            .vault({ op: 'restore_state', service, profile, payload: state })
+            .subscribe({
+              next: () => {
+                this.busy.set(null);
+                this.refresh();
+              },
+              error: (error: unknown) => {
+                this.busy.set(null);
+                this.fail(error, 'restore_state');
+              },
+            });
+          return;
+        }
         const jar = cookieJarOf(reply?.payload);
         // An entry that holds no usable jar is refused rather than sent on.
         // `setcookies` would answer "cookies array required", and that message

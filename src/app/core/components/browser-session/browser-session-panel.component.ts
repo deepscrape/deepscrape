@@ -95,6 +95,16 @@ export class BrowserSessionPanelComponent implements OnInit {
   /** The live sessions the caller holds. `closed` ones never appear. */
   readonly sessions = signal<BrowserSession[]>([]);
 
+  /**
+   * The sessions this caller has ENDED, newest first.
+   *
+   * Loaded beside the live list and never merged into it: a closed session holds
+   * no machine, so offering its actions would be buttons that answer 404. Shown
+   * read-only, because the only thing left to do with a finished run is remember
+   * it.
+   */
+  readonly history = signal<BrowserSession[]>([]);
+
   /** The envelope's state, and the LIST LOAD's failure only. */
   readonly state = signal<ResultEnvelopeState>('idle');
 
@@ -127,6 +137,25 @@ export class BrowserSessionPanelComponent implements OnInit {
 
   ngOnInit(): void {
     this.load();
+    this.loadHistory();
+  }
+
+  /**
+   * Load the ended sessions.
+   *
+   * Failures are SILENT on purpose: history is a convenience beside the live
+   * list, and a red banner for a read the caller did not ask for would make a
+   * working page look broken. An empty signal simply renders nothing.
+   * @return {void} Nothing.
+   */
+  private loadHistory(): void {
+    this.service
+      .history()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: reply => this.history.set(reply.sessions),
+        error: () => this.history.set([]),
+      });
   }
 
   /**

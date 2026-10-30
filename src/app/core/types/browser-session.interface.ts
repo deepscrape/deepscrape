@@ -41,6 +41,13 @@ export interface BrowserSession {
   /** Epoch ms the session was created. */
   createdAt: number
   /**
+   * The frame cadence the tier allows, in ms, decided by the server.
+   *
+   * Absent only for a session read from an older server, which the frame component
+   * reads as the slowest tier's interval.
+   */
+  frameIntervalMs?: number
+  /**
    * The idle deadline, when the tier has one. Absent means the tier has no idle
    * expiry, which is not the same as "expires immediately".
    */
@@ -55,6 +62,12 @@ export interface BrowserSession {
  * it in Secret Manager and answers with no field that could return it.
  */
 export interface BrowserSessionCreateRequest {
+  /**
+   * What the session is FOR, which picks the machine preset. Omitted means
+   * browser, and the server treats any unknown value the same way — so a caller
+   * can never buy a machine smaller than it needs by sending nonsense.
+   */
+  workload?: "browser" | "code"
   mode: BrowserSessionMode
   kind: BrowserSessionKind
   cdpUrl?: string
@@ -70,6 +83,21 @@ export interface BrowserSessionResponse {
 export interface BrowserSessionListResponse {
   status: 'ok'
   sessions: BrowserSession[]
+}
+
+/**
+ * What one sandboxed command did.
+ *
+ * `exit_code` is the command's, not the request's: a command that ran and failed
+ * still arrives with HTTP 200, because "it worked and said no" is an answer the
+ * caller asked for. `-1` is reserved for "it never ran" (timed out, or the kernel
+ * refused the namespace), and the reason is then in `stderr`.
+ */
+export interface BrowserSessionExecResult {
+  exit_code: number
+  stdout: string
+  stderr: string
+  truncated: boolean
 }
 
 /**

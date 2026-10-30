@@ -1309,7 +1309,7 @@
           type="button"
           appRipple
           (click)="registerPasskey()"
-          [disabled]="isRegisteringPasskey()"
+          [disabled]="isRegisteringPasskey() || platformPasskeyAvailable() === false"
           class="mt-2 inline-flex items-center justify-center rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60">
           @if (!isRegisteringPasskey()) {
             {{ 'SETTINGS_SECURITY.REGISTER_NEW_PASSKEY' | translate }}
@@ -1317,6 +1317,12 @@
             <mat-progress-spinner mode="indeterminate" [diameter]="16"></mat-progress-spinner>
           }
         </button>
+
+        @if (platformPasskeyAvailable() === false) {
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ 'SETTINGS_SECURITY.PASSKEY_PLATFORM_ONLY' | translate }}
+          </p>
+        }
       }
 
       @if (passkeyError()) {
@@ -1369,7 +1375,7 @@
           </p>
         } @else {
           <div class="mt-3 flex flex-col gap-3">
-            @for (event of activityTimeline(); track event.id || event.sessionId || $index) {
+            @for (event of pagedActivity(); track event.id || event.sessionId || $index) {
               <div class="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white/80 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
                 <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-2">
@@ -1401,6 +1407,49 @@
               </div>
             }
           </div>
+
+          <!-- Pager: the same pill vocabulary as the operations list, so the
+               two paginated views in the product read as one. -->
+          @if (activityPageCount() > 1) {
+            <nav
+              class="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-gray-200 pt-3 dark:border-gray-700"
+              [attr.aria-label]="'SETTINGS_SECURITY.RECENT_SECURITY_ACTIVITY' | translate">
+              <button
+                type="button"
+                class="flex items-center gap-1 rounded-full px-3 py-2 text-base font-medium leading-6 text-blue-600/[.8] transition-colors duration-300 hover:bg-blue-600/[0.8] hover:text-white focus:bg-gray-400/[0.8] disabled:text-gray4 disabled:hover:bg-transparent disabled:hover:text-gray4 dark:text-white dark:focus:bg-blue-600/70 dark:disabled:text-white dark:disabled:hover:bg-gray1/[.08]"
+                [disabled]="activityPage() === 1"
+                (click)="goToActivityPage(activityPage() - 1)">
+                <mat-icon class="!h-5 !w-5 !text-xl">chevron_left</mat-icon>
+                {{ 'COMMON.PREVIOUS' | translate }}
+              </button>
+
+              <div class="flex items-center gap-1">
+                @for (page of activityPageNumbers(); track page) {
+                  <button
+                    type="button"
+                    [attr.aria-current]="activityPage() === page ? 'page' : null"
+                    [class]="
+                      activityPage() === page
+                        ? 'bg-blue-600 text-white hover:bg-blue-600/[0.6]'
+                        : 'text-blue-600/[.8] hover:bg-blue-600/[0.8] hover:text-white dark:text-white'
+                    "
+                    class="flex items-center rounded-full px-3 py-1 text-base font-medium leading-6 transition-colors duration-300 focus:bg-gray-400/[0.8] dark:focus:bg-blue-600/70"
+                    (click)="goToActivityPage(page)">
+                    {{ page }}
+                  </button>
+                }
+              </div>
+
+              <button
+                type="button"
+                class="flex items-center gap-1 rounded-full px-3 py-2 text-base font-medium leading-6 text-blue-600/[.8] transition-colors duration-300 hover:bg-blue-600/[0.8] hover:text-white focus:bg-gray-400/[0.8] disabled:text-gray4 disabled:hover:bg-transparent disabled:hover:text-gray4 dark:text-white dark:focus:bg-blue-600/70 dark:disabled:text-white dark:disabled:hover:bg-gray1/[.08]"
+                [disabled]="activityPage() === activityPageCount()"
+                (click)="goToActivityPage(activityPage() + 1)">
+                {{ 'COMMON.NEXT' | translate }}
+                <mat-icon class="!h-5 !w-5 !text-xl">chevron_right</mat-icon>
+              </button>
+            </nav>
+          }
         }
       }
 
@@ -1437,6 +1486,7 @@
         2. {{ 'SETTINGS_SECURITY.DANGER_LI_2' | translate }}
       </li>
       <li>3. {{ 'SETTINGS_SECURITY.DANGER_LI_3' | translate }}</li>
+      <li>4. {{ 'SETTINGS_SECURITY.DANGER_LI_4' | translate }}</li>
     </ol>
     <br />
     {{ 'SETTINGS_SECURITY.DANGER_IMPORTANT' | translate }}

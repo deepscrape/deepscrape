@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { HttpErrorResponse } from '@angular/common/http';
 import { TranslateModule } from '@ngx-translate/core';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { BrowserSessionService } from '../../services/browser-session.service';
 import { BrowserFrameComponent, pageFields, toolPayload } from './browser-frame.component';
 
@@ -51,10 +52,19 @@ describe('BrowserFrameComponent', () => {
   /** When true, the next `tool()` call is refused the way a 4xx would be. */
   let toolFails = false;
 
+  /** When non-zero, the next frame request fails with this HTTP status. */
+  let frameStatus = 0;
+
   const stub = {
-    frameUrl: (sessionId: string, nonce: number): string => {
+    frame: (sessionId: string, nonce: number) => {
       urls.push({ sessionId, nonce });
-      return `/api/browser/session/${sessionId}/frame?n=${nonce}`;
+      if (frameStatus) {
+        return throwError(() => new HttpErrorResponse({ status: frameStatus }));
+      }
+      // A real Blob, because the component turns it into an object URL and that
+      // is what the template binds. `of` resolves synchronously, so a poll has
+      // produced a source by the time it returns.
+      return of(new Blob(['frame']));
     },
     tool: (
       _sessionId: string,
@@ -75,6 +85,7 @@ describe('BrowserFrameComponent', () => {
     urls.length = 0;
     toolResult = {};
     toolFails = false;
+    frameStatus = 0;
 
     await TestBed.configureTestingModule({
       imports: [BrowserFrameComponent, TranslateModule.forRoot()],
@@ -92,31 +103,36 @@ describe('BrowserFrameComponent', () => {
 
   const frame = (): BrowserFrameComponent => fixture.componentInstance;
 
-  it('asks the service for the frame URL, per session', () => {
-    // The contract with Part A: `/api/browser/session/:id/frame`.
+  it('asks the service for a frame, per session', () => {
+    // The contract with Part A: `/api/browser/session/:id/frame`, fetched as bytes
+    // because the route is authenticated and an `<img>` cannot send the header.
     frame().poll();
     expect(urls[urls.length - 1].sessionId).toBe('s1');
   });
 
-  it('changes the URL on every poll, so nothing caches a frame', () => {
+  it('changes the frame on every poll, so nothing caches it', () => {
     // A cached frame of someone's live session is worse than no frame: it looks live.
-    const first = frame().frameUrl();
     frame().poll();
-    expect(frame().frameUrl()).not.toBe(first);
+    const first = frame().frameSrc();
+    expect(first).not.toBeNull();
+    frame().onFrameLoad();
+    frame().poll();
+    expect(frame().frameSrc()).not.toBe(first);
   });
 
   it('stops polling when paused', () => {
     frame().toggle();
-    const before = frame().frameUrl();
+    const before = frame().frameSrc();
     frame().poll();
-    expect(frame().frameUrl()).toBe(before);
+    expect(frame().frameSrc()).toBe(before);
   });
 
   it('asks for a frame immediately on resume', () => {
+    frame().poll();
     frame().toggle();
-    const paused = frame().frameUrl();
+    const paused = frame().frameSrc();
     frame().toggle();
-    expect(frame().frameUrl()).not.toBe(paused);
+    expect(frame().frameSrc()).not.toBe(paused);
   });
 
   it('reports a failure as a status, not as a frozen image', () => {
@@ -139,6 +155,74 @@ describe('BrowserFrameComponent', () => {
     expect(frame().statusKey()).toBe('BROWSER_SESSION.FRAME_LIVE');
   });
 
+  it('stops the loop when the machine can no longer be run', () => {
+    // 409 is arachnefly's "not in a running state", which the BFF relays as
+    // `no_frame_source`. It is permanent: retrying would poll a machine that
+    // cannot exist, at a backoff that never gives up.
+    frameStatus = 409;
+
+    frame().poll();
+
+    expect(frame().failed()).toBeTrue();
+    expect(frame().polling).toBeNull();
+  });
+
+  it('treats a 429 as pacing, not as a broken view', () => {
+    // The route refuses a poll that lands inside the tier's interval with
+    // `frame_too_soon`. That is the server working, not the view failing: counting
+    // it as a failure set the failed state and doubled the backoff, so one early
+    // poll turned a working live view into an eight-second slideshow that said it
+    // was dead.
+    frameStatus = 429;
+
+    frame().poll();
+
+    expect(frame().failed()).toBeFalse();
+    expect(frame().polling).not.toBeNull();
+  });
+
+  it('re-anchors the frame pace after an action, so the result is not a timer away', async () => {
+    // A click must show its effect within one interval of the ACTION. Leaving the
+    // loop on a timer that may have just fired costs up to a whole interval extra.
+    const before = frame().polling;
+
+    await frame().pressKey('Enter');
+
+    expect(frame().polling).not.toBe(before);
+    expect(frame().polling).not.toBeNull();
+  });
+
+  it('does not revive a stopped loop when an action succeeds', async () => {
+    // A stopped loop was stopped on purpose (a machine that cannot be running). An
+    // action must not quietly restart polling of it.
+    frame().stop();
+
+    await frame().pressKey('Enter');
+
+    expect(frame().polling).toBeNull();
+  });
+
+  it('marks the picture stale from the action until the frame that shows it', async () => {
+    // The gap this closes is the whole perceived-latency problem at this tier: the
+    // picture is unchanged for up to an interval after a click, so without a marker
+    // the user clicks again and `runTool` drops the second click in silence.
+    expect(frame().awaitingFrame()).toBeFalse();
+
+    await frame().pressKey('Enter');
+    expect(frame().awaitingFrame()).toBeTrue();
+
+    frame().poll();
+    expect(frame().awaitingFrame()).toBeFalse();
+  });
+
+  it('drops the stale marker when the view fails, rather than promising a frame', () => {
+    frame().awaitingFrame.set(true);
+
+    frame().onFrameError();
+
+    expect(frame().awaitingFrame()).toBeFalse();
+  });
+
   it('shows the toggle as the action, not the state', () => {
     expect(frame().toggleKey()).toBe('BROWSER_SESSION.FRAME_PAUSE');
     frame().toggle();
@@ -147,18 +231,21 @@ describe('BrowserFrameComponent', () => {
 
   it('asks for nothing while the tab is hidden', () => {
     // The money rule: frames nobody can see are still frames the customer pays for.
-    frame().hidden.set(true);
-    const before = frame().frameUrl();
     frame().poll();
-    expect(frame().frameUrl()).toBe(before);
+    const before = frame().frameSrc();
+    frame().hidden.set(true);
+    frame().poll();
+    expect(frame().frameSrc()).toBe(before);
   });
 
   it('resumes once the tab is visible again', () => {
+    frame().poll();
+    const before = frame().frameSrc();
     frame().hidden.set(true);
-    const hidden = frame().frameUrl();
+    frame().poll();
     frame().hidden.set(false);
     frame().poll();
-    expect(frame().frameUrl()).not.toBe(hidden);
+    expect(frame().frameSrc()).not.toBe(before);
   });
 
   it('stops the loop on destroy', () => {
@@ -179,6 +266,13 @@ describe('BrowserFrameComponent', () => {
    * rendered box, not from an attribute the CSS can contradict.
    */
   const sizeImage = (natural: [number, number], box: [number, number]) => {
+    // The <img> only exists once a frame has arrived -- a source-less image fires
+    // `error`, which this component reads as a failed frame -- so produce one the
+    // way a poll would and let the template render it.
+    if (!frame().frameSrc()) {
+      frame().poll();
+      fixture.detectChanges();
+    }
     const img = fixture.nativeElement.querySelector('img') as HTMLImageElement;
     Object.defineProperty(img, 'naturalWidth', { value: natural[0] });
     Object.defineProperty(img, 'naturalHeight', { value: natural[1] });

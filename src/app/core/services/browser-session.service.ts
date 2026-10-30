@@ -5,8 +5,11 @@ import { API_BASE_URL } from '../variables'
 import { AuthService } from './auth.service'
 import {
   BrowserSessionCreateRequest,
+  BrowserSessionExecResult,
   BrowserSessionListResponse,
-  BrowserSessionResponse,  VaultDurableReply,} from '../types/browser-session.interface'
+  BrowserSessionResponse,
+  VaultDurableReply,
+} from '../types/browser-session.interface'
 import { ToolEnvelope } from '../types'
 
 /**
@@ -41,13 +44,20 @@ export class BrowserSessionService {
   /**
    * The URL a live-view frame is read from.
    *
-   * Matches roadmap `03` A.2 exactly -- `GET /api/browser/session/:id/frame` ->
-   * `image/webp` -- so Part A only has to implement the route, not negotiate the
-   * contract with the client.
+   * Matches roadmap `03` A.2 exactly -- `GET /api/browser/session/:id/frame` -- so
+   * Part A only has to implement the route, not negotiate the contract with the
+   * client.
+   *
+   * A BLOB FETCH, not a URL bound to an `<img src>`. An image element cannot send
+   * an `Authorization` header, so the guarded route answered
+   * `{"error":"Unauthorized: Missing or invalid token"}` for every frame and the
+   * live view could never authenticate at all. Only `HttpClient` carries the
+   * caller's ID token, so the bytes come through here and the component holds an
+   * object URL. Measured 2026-10-28.
    *
    * `nonce` is not decoration. A browser will happily re-serve a cached frame, and a
    * live view stuck on one image is worse than one showing none, because it looks
-   * live. The BFF sends `no-store`, but a fresh URL per poll also defeats whatever
+   * live. The BFF sends `no-store`, but a fresh query per poll also defeats whatever
    * sits in front of it, a service worker included.
    *
    * The frame rate is a SERVER cap and not a parameter: a client-chosen `fps` is a
@@ -55,10 +65,14 @@ export class BrowserSessionService {
    *
    * @param {string} sessionId The session to view.
    * @param {number} nonce A value that changes per poll, so nothing caches it.
-   * @return {string} The same-origin frame URL.
+   * @return {Observable<Blob>} The frame the BFF relayed from the machine.
    */
-  frameUrl(sessionId: string, nonce: number): string {
-    return `${this.base}/${encodeURIComponent(sessionId)}/frame?n=${nonce}`
+  frame(sessionId: string, nonce: number): Observable<Blob> {
+    const path = `${this.base}/${encodeURIComponent(sessionId)}/frame`
+    return this.http.get(path + `?n=${nonce}`, {
+      headers: this.headers(),
+      responseType: 'blob',
+    })
   }
 
   /**
@@ -97,6 +111,41 @@ export class BrowserSessionService {
   }
 
   /**
+   * Run one command in the session's sandbox.
+   *
+   * A non-zero exit is a RESULT, not a failure: the daemon answers 200 with
+   * `exit_code`, so the caller decides what failure means. Only a transport or
+   * auth refusal rejects here.
+   *
+   * @param {string} sessionId The session whose machine runs it.
+   * @param {string[]} command argv; there is no shell, so it is not a command line.
+   * @param {number} [timeout] Seconds, clamped server-side.
+   * @param {string} [stdinB64] Base64 bytes for the command's stdin.
+   * @return {Observable<BrowserSessionExecResult>} What the command did.
+   */
+  exec(
+    sessionId: string,
+    command: string[],
+    timeout?: number,
+    stdinB64?: string,
+  ): Observable<BrowserSessionExecResult> {
+    const body: Record<string, unknown> = { command }
+
+    if (typeof timeout === 'number' && timeout > 0) {
+      body['timeout'] = timeout
+    }
+    if (stdinB64) {
+      body['stdin_b64'] = stdinB64
+    }
+
+    return this.http.post<BrowserSessionExecResult>(
+      `${this.base}/${encodeURIComponent(sessionId)}/exec`,
+      body,
+      { headers: this.headers() },
+    )
+  }
+
+  /**
    * The sessions this caller still holds.
    *
    * `closed` is excluded by the server, so this is the live set and is what a
@@ -106,6 +155,22 @@ export class BrowserSessionService {
     return this.http.get<BrowserSessionListResponse>(this.base, {
       headers: this.headers(),
     })
+  }
+
+  /**
+   * The sessions this caller has ENDED, newest first.
+   *
+   * A different route from `list`, not a flag on it: the live list feeds the
+   * lease decision, so a finished session must not appear in it. Closed records
+   * are never pruned, so the server caps the reply.
+   * @param {number} [limit] How many records to ask for.
+   * @return {Observable<BrowserSessionListResponse>} The ended sessions.
+   */
+  history(limit = 20): Observable<BrowserSessionListResponse> {
+    return this.http.get<BrowserSessionListResponse>(
+      this.base + '/history',
+      {headers: this.headers(), params: {limit}},
+    )
   }
 
   /**
@@ -132,6 +197,13 @@ export class BrowserSessionService {
 
     if (request.cdpUrl && request.cdpUrl.trim()) {
       body.cdpUrl = request.cdpUrl.trim()
+    }
+
+    // Only when the caller named one: the server defaults to `browser`, and
+    // sending an explicit `undefined` would be a second way to say the same
+    // thing.
+    if (request.workload) {
+      body.workload = request.workload
     }
 
     return this.http.post<BrowserSessionResponse>(this.base, body, {

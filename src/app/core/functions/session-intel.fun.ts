@@ -56,6 +56,14 @@ export function getSessionRiskLevel(session: SessionIntelShape): SessionRiskLeve
     return 'pending'
   }
 
+  // A skipped lookup is not an unknown answer: the address is private or
+  // reserved, `lookupGeoByIp` refused it on purpose, and there is nothing a
+  // provider could have said. Scoring it as `medium` painted "Needs review" on
+  // the user's own local session.
+  if (isIntelligenceSkipped(session)) {
+    return 'low'
+  }
+
   const proxy = session.proxy || fallbackProxyIntel
   const threat = (proxy.threat || '').toLowerCase()
   const usageType = (session.network?.usageType || '').toLowerCase()
@@ -101,6 +109,10 @@ export function getSessionRiskReason(session: SessionIntelShape, t?: IntelTransl
     return T(t, 'INTEL.REASON_PENDING', 'IP intelligence enrichment is still running. This usually resolves in a few seconds.')
   }
 
+  if (isIntelligenceSkipped(session)) {
+    return T(t, 'INTEL.REASON_PRIVATE', 'Private or reserved address; no network lookup applies.')
+  }
+
   const proxy = session.proxy || fallbackProxyIntel
   const usageType = session.network?.usageType
 
@@ -127,13 +139,24 @@ export function getSessionNetworkSummary(session: SessionIntelShape, t?: IntelTr
   const primary = [network.asn, network.as].filter(Boolean).join(' • ')
   const secondary = [network.usageType, network.isp, network.domain].filter(Boolean).join(' • ')
   const value = [primary, secondary].filter(Boolean).join(' • ')
-  return value || T(t, 'INTEL.NETWORK_UNAVAILABLE', 'Network intelligence unavailable')
+  if (value) {
+    return value
+  }
+  if (isIntelligenceSkipped(session)) {
+    return T(t, 'INTEL.PRIVATE_ADDRESS', 'Private or reserved address')
+  }
+  return T(t, 'INTEL.NETWORK_UNAVAILABLE', 'Network intelligence unavailable')
 }
 
 export function getSessionProxySummary(session: SessionIntelShape, t?: IntelTranslator): string {
   const proxy = session.proxy || fallbackProxyIntel
   if (!proxy.isProxy) {
     if (proxy.confidence === 'unknown') {
+      // "unknown" and "never asked" are different answers, and only one of them
+      // is a reason to distrust the device.
+      if (isIntelligenceSkipped(session)) {
+        return T(t, 'INTEL.PRIVATE_ADDRESS', 'Private or reserved address')
+      }
       return T(t, 'INTEL.PROXY_UNKNOWN', 'Proxy status unknown')
     }
     return T(t, 'INTEL.PROXY_NONE', 'No open proxy detected')
@@ -153,4 +176,15 @@ function cleanNullableString(value: unknown): string | null {
 
 function isIntelligencePending(session: SessionIntelShape): boolean {
   return String(session.intelligenceStatus || '').trim().toLowerCase() === 'pending'
+}
+
+/**
+ * The lookup was deliberately not attempted (non-routable address). Distinct from
+ * `no-match`, where a provider was asked and had no answer.
+ *
+ * @param {SessionIntelShape} session session intelligence fields
+ * @return {boolean} true when enrichment was skipped by design
+ */
+function isIntelligenceSkipped(session: SessionIntelShape): boolean {
+  return String(session.intelligenceStatus || '').trim().toLowerCase() === 'skipped'
 }

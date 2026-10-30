@@ -2,7 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { TranslateModule } from '@ngx-translate/core';
-import { Observable, Subject } from 'rxjs';
+import { Observable, Subject, of } from 'rxjs';
 import { BrowserSessionService } from '../../services/browser-session.service';
 import {
   BrowserSession,
@@ -59,6 +59,11 @@ describe('BrowserSessionPanelComponent', () => {
 
     const stub = {
       list: (): Observable<BrowserSessionListResponse> => list$.asObservable(),
+      // The ended-session read, loaded beside the live list. A static empty reply
+      // keeps every existing spec about the LIVE list: history is decoration
+      // unless a spec sets it, and one does.
+      history: (): Observable<BrowserSessionListResponse> =>
+        of({ status: 'ok', sessions: [] }),
       create: (
         request: BrowserSessionCreateRequest
       ): Observable<BrowserSessionResponse> => {
@@ -74,8 +79,7 @@ describe('BrowserSessionPanelComponent', () => {
       // Only the specs that OPEN a live view reach this, because the frame is
       // mounted on demand. It is here so those specs exercise the panel rather
       // than a frame component that fell over on a missing method.
-      frameUrl: (id: string, nonce: number): string =>
-        `/api/browser/session/${id}/frame?n=${nonce}`,
+      frame: (): Observable<Blob> => of(new Blob(['frame'])),
     };
 
     await TestBed.configureTestingModule({

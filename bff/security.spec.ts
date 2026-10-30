@@ -6,6 +6,8 @@ const app = new Elysia()
   .use(security)
   .get('/page', () => new Response('<app-root></app-root>'))
   .post('/api/echo', () => ({ ok: true }))
+  .post('/api/jobs/crawl/worker', () => ({ ok: true }))
+  .post('/api/jobs/crawl/other', () => ({ ok: true }))
   .post('/event/analytics/event', () => ({ ok: true }))
 
 const call = (path: string, init?: RequestInit) =>
@@ -98,6 +100,14 @@ describe('csrf, cookies and cors', () => {
   test('ignores non-browser prefixes and safe methods', async () => {
     expect((await call('/event/analytics/event', { method: 'POST' })).status).toBe(200)
     expect((await call('/page')).status).toBe(200)
+  })
+
+  test('exempts the two QStash delivery paths by name, not by prefix', async () => {
+    // QStash has no cookie jar; `upstash-signature` is the authentication these take.
+    expect((await call('/api/jobs/crawl/worker', { method: 'POST' })).status).toBe(200)
+    // A job route added later must not inherit the exemption by sitting under the
+    // same prefix. Both paths exist here, so only the CSRF gate can separate them.
+    expect((await call('/api/jobs/crawl/other', { method: 'POST' })).status).toBe(403)
   })
 
   test('/csrf-token returns a usable token with no-store', async () => {

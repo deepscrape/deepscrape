@@ -84,13 +84,13 @@ const CSRF_COOKIE = '_csrf'
 /**
  * Non-browser callers: machine / webhook / health endpoints are exempt from CSRF.
  *
- * `/api/jobs/` is the QStash delivery surface. QStash has no cookie jar, so it
- * cannot echo `csrf-token`, and the `upstash-signature` on the request is the
- * only authentication those routes take. Without this entry every delivery was
- * answered 403 before the handler ran — so no queued crawl ever started, and the
- * failure callback was 403 as well, leaving the job `In Progress` for ever.
+ * The two QStash delivery routes are exempt by exact path, not by a `/api/jobs/`
+ * prefix: QStash has no cookie jar, so it cannot echo `csrf-token`, and the
+ * `upstash-signature` is the only authentication those routes take. A prefix would
+ * silently exempt whatever job route lands under it next, with nobody deciding it.
  */
-const CSRF_IGNORED_PATH_PREFIXES = ['/event', '/status', '/oauth', '/services/contact', '/api/jobs/']
+const CSRF_IGNORED_PATHS = new Set(['/api/jobs/crawl/worker', '/api/jobs/crawl/failed'])
+const CSRF_IGNORED_PATH_PREFIXES = ['/event', '/status', '/oauth', '/services/contact']
 const CSRF_IGNORED_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 const ALLOWED_ORIGINS = isProd
@@ -256,9 +256,9 @@ export const security = new Elysia({ name: 'security' })
     cookie[CSRF_COOKIE].value = token
     Object.assign(cookie[CSRF_COOKIE], CSRF_TOKEN_OPTIONS)
 
-    const bypassed = CSRF_IGNORED_PATH_PREFIXES.some((path) =>
-      pathname.startsWith(path),
-    )
+    const bypassed =
+      CSRF_IGNORED_PATHS.has(pathname) ||
+      CSRF_IGNORED_PATH_PREFIXES.some((path) => pathname.startsWith(path))
 
     if (bypassed || CSRF_IGNORED_METHODS.has(request.method)) {
       return undefined

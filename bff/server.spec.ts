@@ -26,6 +26,16 @@ describe('bff page serving', () => {
     expect(await res.text()).toContain('<app-root')
   })
 
+  test('the shell is never cached, because it names the hashed bundles', async () => {
+    // Every page route answers through the shell, and it lives in the BFF rather than
+    // in Hosting's static files — so there is no `**/*.html` header rule left to mark
+    // it. Without this the browser keeps a shell that points at chunks the last deploy
+    // deleted, and renders a blank page until the cache expires.
+    const res = await get('/dashboard/settings')
+
+    expect(res.headers.get('cache-control')).toBe('no-cache')
+  })
+
   test('a missing asset is 404 text/plain, never HTML', async () => {
     const res = await get('/nope-12345.js')
 

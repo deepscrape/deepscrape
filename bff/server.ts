@@ -142,7 +142,17 @@ const app = new Elysia({ aot: true })
 
     const shell = Bun.file(shellPath)
     if (await shell.exists()) {
-      return new Response(shell, { headers: { 'Content-Type': 'text/html' } })
+      return new Response(shell, {
+        headers: {
+          'Content-Type': 'text/html',
+          // The shell names the HASHED bundles. A cached copy points at chunks the
+          // next deploy deleted, and the browser renders a blank page until the cache
+          // expires -- the same failure the missing-asset guard above exists for, one
+          // layer further out. Every page route answers through here, so there is no
+          // static `**/*.html` rule in firebase.json left to catch it.
+          'Cache-Control': 'no-cache'
+        }
+      })
     }
 
     return new Response(Bun.file(notFoundPath), {

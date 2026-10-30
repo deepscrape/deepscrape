@@ -34,13 +34,18 @@ describe('the queue delivery endpoints', () => {
     expect(res.status).toBe(401)
   })
 
-  test('refuse a worker delivery with a forged signature', async () => {
+  test('answer 503, not 401, to a signature it cannot verify', async () => {
+    // 401 is what a forged signature deserves, but it is also what a ROTATED
+    // signing key produces, and QStash retires a message on 4xx: the job then
+    // hangs In Progress with no DLQ entry. 503 costs a retry and leaves the fault
+    // visible in the DLQ, which is the failure a human can actually find.
+    // The refusal itself is unchanged — no work is done for an unverified body.
     const res = await post('/api/jobs/crawl/worker', {
       'upstash-signature':
         'eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJVcHN0YXNoIn0.deadbeef',
     })
 
-    expect(res.status).toBe(401)
+    expect(res.status).toBe(503)
   })
 
   test('refuse a failure report with no signature', async () => {

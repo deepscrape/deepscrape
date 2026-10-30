@@ -57,26 +57,31 @@ import {
   storageGetSettings,
   storageDelete,
   storageList,
+  storageObject,
   storagePresign,
   storageSave,
+  storageSavePayload,
   storageSetSettings,
 } from '../functions/src/handlers/storage'
 import {
   recordCrawlFailure,
-  runCrawlTarget,
+  runJobTarget,
   webrainJobs,
 } from '../functions/src/handlers/webrain-jobs'
 import {
   verifyQstashDelivery,
   type CrawlTargetMessage,
 } from '../functions/src/infrastructure/qstash'
+import { env } from '../functions/src/config/env'
 import { submitContact } from '../functions/src/handlers/contact_handler'
 import { statusCheck } from '../functions/src/handlers/home_handler'
 import { arachnefly } from '../functions/src/handlers/machines'
 import {
   browserSessionClose,
   browserSessionCreate,
+  browserSessionExec,
   browserSessionFrame,
+  browserSessionHistory,
   browserSessionKeepalive,
   browserSessionList,
   browserSessionTool,
@@ -88,9 +93,11 @@ import {
 } from '../functions/src/handlers/webrain-config'
 import {
   machineFleetList,
+  machineListHistory,
   machineListMine,
 } from '../functions/src/handlers/machine-fleet'
 import { sessionFleetList } from '../functions/src/handlers/session-fleet'
+import { orgCreditTransfer } from '../functions/src/handlers/org-credits'
 import {
   billingPolicyGet,
   billingPolicySet,
@@ -300,9 +307,38 @@ api.put(
   '/api/orgs/:orgId',
   h(guard([perm('organization', 'manage'), org('renameOrganization')])),
 )
+// Hand the org to another member: the only route out for an owner, because removal
+// refuses the last owner and deletion refuses an org that still has teammates.
+api.put(
+  '/api/orgs/:orgId/owner',
+  h(guard([perm('organization', 'manage'), org('transferOrganizationOwnership')])),
+)
 api.delete(
   '/api/orgs/:orgId/members/:userId',
   h(guard([perm('organization', 'manage'), org('removeOrganizationMember')])),
+)
+// Deleting the org itself: identity, wallet, roster and pending invitations.
+//
+// `organization.manage` is the chain, but the handler narrows it to the owner --
+// an org admin may rename the tenant it helps run, not destroy it -- and lets a
+// platform admin through so support can clear an org whose owner is already gone.
+api.delete(
+  '/api/orgs/:orgId',
+  h(guard([perm('organization', 'manage'), org('deleteOrganization')])),
+)
+// Fund the org's credit wallet from the caller's own balance.
+//
+// `organization.manage` -- owner/admin only, and NOT `organization.invite`: a
+// transfer is one-way and there is no refund route, so the capability has to be
+// the one that already means "may change this org's money".
+//
+// No `paid` and no `access`: this moves credits between two documents the caller
+// already owns a side of, and it charges nothing. The `:orgId` in the path is the
+// org `requirePermission` authorises against -- `getOrgIdFromRequest` reads the
+// path parameter FIRST -- so the org that is credited is the org that was checked.
+api.post(
+  '/api/orgs/:orgId/credits/transfer',
+  h(guard([perm('organization', 'manage'), orgCreditTransfer])),
 )
 
 // ── AI cores ─────────────────────────────────────────────────────────────────
@@ -551,6 +587,14 @@ api.get(
   '/api/browser/session',
   h(guard([access, perm('crawl', 'execute'), browserSessionList])),
 )
+// What this caller has already RUN. Not a flag on the list above: that one feeds
+// the lease decision, so mixing ended records into it would make a finished
+// session count against the live quota. Same guard -- reading your own history is
+// `crawl.execute` and nothing here spends a credit.
+api.get(
+  '/api/browser/session/history',
+  h(guard([access, perm('crawl', 'execute'), browserSessionHistory])),
+)
 api.post(
   '/api/browser/session',
   h(guard([access, perm('crawl', 'execute'), browserSessionCreate])),
@@ -587,6 +631,20 @@ api.get(
 api.post(
   '/api/browser/session/:id/tool',
   h(guard([access, perm('crawl', 'execute'), browserSessionTool])),
+)
+
+// The shell. Same four guards as `tool` above and for the same reason: the
+// machine is the caller's lease and its sandbox is a child of it, so there is
+// nothing here for a tier to decide. The boundary is the process — uid 10001,
+// cwd `/work`, an empty network namespace, rlimits — and it lives in the
+// machine's image, not in this table. What the caller may name is therefore
+// unbounded by design; what it can DO is not.
+//
+// `POST`, unlike the read-only neighbours, because a command mutates the
+// machine's `/work`, and a cache or a prefetch must not be able to run one.
+api.post(
+  '/api/browser/session/:id/exec',
+  h(guard([access, perm('crawl', 'execute'), browserSessionExec])),
 )
 
 // The credential vault: `access`, like its four neighbours, and the tier
@@ -717,9 +775,26 @@ api.post(
   '/api/storage/save',
   h(guard([permStorage('write'), storageSave])),
 )
+// Payloads the caller already HOLDS: a job result, a tool reply. `save` above
+// can only file something the platform can fetch again, and a worker artifact
+// is a filename on the worker's disk -- so a run's result used to be readable
+// in the UI and then unreachable. The handler files it in the caller's own
+// namespace, which is the only tier a payload can belong to.
+api.post(
+  '/api/storage/payload',
+  h(guard([permStorage('write'), storageSavePayload])),
+)
 api.post(
   '/api/storage/presign',
   h(guard([permStorage('read'), storagePresign])),
+)
+// The same bytes, WITHOUT minting a URL credential. `presign` above hands out a
+// bearer token in a query string; this hands out a response. A caller that wants
+// to VIEW a file fetches this with its own token and renders the bytes, so
+// nothing that leaves the process can be replayed.
+api.get(
+  '/api/storage/object',
+  h(guard([permStorage('read'), storageObject])),
 )
 // `storage.write`, not `read`: this removes an object. The scoping the other
 // routes rely on still applies -- the handler answers 404 for a key the caller
@@ -787,6 +862,33 @@ api.put(
   h(guard([paid, perm('crawl', 'execute'), webrainJobs.cancelTask])),
 )
 
+// Queue ONE playground tool call, and read any job back as plain JSON.
+//
+// Why the tools panel needs this at all: it called the tool's own route, so the
+// work lived exactly as long as the tab. Navigating to another mode or another
+// page aborted the request and the answer was gone. A queued call outlives the
+// tab and leaves the row `/operations` lists.
+//
+// `access`, not `paid`, for both, and the two reasons differ:
+//
+//  - The ENQUEUE must not be stricter than the tool it queues. `/api/search`
+//    resolves `access` and decides the tier inside `decideWebrainTool`; a `paid`
+//    guard here would 402 the one tool a free caller is entitled to.
+//  - The RESULT read is scoped to the caller's own uid by the handler's path
+//    (`users/{uid}/crawljobs/{id}`), so `paid` would guard confidentiality that
+//    is already structural -- while making a free caller's own finished search
+//    unreadable. The SSE pair above keeps `paid` because the crawl jobs it
+//    serves are the paid ones; this one answers for whichever job the caller
+//    owns.
+api.post(
+  '/api/job/tool',
+  h(guard([access, perm('crawl', 'execute'), webrainJobs.enqueueTool])),
+)
+api.get(
+  '/api/job/:taskId/result',
+  h(guard([access, perm('crawl', 'execute'), webrainJobs.getTaskResult])),
+)
+
 // ── the queue's delivery endpoints ───────────────────────────────────────────
 // Not `h(guard([...]))`: QStash cannot present a Firebase JWT, so the signature
 // IS the authentication. These are also the only routes here that are
@@ -797,33 +899,83 @@ api.put(
 // No rate limiter in front either: the enqueue route is where a user acts, and
 // throttling a delivery turns a retry into a failure.
 
-/** The raw body, or null when the delivery is not signed by QStash. */
+/**
+ * The raw body, or null when the delivery is not signed by QStash.
+ *
+ * The URL matters as much as the body: QStash signs the destination it was GIVEN
+ * (`workerUrlFor(env.APP_ORIGIN)`, i.e. `https://deepscrape.dev/...`), while the
+ * request arrives through Firebase Hosting and Cloud Run with the `run.app` host
+ * in `request.url`. Verifying against the received URL therefore rejects every
+ * genuine delivery as `Invalid signature` — measured 2026-10-28 in the QStash DLQ.
+ * The canonical origin is tried FIRST, and the received URL is kept as a fallback
+ * so a direct call (local `qstash-cli dev`, which publishes to 127.0.0.1) still
+ * verifies without a second code path.
+ */
 const signed = async (request: Request): Promise<string | null> => {
   const raw = await request.text()
   const signature = request.headers.get('upstash-signature') ?? ''
+  if (!signature) {
+    return null
+  }
 
-  return (await verifyQstashDelivery(raw, signature, request.url)) ? raw : null
+  const path = new URL(request.url).pathname
+  const canonical = new URL(path, env.APP_ORIGIN).toString()
+  for (const candidate of [canonical, request.url]) {
+    if (await verifyQstashDelivery(raw, signature, candidate)) {
+      return raw
+    }
+  }
+
+  return null
+}
+
+/**
+ * The queued body as an object, or null when a publish sent something else.
+ *
+ * Both job routes take whatever QStash delivers and used to cast it. A body that is
+ * a JSON string (or an array) casts fine, reads as `undefined` fields, and no retry
+ * can turn it into a job — so it is retired here instead of burning four deliveries.
+ *
+ * @param raw the verified request body
+ * @return the message, or null when it is not a JSON object
+ */
+const jobMessage = (raw: string): CrawlTargetMessage | null => {
+  const parsed: unknown = JSON.parse(raw)
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    console.error('bff: crawl job body is not an object', raw.slice(0, 200))
+
+    return null
+  }
+
+  return parsed as CrawlTargetMessage
 }
 
 api.post('/api/jobs/crawl/worker', async ({ request, set }) => {
   const raw = await signed(request)
   if (raw === null) {
-    set.status = 401
+    // A delivery that OFFERS a signature but fails verification is a deployment
+    // fault — a rotated signing key, a stale FUNCTIONS_ENV_JSON — not an attack.
+    // 401 makes QStash retire the message, so the job sat "In Progress" forever
+    // with no DLQ entry and no failure row (measured 2026-10-28). 503 makes it
+    // retry, so the fault ends up visible in the DLQ instead of vanishing.
+    set.status = (request.headers.get('upstash-signature') ?? '') ? 503 : 401
     return { error: 'Invalid signature' }
   }
 
-  const message = JSON.parse(raw) as CrawlTargetMessage
+  const message = jobMessage(raw)
+  if (!message) {
+    set.status = 400
+
+    return { error: 'Job body is not an object' }
+  }
 
   try {
-    await runCrawlTarget(
-      message.uid,
-      message.taskId,
-      message.url,
-      message.accessMode,
-    )
-  } catch {
+    await runJobTarget(message)
+  } catch (error) {
     // 5xx is what makes QStash retry. A 4xx would retire the message instead,
     // and a transient worker outage would become a permanent result.
+    console.error('bff: crawl job failed', message.taskId, error)
     set.status = 502
     return { retry: true }
   }
@@ -834,15 +986,25 @@ api.post('/api/jobs/crawl/worker', async ({ request, set }) => {
 api.post('/api/jobs/crawl/failed', async ({ request, set }) => {
   const raw = await signed(request)
   if (raw === null) {
-    set.status = 401
+    // Same rule as the worker route: signed-but-unverifiable is a deploy fault, so
+    // it retries into the DLQ rather than retiring the failure notification.
+    set.status = (request.headers.get('upstash-signature') ?? '') ? 503 : 401
     return { error: 'Invalid signature' }
   }
 
-  const message = JSON.parse(raw) as CrawlTargetMessage
+  const message = jobMessage(raw)
+  if (!message) {
+    set.status = 400
+
+    return { error: 'Job body is not an object' }
+  }
+
+  // A tool delivery has no url; its label is the row's own name, which is what
+  // the results view shows for a call that never landed.
   await recordCrawlFailure(
     message.uid,
     message.taskId,
-    message.url,
+    message.url ?? message.label ?? message.tool ?? 'unknown target',
     'No result after the retries were exhausted',
   )
 
@@ -880,6 +1042,10 @@ api.get(
 // session's close route, and destroying it directly leaves a session record
 // billing for a machine that no longer exists.
 api.get('/api/machines', h(guard([paid, perm('machine', 'read'), machineListMine])))
+api.get(
+  '/api/machines/history',
+  h(guard([paid, perm('machine', 'read'), machineListHistory])),
+)
 api.get(
   '/api/machines/machine/:id',
   h(guard([paid, perm('machine', 'read'), bind(arachnefly.getMachine, arachnefly)])),

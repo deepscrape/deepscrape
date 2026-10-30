@@ -23,6 +23,7 @@ import {
   initialStateFor,
   parseCreateRequest,
   refusalFor,
+  sniffImageType,
   toPublicSession,
   type BrowserKind,
   type BrowserSessionRecord,
@@ -70,11 +71,13 @@ describe("SESSION_CAPS", () => {
     assert.equal(SESSION_CAPS.admin.byo, Number.POSITIVE_INFINITY)
   })
 
-  it("gives an idle expiry to exactly one tier", () => {
-    // Guards the `idleDeadlineFrom` footgun: a zero TTL must mean "no expiry".
+  it("gives an idle expiry to every tier that can hold a machine", () => {
+    // Guards the `idleDeadlineFrom` footgun: a zero TTL must mean "no expiry",
+    // and no tier that can hold a Fly machine may take that path — admin used to,
+    // which left its machine running with no end.
     assert.ok(SESSION_CAPS.paid.idleTtlMs > 0)
     assert.equal(SESSION_CAPS.free.idleTtlMs, 0)
-    assert.equal(SESSION_CAPS.admin.idleTtlMs, 0)
+    assert.ok(SESSION_CAPS.admin.idleTtlMs > 0)
   })
 })
 
@@ -244,17 +247,40 @@ const stored = (
   return {...base, ...overrides}
 }
 
+describe("sniffImageType", () => {
+  const png = [0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]
+  const jpeg = [0xff, 0xd8, 0xff, 0xe0]
+  const webp = [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]
+
+  it("names the three formats the engine can answer with", () => {
+    assert.equal(sniffImageType(new Uint8Array(png)), "image/png")
+    assert.equal(sniffImageType(new Uint8Array(jpeg)), "image/jpeg")
+    assert.equal(sniffImageType(new Uint8Array(webp)), "image/webp")
+  })
+
+  it("answers nothing for bytes it cannot name", () => {
+    assert.equal(sniffImageType(new Uint8Array([1, 2, 3])), undefined)
+    assert.equal(sniffImageType(new Uint8Array([])), undefined)
+  })
+})
+
 describe("toPublicSession", () => {
   it("drops the machine id and the secret pointer", () => {
     const projected = toPublicSession(stored())
     assert.deepEqual(Object.keys(projected).sort(), [
       "createdAt",
       "expiresAt",
+      "frameIntervalMs",
       "id",
       "kind",
       "mode",
       "state",
     ])
+  })
+
+  it("reports the tier's frame cadence, not one rate for everybody", () => {
+    assert.equal(toPublicSession(stored({tier: "admin"})).frameIntervalMs, 250)
+    assert.equal(toPublicSession(stored({tier: "paid"})).frameIntervalMs, 1000)
   })
 
   it("names the idle deadline expiresAt", () => {
@@ -278,10 +304,15 @@ describe("toPublicSession", () => {
 })
 
 describe("idleDeadlineForTier", () => {
-  it("gives the paid tier a deadline and the others none", () => {
+  it("gives every tier that can hold a machine a deadline", () => {
     assert.equal(idleDeadlineForTier("paid", 1_000), 1_000 + 15 * 60 * 1000)
     assert.equal(idleDeadlineForTier("free", 1_000), undefined)
-    assert.equal(idleDeadlineForTier("admin", 1_000), undefined)
+    // Admin used to answer `undefined`, i.e. "never reaped": a Fly machine with
+    // no end. The ceiling exists even though the count does not.
+    assert.equal(
+      idleDeadlineForTier("admin", 1_000),
+      1_000 + 4 * 60 * 60 * 1000,
+    )
   })
 })
 

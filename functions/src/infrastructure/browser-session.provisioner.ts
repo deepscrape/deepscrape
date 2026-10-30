@@ -39,7 +39,9 @@
 import fetch, {RequestInit} from "node-fetch"
 import {
   machineRequestFor,
+  sizeForWorkload,
   type BrowserMachineRequest,
+  type SessionWorkload,
 } from "../domain/browser-session.domain"
 
 /** What a deploy attempt produced. */
@@ -59,6 +61,13 @@ export type DeployMachineInput = {
   image: string
   /** The Fly region to place the machine in. */
   region: string
+  /**
+   * What the session is for, which picks the CPU/RAM preset. A code session does
+   * not need a renderer's 2 GB, and Fly bills the preset for as long as the
+   * machine runs. Omitted means browser: a missing field must never make a
+   * browser smaller than it needs to be.
+   */
+  workload?: SessionWorkload
   /**
    * Milliseconds to wait before each retry. Omitted takes the default policy; an
    * empty array means a single attempt and no retry at all.
@@ -215,6 +224,7 @@ export const deployBrowserMachine = async (
     input.sessionId,
     image,
     input.region,
+    sizeForWorkload(input.workload),
   )
 
   let last: DeployMachineResult = {
@@ -373,10 +383,17 @@ export type MachineFrameInput = {
   machineId: string
 }
 
-/** One frame, or why there is none. */
+/**
+ * One frame, or why there is none.
+ *
+ * `code` and `state` are arachnefly's own, not values this module invents. They
+ * are carried because the caller has to decide whether to END the session behind
+ * a failed frame, and the HTTP status cannot answer that: every refusal that
+ * means "the machine is not running" is a 409, including a machine mid-boot.
+ */
 export type MachineFrameResult =
   | {ok: true; contentType: string; bytes: Uint8Array}
-  | {ok: false; error: string; status?: number}
+  | {ok: false; error: string; status?: number; code?: string; state?: string}
 
 /**
  * The MCP request that asks a machine's own engine for one screenshot.
@@ -384,12 +401,23 @@ export type MachineFrameResult =
  * Exported so the shape is testable without reaching a machine. `id` is a
  * literal rather than a counter: the transport answers one call at a time, so a
  * mismatched id would be a bug in this module, not a multiplexing concern.
+ *
+ * WEBP at quality 70, not the engine's PNG default. The frame's SIZE is the one
+ * number that decides whether the live view can be interactive at all: it is
+ * billed twice (machine→BFF, BFF→browser) and it is the whole reason the tier caps
+ * sat at 1 fps. A UI screenshot is exactly the content a lossy encoder wins on.
+ * `what: "screenshot"` folds to `webrain_screenshot`, whose handler reads both
+ * arguments; a backend that cannot encode webp falls back to its own format rather
+ * than failing, which is why the route trusts the BYTES over the reported mime.
  */
 export const OBSERVE_FRAME_BODY = {
   jsonrpc: "2.0",
   id: "frame",
   method: "tools/call",
-  params: {name: "webrain_observe", arguments: {what: "screenshot"}},
+  params: {
+    name: "webrain_observe",
+    arguments: {what: "screenshot", format: "webp", quality: 70},
+  },
 }
 
 /**
@@ -445,12 +473,28 @@ export const observeMachineFrame = async (
 
   const bytes = new Uint8Array(await response.arrayBuffer())
   if (!response.ok) {
-    // Status only. The upstream body names internal services and validation
-    // rules, and this is the path a caller reaches by guessing a machine id.
+    // The body is READ for its `code` and `state`, and never relayed. It names
+    // internal services and validation rules, and this is the path a caller
+    // reaches by guessing a machine id; two fields are lifted out, rest dropped.
+    const refusal = upstreamRefusalOf(bytes)
     return {
       ok: false,
       status: response.status,
+      code: refusal.code,
+      state: refusal.state,
       error: `arachnefly answered ${response.status}`,
+    }
+  }
+
+  // The engine answers with a JSON-RPC envelope, so these bytes are usually a
+  // JSON string holding base64 rather than an image. Handing that to the route as
+  // `image/png` is why an `<img>` cannot decode a live frame at all.
+  const base64 = imagePayloadOf(bytes)
+  if (base64 !== undefined) {
+    return {
+      ok: true,
+      contentType: "image/png",
+      bytes: Buffer.from(base64, "base64"),
     }
   }
 
@@ -458,6 +502,94 @@ export const observeMachineFrame = async (
     ok: true,
     contentType: response.headers.get("content-type") || "image/png",
     bytes: bytes,
+  }
+}
+
+/**
+ * The `code` and `state` of arachnefly's own error envelope.
+ *
+ * Tolerant on purpose. A non-JSON body (a Go panic page, a load balancer's HTML
+ * 502) must yield an empty object rather than throw, because this runs on the
+ * failure path where the request still has to be answered.
+ *
+ * Both fields, because the code alone cannot decide whether a session is over:
+ * a machine that is `starting` and one that is `destroyed` are refused with the
+ * same code, and only the second means the session can never serve a frame.
+ * @param {Uint8Array} body The upstream body.
+ * @return {object} Whatever the envelope carried; both fields optional.
+ */
+export const upstreamRefusalOf = (
+  body: Uint8Array,
+): {code?: string; state?: string} => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(Buffer.from(body).toString("utf8"))
+  } catch {
+    return {}
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {}
+  }
+  const {code, state} = parsed as {code?: unknown; state?: unknown}
+  const refusal: {code?: string; state?: string} = {}
+  if (typeof code === "string" && code !== "") {
+    refusal.code = code
+  }
+  if (typeof state === "string" && state !== "") {
+    refusal.state = state
+  }
+  return refusal
+}
+
+/**
+ * The base64 image inside an MCP tool answer, or undefined if the body IS one.
+ *
+ * The engine wraps every tool result in `{result:{content:[…]}}`. A screenshot
+ * arrives either as an MCP image part (`{type:"image", data}`) or — what this
+ * build actually sends — a TEXT part holding `{"screenshot_b64": "…"}`, so
+ * both are checked. A body that is not JSON is reported as undefined and passed
+ * through untouched: arachnefly answering with real image bytes must keep
+ * working, and that is the shape the route was written for.
+ * @param {Uint8Array} body The upstream body.
+ * @return {string | undefined} The base64 payload, or undefined.
+ */
+export const imagePayloadOf = (body: Uint8Array): string | undefined => {
+  let envelope: {result?: {content?: unknown}}
+  try {
+    envelope = JSON.parse(new TextDecoder().decode(body)) as {
+      result?: {content?: unknown}
+    }
+  } catch {
+    return undefined
+  }
+
+  const content = envelope?.result?.content
+  if (!Array.isArray(content)) {
+    return undefined
+  }
+
+  // An MCP image part is already the answer, and it needs no JSON inside JSON.
+  const image = content.find((part) =>
+    (part as {type?: unknown})?.type === "image")
+  const data = (image as {data?: unknown} | undefined)?.data
+  if (typeof data === "string" && data.length > 0) {
+    return data
+  }
+
+  const text = content
+    .map((part) => (part as {text?: unknown})?.text)
+    .filter((value): value is string => typeof value === "string")
+    .join("")
+  if (!text) {
+    return undefined
+  }
+
+  try {
+    const payload = JSON.parse(text) as {screenshot_b64?: unknown}
+    return typeof payload.screenshot_b64 === "string" ?
+      payload.screenshot_b64 : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -582,6 +714,99 @@ export const callMachineTool = async (
       ok: false,
       status: response.status,
       error: "the machine did not answer JSON",
+    }
+  }
+}
+
+/** What the caller must supply to run one command in the sandbox. */
+export type MachineExecInput = {
+  /** Arachnefly's base URL, resolved by the caller from config. */
+  baseUrl: string
+  /** The caller's Firebase ID token, relayed verbatim. */
+  token: string
+  /** The Fly machine id from the session record. */
+  machineId: string
+  /** argv, validated by the route as non-empty strings. */
+  command: string[]
+  /** Seconds; zero asks the daemon for its default. */
+  timeout: number
+  /** Base64 bytes for the command's stdin, or empty for none. */
+  stdinB64?: string
+}
+
+/** One command's answer, or why there is none. */
+export type MachineExecResult =
+  | {ok: true; json: unknown}
+  | {ok: false; error: string; status?: number}
+
+/**
+ * Runs one command in a session machine's sandbox.
+ *
+ * A child of the caller's own lease, not a shell on a shared worker: the
+ * machine belongs to the session record, and arachnefly's ownership middleware
+ * checks the machine against the uid the token carries, so an id from another
+ * tenant is a 404 upstream and never a credential.
+ *
+ * A non-zero exit is NOT a failure of this call. The daemon answers 200 with
+ * `{exit_code, stdout, stderr, truncated}` because "the command worked and said
+ * no" is a result the caller asked for; only a transport or auth refusal is
+ * `ok: false`. Conflating the two would turn every `grep` that matched nothing
+ * into an outage.
+ *
+ * Never throws, matching its siblings: an unhandled rejection would hold the
+ * request to its timeout instead of answering it.
+ * @param {MachineExecInput} input The machine and the command.
+ * @return {Promise<MachineExecResult>} The parsed result, or why not.
+ */
+export const callMachineExec = async (
+  input: MachineExecInput,
+): Promise<MachineExecResult> => {
+  const machineId = input.machineId.trim()
+  if (!machineId) {
+    return {ok: false, error: "no machine to run on"}
+  }
+
+  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/machine/exec/` +
+    encodeURIComponent(machineId)
+
+  let response: Awaited<ReturnType<typeof fetch>>
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${input.token}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({
+        command: input.command,
+        timeout: input.timeout,
+        stdin_b64: input.stdinB64 ?? "",
+      }),
+    })
+  } catch (error) {
+    return {ok: false, error: `arachnefly unreachable: ${String(error)}`}
+  }
+
+  const raw = await response.text()
+
+  if (!response.ok) {
+    // Status only. The upstream body names the machine's internals, and this is
+    // the path a caller reaches by guessing a machine id.
+    return {
+      ok: false,
+      status: response.status,
+      error: `arachnefly answered ${response.status}`,
+    }
+  }
+
+  try {
+    return {ok: true, json: JSON.parse(raw)}
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      error: "the sandbox did not answer JSON",
     }
   }
 }

@@ -38,7 +38,11 @@
 import { Request, Response } from "express"
 
 import { uidOf } from "./request-helpers"
-import {listFleetMachines, listMachinesForUser} from "../infrastructure/machine.store"
+import {
+  listFleetMachines,
+  listMachineHistory,
+  listMachinesForUser,
+} from "../infrastructure/machine.store"
 
 /**
  * One failure message, so the console and the log do not disagree.
@@ -123,5 +127,39 @@ export const machineListMine = async (
     res.status(200).json({status: "ok", machines: machines})
   } catch (error) {
     internal(res, "list mine", error)
+  }
+}
+
+/**
+ * `GET /api/machines/history` - the caller's destroyed machines, newest first.
+ *
+ * `machines_history` is written by arachnefly's `DeleteMachine` and, until this
+ * route, read by nothing: a destroyed machine left the console for good, with no
+ * way to see what had existed or when it went. The scope is the uid from the
+ * verified token, and the store filters on the record's `id` FIELD, which is where
+ * that uid is kept -- the document key is the machine id.
+ *
+ * A 401 rather than an empty list when there is no uid, for the same reason as
+ * `machineListMine`: an empty archive and a refusal look identical on screen, and
+ * only one of them means "nothing was ever destroyed".
+ * @param {Request} req The request.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Nothing.
+ */
+export const machineListHistory = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    res.status(401).json({status: "error", code: "invalid_token"})
+    return
+  }
+
+  try {
+    const machines = await listMachineHistory(uid)
+    res.status(200).json({status: "ok", machines: machines})
+  } catch (error) {
+    internal(res, "list history", error)
   }
 }

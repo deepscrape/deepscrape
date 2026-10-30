@@ -230,3 +230,61 @@ export const listMachinesForUser = async (
 
   return machines
 }
+
+/** The archive arachnefly writes a machine into when it is destroyed. */
+export const MACHINE_HISTORY_COLLECTION = "machines_history"
+
+/**
+ * One destroyed machine, as arachnefly's `DeleteMachine` recorded it.
+ *
+ * No `config`, no `env`: a history record is a copy of a machine document, and a
+ * machine document carries `WEBRAIN_HTTP_TOKEN` in `config.env`.
+ */
+export interface MachineHistoryEntry {
+  id: string
+  name: string
+  state: string
+  region: string
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * The caller's destroyed machines, newest first.
+ *
+ * The owner lives in the `id` FIELD of the record, not in the document key. Go's
+ * `DeleteMachine` writes `Doc(machineID)` but sets `updates.ID = userID`, so the
+ * key is the machine and `id` is the tenant. Filtering on the key returns nothing;
+ * filtering on any other field would return another tenant's archive.
+ *
+ * Sorted in memory rather than with `orderBy`: an equality filter plus an orderBy
+ * on a different field needs a composite index in `firestore.indexes.json`, and a
+ * capped list is cheaper to sort here than to deploy. Same rule as
+ * `listClosedSessions`.
+ * @param {string} uid The verified caller uid.
+ * @return {Promise<MachineHistoryEntry[]>} The caller's destroyed machines.
+ */
+export const listMachineHistory = async (
+  uid: string,
+): Promise<MachineHistoryEntry[]> => {
+  const snapshot = await db
+    .collection(MACHINE_HISTORY_COLLECTION)
+    .where("id", "==", uid)
+    .limit(FLEET_LIMIT)
+    .get()
+
+  const history: MachineHistoryEntry[] = []
+  for (const doc of snapshot.docs) {
+    const raw = (doc.data() ?? {}) as Record<string, unknown>
+    history.push({
+      id: doc.id,
+      name: asString(raw["name"]),
+      state: asString(raw["state"]),
+      region: asString(raw["region"]),
+      createdAt: asString(raw["created_at"]),
+      updatedAt: asString(raw["updated_at"]),
+    })
+  }
+
+  return history.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}

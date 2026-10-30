@@ -28,6 +28,7 @@ import {
   observeMachineFrame,
   suspendBrowserMachine,
 } from "./browser-session.provisioner"
+import {machineIsGone} from "../handlers/browser-sessions"
 
 /** What the fake upstream saw on the last request. */
 type Seen = {
@@ -149,6 +150,97 @@ describe("deployBrowserMachine", () => {
     assert.equal(body.region, "iad")
     assert.equal(body.autoStop, "suspend")
     assert.equal(body.autoStart, true)
+  })
+
+  it("asks for the code preset when the session is a code session", async () => {
+    // Fly bills the preset for as long as the machine runs, so a code session on
+    // the browser preset is a 3.6x overspend on every active minute.
+    respond = (res) => json(res, 200, deployed("machine-abc"))
+    await deploy({workload: "code"})
+
+    const body = JSON.parse(seen?.body ?? "{}")
+    assert.equal(body.cpuCores, 1)
+    assert.equal(body.memory, 512)
+  })
+
+  it("asks for the browser preset when no workload is given", async () => {
+    // The default has to be the bigger one: undersizing a machine that turns out
+    // to need a renderer fails as an out-of-memory browser, which is far harder
+    // to attribute than paying for RAM nobody used.
+    respond = (res) => json(res, 200, deployed("machine-abc"))
+    await deploy()
+
+    const body = JSON.parse(seen?.body ?? "{}")
+    assert.equal(body.cpuCores, 2)
+    assert.equal(body.memory, 2048)
+  })
+
+  describe("observeMachineFrame", () => {
+    const png = Buffer.from("89504e470d0a1a0a0000000d", "hex")
+
+    /**
+   * Call the frame reader against the fake upstream.
+   * @return {*} The frame result.
+   */
+    const frame = () =>
+      observeMachineFrame({
+        baseUrl: baseUrl,
+        token: "caller-firebase-id-token",
+        machineId: "machine-1",
+      })
+
+    /**
+   * The bytes a frame result carries, as hex.
+   * @param {*} result The frame result.
+   * @return {string} The hex, or empty when the call failed.
+   */
+    const hexOf = (result: Awaited<ReturnType<typeof frame>>): string =>
+      result.ok ? Buffer.from(result.bytes).toString("hex") : ""
+
+    it("unwraps a screenshot envelope into image bytes", async () => {
+    // What the engine actually sends: a tool result whose content is a TEXT
+    // part holding JSON. Returned raw, an <img> can never decode it.
+      respond = (res) =>
+        json(res, 200, {
+          result: {
+            content: [{
+              type: "text",
+              text: JSON.stringify({screenshot_b64: png.toString("base64")}),
+            }],
+          },
+        })
+
+      const result = await frame()
+
+      assert.equal(result.ok, true)
+      assert.equal(result.ok && result.contentType, "image/png")
+      assert.equal(hexOf(result), png.toString("hex"))
+    })
+
+    it("unwraps an MCP image part as well", async () => {
+      respond = (res) =>
+        json(res, 200, {
+          result: {
+            content: [{type: "image", data: png.toString("base64")}],
+          },
+        })
+
+      assert.equal(hexOf(await frame()), png.toString("hex"))
+    })
+
+    it("passes real image bytes straight through", async () => {
+    // Arachnefly answering with the image itself must keep working: the body is
+    // not JSON, so there is no envelope to unwrap.
+      respond = (res) => {
+        res.writeHead(200, {"Content-Type": "image/png"})
+        res.end(png)
+      }
+
+      const result = await frame()
+
+      assert.equal(result.ok && result.contentType, "image/png")
+      assert.equal(hexOf(result), png.toString("hex"))
+    })
   })
 
   it("accepts a machine id even when the status is not 2xx", async () => {
@@ -548,5 +640,75 @@ describe("observeMachineFrame", () => {
 
     if (result.ok) throw new Error("a blank machine id must refuse")
     assert.match(result.error, /no machine to observe/)
+  })
+
+  it("lifts the refusal code and state out, and relays neither body", async () => {
+    // The caller has to tell a machine that is gone from one that is booting, and
+    // only arachnefly knows which. The rest of the envelope stays here.
+    respond = (res) =>
+      json(res, 409, {
+        error: "Target machine is not in a running state",
+        code: "machine_not_startable",
+        state: "destroyed",
+        upstream: "INTERNAL-LEAK-CANARY-9f3a",
+      })
+
+    const result = await frame()
+
+    if (result.ok) throw new Error("a refusal must not be a frame")
+    assert.equal(result.status, 409)
+    assert.equal(result.code, "machine_not_startable")
+    assert.equal(result.state, "destroyed")
+    assert.ok(!JSON.stringify(result).includes("INTERNAL-LEAK-CANARY"))
+  })
+
+  it("reports no code when the refusal body is not JSON", async () => {
+    // A load balancer's HTML 502 reaches this path too, and the failure path must
+    // still answer rather than throw on a parse error.
+    respond = (res) => {
+      res.writeHead(502, {"Content-Type": "text/html"})
+      res.end("<html><body>Bad Gateway</body></html>")
+    }
+
+    const result = await frame()
+
+    if (result.ok) throw new Error("a refusal must not be a frame")
+    assert.equal(result.code, undefined)
+    assert.equal(result.state, undefined)
+  })
+})
+
+/**
+ * The terminal-state verdict that decides whether a session ends.
+ *
+ * Pinned because both ways of getting it wrong are expensive: closing on a boot
+ * bills the caller for a machine they never used, and never closing leaves the
+ * live-session quota spent on a VM that cannot exist.
+ */
+describe("machineIsGone", () => {
+  it("is true for a destroyed machine", () => {
+    assert.equal(machineIsGone("machine_not_startable", "destroyed"), true)
+  })
+
+  it("is true while the destruction is still in flight", () => {
+    assert.equal(machineIsGone("machine_not_startable", "destroying"), true)
+  })
+
+  it("is false for a machine that is only booting", () => {
+    // `starting`/`created` are refused with the same code, and closing on either
+    // would kill a session during its first second.
+    for (const state of ["starting", "created", "replacing"]) {
+      assert.equal(machineIsGone("machine_not_startable", state), false, state)
+    }
+  })
+
+  it("is false when the start merely failed", () => {
+    // Fly capacity and a cold image pull both fail transiently.
+    assert.equal(machineIsGone("machine_start_failed", "stopped"), false)
+  })
+
+  it("is false for an unknown or absent state", () => {
+    assert.equal(machineIsGone("machine_not_startable", undefined), false)
+    assert.equal(machineIsGone(undefined, "destroyed"), false)
   })
 })

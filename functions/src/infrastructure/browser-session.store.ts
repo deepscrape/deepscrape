@@ -171,6 +171,13 @@ export const parseSession = (
   if (idleDeadline !== undefined) {
     record.idleDeadline = idleDeadline
   }
+  // Read explicitly, like every other field: without this the meter re-reads a session
+  // from disk, finds no org and bills the caller personally for time their workspace
+  // was paying for.
+  const orgId = asNonEmptyString(data.orgId)
+  if (orgId) {
+    record.orgId = orgId
+  }
 
   return record
 }
@@ -192,6 +199,11 @@ export type CreateBrowserSessionInput = {
    * rollback. Omitted means `platform`.
    */
   computeSource?: BrowserSessionRecord["computeSource"]
+  /**
+   * Whose wallet pays for the metered time, decided by the ROUTE from the request's
+   * organization. Omitted means the caller's own, which is what a personal session is.
+   */
+  orgId?: string
   /** Epoch ms, passed in so this module owns no clock. */
   now: number
 }
@@ -306,6 +318,9 @@ export const createBrowserSession = async (
   }
   if (input.computeSource) {
     record.computeSource = input.computeSource
+  }
+  if (input.orgId) {
+    record.orgId = input.orgId
   }
   const idleDeadline = idleDeadlineForTier(input.tier, input.now)
   if (idleDeadline !== undefined) {
@@ -442,6 +457,42 @@ export const listBrowserSessions = async (
   }
 
   return sessions.sort((a, b) => a.createdAt - b.createdAt)
+}
+
+/**
+ * The sessions this caller has ENDED, newest first.
+ *
+ * A separate read rather than a flag on `listBrowserSessions`, and the difference
+ * matters: that one feeds `decideLease`'s `liveSessions`, so adding closed records
+ * to it would count finished work against the caller's lease and refuse a lease
+ * they are entitled to. This is for the history view, where the record is the
+ * point.
+ *
+ * Bounded, because closed records are never pruned: the collection grows for the
+ * life of the account, so an unbounded read is a slow one that gets slower.
+ * @param {string} uid The verified caller uid.
+ * @param {number} limit The maximum number of records to return.
+ * @return {Promise<BrowserSessionPublic[]>} The ended sessions, newest first.
+ */
+export const listClosedSessions = async (
+  uid: string,
+  limit: number,
+): Promise<BrowserSessionPublic[]> => {
+  const capped = Math.max(1, Math.min(Math.floor(limit) || 20, 100))
+  const snapshot = await sessionsRef(uid).where("state", "==", "closed").get()
+  const sessions: BrowserSessionPublic[] = []
+
+  for (const doc of snapshot.docs) {
+    const raw = (doc.data() ?? {}) as Record<string, unknown>
+    const record = parseSession(doc.id, raw)
+    // A row the parser rejects is skipped, not guessed at: `parseSession` answers
+    // undefined for a document that predates a required field.
+    if (record) {
+      sessions.push(toPublicSession(record))
+    }
+  }
+
+  return sessions.sort((a, b) => b.createdAt - a.createdAt).slice(0, capped)
 }
 
 /**
@@ -1026,7 +1077,15 @@ export const closeBrowserSession = async (
     return undefined
   }
 
-  await ref.set({state: "closed", lastUsedAt: now}, {merge: true})
+  // `idleDeadline` is stamped even though the session is already closed, and it
+  // is what lets the machine be destroyed. The parked pass finds machines through
+  // a range query on that field, and a range filter never matches a document that
+  // omits it — so a tier with NO idle expiry (admin) would keep its machine
+  // forever after being closed by hand: invisible to both passes, billed monthly.
+  await ref.set(
+    {state: "closed", lastUsedAt: now, idleDeadline: now},
+    {merge: true}
+  )
 
   return toPublicSession({...record, state: "closed", lastUsedAt: now})
 }

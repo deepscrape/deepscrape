@@ -54,12 +54,16 @@ export const SESSION_CAPS: Record<BrowserTier, TierCaps> = {
   // honest rather than a restriction (roadmap 02, "Tier model").
   free: {dedicated: 0, byo: 0, fps: 0, idleTtlMs: 0},
   paid: {dedicated: 1, byo: 3, fps: 1, idleTtlMs: 15 * 60 * 1000},
-  // Admin is capped by neither count nor idleness — only frames.
+  // Admin is unbounded in COUNT, but not in TIME. A session with no deadline is
+  // a Fly machine with no end: `DecideReap` answers `no-deadline` and never
+  // closes it, so a forgotten admin browser runs at $13.39/month forever and
+  // every log line reads `considered=0`. Four idle hours is generous for
+  // interactive work and still ends the runaway.
   admin: {
     dedicated: Number.POSITIVE_INFINITY,
     byo: Number.POSITIVE_INFINITY,
     fps: 4,
-    idleTtlMs: 0,
+    idleTtlMs: 4 * 60 * 60 * 1000,
   },
 }
 
@@ -262,6 +266,15 @@ export type BrowserSessionRecord = {
   state: SessionState
   tier: BrowserTier
   /**
+   * Whose wallet pays for this session's metered time.
+   *
+   * Absent means the caller's own, which is correct for every session opened before a
+   * workspace could pay. Stored at CREATION and never re-resolved, for the same reason
+   * `computeSource` is: the caller's active workspace changes, and a meter that
+   * re-read it would move an hour of already-billed compute to somebody else's balance.
+   */
+  orgId?: string
+  /**
    * Present only for `dedicated`, and only once a machine has been attached.
    */
   machineId?: string
@@ -311,6 +324,15 @@ export type BrowserSessionPublic = {
   createdAt: number
   /** The idle deadline, under the name the routes use for it. */
   expiresAt?: number
+  /**
+   * The frame cadence this session's tier allows, in ms.
+   *
+   * Sent rather than left for the client to derive: the client used to poll at a
+   * hardcoded 1000ms, which is the PAID cap, so an admin tier that allows 4 fps was
+   * still shown one frame a second and the cap was decorative. A mirrored copy of
+   * `SESSION_CAPS` in the browser would drift the first time a cap moved.
+   */
+  frameIntervalMs: number
 }
 
 /**
@@ -330,6 +352,7 @@ export const toPublicSession = (
     kind: session.kind,
     state: session.state,
     createdAt: session.createdAt,
+    frameIntervalMs: frameIntervalMs(session.tier),
   }
   if (session.idleDeadline !== undefined) {
     projected.expiresAt = session.idleDeadline
@@ -428,6 +451,9 @@ export type CreateRequest = {
   mode: SessionMode
   kind: BrowserKind
   cdpUrl?: string
+  // What the session is FOR, which decides the machine preset. Not the engine:
+  // `kind` already names that, and a code session can still drive a browser.
+  workload: SessionWorkload
 }
 
 /** A parsed create request, or the refusal to answer it with. */
@@ -483,6 +509,9 @@ export const parseCreateRequest = (body: unknown): CreateRequestDecision => {
   const request: CreateRequest = {
     mode: mode,
     kind: kind as BrowserKind,
+    // Anything that is not exactly "code" is a browser session, deliberately: an
+    // unrecognised value must never buy a machine smaller than the caller needs.
+    workload: source.workload === "code" ? "code" : "browser",
   }
   if (cdpUrl !== undefined) {
     request.cdpUrl = cdpUrl
@@ -505,6 +534,39 @@ export const BROWSER_MACHINE_SIZE = {
   cpuType: "shared",
   memory: 2048,
 } as const
+
+/** A Fly machine preset: the three fields `BrowserMachineRequest` takes. */
+export type MachineSize = {
+  cpuCores: number
+  cpuType: "shared" | "performance"
+  memory: number
+}
+
+/** What the session is for. Not an engine kind: `BROWSER_KINDS` names engines. */
+export type SessionWorkload = "browser" | "code"
+
+/**
+ * Fly bills the preset while a machine RUNS, so the preset is a real per-minute
+ * cost: `shared-cpu-2x`/2 GB is $13.39/mo against $3.69/mo for 1x/512 MB. A code
+ * session paying the browser preset is a 3.6x overspend on every active minute,
+ * and code sessions are the ones that run longest.
+ */
+export const MACHINE_SIZE_BY_WORKLOAD: Record<SessionWorkload, MachineSize> = {
+  browser: BROWSER_MACHINE_SIZE,
+  code: {cpuCores: 1, cpuType: "shared", memory: 512},
+}
+
+/**
+ * Anything unrecognised resolves to the BROWSER preset, deliberately: undersizing
+ * a session that turns out to need a renderer fails as an out-of-memory browser,
+ * which is far harder to attribute than paying for RAM nobody used.
+ *
+ * @param {unknown} workload The requested workload, from an untrusted body.
+ * @return {MachineSize} The preset to deploy, never smaller than the browser one
+ * for an unrecognised value.
+ */
+export const sizeForWorkload = (workload: unknown): MachineSize =>
+  workload === "code" ? MACHINE_SIZE_BY_WORKLOAD.code : BROWSER_MACHINE_SIZE
 
 /** The body arachnefly's `POST /api/deploy` expects. */
 export type BrowserMachineRequest = {
@@ -550,20 +612,24 @@ export const machineNameFor = (sessionId: string): string => `bs-${sessionId}`
  * @param {string} sessionId The session id.
  * @param {string} image The container image to run.
  * @param {string} region The Fly region to place it in.
+ * @param {MachineSize} size The CPU/RAM preset; the browser one when omitted.
  * @return {BrowserMachineRequest} The deploy body.
  */
 export const machineRequestFor = (
   sessionId: string,
   image: string,
   region: string,
+  // Defaulted so every existing caller keeps the browser preset: the size is a
+  // cost decision, and a missing one must not silently make a browser smaller.
+  size: MachineSize = BROWSER_MACHINE_SIZE,
 ): BrowserMachineRequest => ({
   imageOption: "default",
   defaultImage: image,
   machineName: machineNameFor(sessionId),
   region: region,
-  cpuCores: BROWSER_MACHINE_SIZE.cpuCores,
-  cpuType: BROWSER_MACHINE_SIZE.cpuType,
-  memory: BROWSER_MACHINE_SIZE.memory,
+  cpuCores: size.cpuCores,
+  cpuType: size.cpuType,
+  memory: size.memory,
   autoStart: true,
   autoStop: "suspend",
 })
@@ -626,6 +692,41 @@ export const machineChargeFor = (
     bucket: accessMode === "credits" ? "purchased" : "included",
     action: price.action,
   }
+}
+
+/**
+ * The image type the BYTES are, when it is one we can recognise.
+ *
+ * The engine reports the mime it was ASKED for. `BrowserBackend::screenshot_fmt`
+ * has a default implementation that ignores the requested format and calls
+ * `screenshot()`, so a backend with no lossy encoder answers with PNG while still
+ * reporting `image/webp`. Serving PNG labelled webp is a frame the browser refuses
+ * to paint: a black live view, a 200 in the log, and nothing to grep for.
+ *
+ * Undefined when the header is not one of the three, so a caller falls back to the
+ * reported type rather than inventing one.
+ * @param {Uint8Array} bytes The frame body.
+ * @return {string | undefined} The mime the bytes actually are.
+ */
+export const sniffImageType = (bytes: Uint8Array): string | undefined => {
+  if (bytes.length >= 8 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 &&
+    bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return "image/png"
+  }
+  if (bytes.length >= 3 &&
+    bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg"
+  }
+  // "RIFF" .... "WEBP"
+  if (bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 &&
+    bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 &&
+    bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return "image/webp"
+  }
+  return undefined
 }
 
 /**

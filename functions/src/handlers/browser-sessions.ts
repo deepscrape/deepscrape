@@ -65,6 +65,7 @@ import {
   machineChargeFor,
   parseCreateRequest,
   refusalFor,
+  sniffImageType,
   type BrowserRefusal,
 } from "../domain/browser-session.domain"
 import { FrameThrottle } from "../infrastructure/frame-throttle"
@@ -77,12 +78,15 @@ import {
 } from "../domain/webrain-tools.domain"
 import { withPlatformProxy } from "../domain/webrain-proxy.domain"
 import { decideCallerSpend } from "../infrastructure/billing-spend.store"
+import { getOrgIdFromRequest } from "../infrastructure/authz.middleware"
+import { resolveSpend } from "../infrastructure/spend-scope"
 import { resolveCompute } from "../infrastructure/compute-settings.store"
 import {
   chargeSessionMeter,
   meterWalletFor,
 } from "../infrastructure/browser-meter-charge"
 import {
+  callMachineExec,
   callMachineTool,
   deployBrowserMachine,
   observeMachineFrame,
@@ -94,6 +98,7 @@ import {
   createBrowserSession,
   keepaliveBrowserSession,
   listBrowserSessions,
+  listClosedSessions,
   readBrowserSessionRecord,
   shouldRefreshOnWatch,
 } from "../infrastructure/browser-session.store"
@@ -108,6 +113,23 @@ const sessionIdOf = (req: Request): string => {
   const id = params?.id
   return typeof id === "string" ? id : ""
 }
+
+/**
+ * The argv ceiling, restated from the sandbox daemon.
+ *
+ * A copy rather than a single source because the two run in different
+ * languages in different images, and the cost of disagreeing is one refusal
+ * instead of a wedged request. The daemon's number is the authority; this one
+ * only decides whether the caller hears about it as a 400 or as a 502.
+ */
+const EXEC_MAX_ARGS = 64
+
+/**
+ * The per-command deadline ceiling, in seconds. Same reasoning as
+ * `EXEC_MAX_ARGS`: the daemon enforces 30 by clamping, and this refuses a
+ * nonsense value (a negative, an hour) before a machine is woken.
+ */
+const EXEC_MAX_SECONDS = 30
 
 /**
  * The single internal-error answer, so these routes cannot disagree.
@@ -305,6 +327,9 @@ export const browserSessionCreate = async (
       kind: kind,
       cdpUrl: cdpUrl,
       computeSource: computeSource,
+      // Whose wallet the metered minutes will be charged to, fixed at creation so a
+      // caller switching workspace mid-session cannot move the bill.
+      orgId: (await resolveSpend(uid, getOrgIdFromRequest(req))).orgId,
       now: Date.now(),
     })
 
@@ -394,6 +419,7 @@ export const browserSessionCreate = async (
         sessionId: session.id,
         image: env.BROWSER_MACHINE_IMAGE,
         region: env.BROWSER_MACHINE_REGION,
+        workload: parsed.request.workload,
       }) :
       {ok: false as const, error: "the request carried no token to relay"}
 
@@ -620,12 +646,48 @@ export const browserSessionList = async (
 }
 
 /**
+ * `GET /api/browser/session/history` — the sessions this caller has ended.
+ *
+ * A separate route from the list, not a flag on it. The list feeds the lease
+ * decision, so mixing ended records into it would make a finished session count
+ * against the caller's live quota. This one answers the question the list
+ * deliberately cannot: what did I run, and when.
+ *
+ * `limit` is honoured within a bound the store enforces, because closed records
+ * are never pruned and an unbounded read grows with the account.
+ * @param {Request} req The request, optionally carrying `?limit=`.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const browserSessionHistory = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    unauthorized(res)
+    return
+  }
+
+  const raw = (req.query ?? {})["limit"]
+  const limit = typeof raw === "string" ? Number(raw) : 20
+
+  try {
+    const sessions = await listClosedSessions(uid, limit)
+    res.status(200).json({status: "ok", sessions: sessions})
+  } catch (error) {
+    internal(res, "history", error)
+  }
+}
+
+/**
  * `POST /api/browser/session/:id/keepalive` — record activity, push the deadline.
  *
  * A closed session is not revived: the store answers undefined for one, so this
  * answers 404 rather than silently reopening a record the caller already ended.
  * @param {Request} req The request.
  * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
  */
 export const browserSessionKeepalive = async (
   req: Request,
@@ -724,7 +786,13 @@ export const browserSessionClose = async (
         }) :
         {ok: false as const, error: "the request carried no token to relay"}
 
-      if (!released.ok) {
+      // A 404 from arachnefly means the machine is already gone — destroyed from
+      // the dashboard, or by the parked pass. Treating that as a failure would
+      // make the session unclosable: every attempt would 502 on a machine that no
+      // longer exists, and the caller could never end their session at all.
+      const gone = released.ok === false && released.status === 404
+
+      if (!released.ok && !gone) {
         // The session is deliberately LEFT OPEN on every failure, a 429 included:
         // it keeps its idle deadline, so the reaper suspends the machine at the
         // deadline instead. Closing it here would remove it from the reaper's view —
@@ -766,7 +834,7 @@ export const browserSessionClose = async (
     // a deterministic ledger key (`bs-meter:<id>:block:<n>`) and the ledger
     // treats a re-used key as already applied, so repeating this charges nothing.
     const now = Date.now()
-    const wallet = await meterWalletFor(uid, now)
+    const wallet = await meterWalletFor(uid, record.orgId, now)
     if (wallet) {
       try {
         await chargeSessionMeter(uid, record, wallet, now)
@@ -807,6 +875,33 @@ export const browserSessionClose = async (
  * The rules live in `FrameThrottle`, which a test can import; this module cannot be.
  */
 const frameThrottle = new FrameThrottle()
+
+/**
+ * Whether arachnefly's refusal means the machine is gone for good.
+ *
+ * The list is deliberately short. Fly reports `starting`, `created`, `replacing`
+ * and `destroying` as states a machine cannot be BOOTED from, so arachnefly
+ * refuses all of them with the same code -- but only `destroyed` (and the
+ * `destroying` that precedes it) means no frame will ever arrive. Treating the
+ * rest as gone would close a session whose VM is still booting: the caller pays
+ * for a machine they never saw and the session ends during its first second.
+ *
+ * An unknown or absent state is NOT terminal. The cost of being wrong in that
+ * direction is one session closed by the reaper on its idle deadline; the cost of
+ * being wrong in the other is a paying session killed by a boot.
+ * @param {string | undefined} code Arachnefly's refusal code.
+ * @param {string | undefined} state The Fly state it reported.
+ * @return {boolean} True when the session can never serve a frame again.
+ */
+export const machineIsGone = (
+  code: string | undefined,
+  state: string | undefined,
+): boolean => {
+  if (code !== "machine_not_startable") {
+    return false
+  }
+  return state === "destroyed" || state === "destroying"
+}
 
 /**
  * `GET /api/browser/session/:id/frame` -- one screenshot of a session's machine.
@@ -901,16 +996,56 @@ export const browserSessionFrame = async (
       }
     }
 
+    const frameStartedAt = Date.now()
     const frame = await observeMachineFrame({
       baseUrl: arachneflyBaseUrl(),
       token: token,
       machineId: record.machineId,
     })
+    const frameMs = Date.now() - frameStartedAt
 
     if (!frame.ok) {
       // Status only. `observeMachineFrame` already refuses to relay the upstream
       // body, because this is the path a caller reaches by guessing a machine id.
       console.error(`browser-session: frame for ${id} failed: ${frame.error}`)
+
+      // 409 is arachnefly's "not in a running state": the machine cannot be moved
+      // into a state that serves a frame. That is PERMANENT -- a machine destroyed
+      // out of band, or a record that still names one -- so it answers the same
+      // code as a session with no machine at all. Reported as `frame_failed` it
+      // looks retryable, and the client then polls a machine that cannot exist at
+      // a backoff that never gives up.
+      if (frame.status === 409) {
+        // The same code also covers a machine that is mid-boot, so the session is
+        // only terminated when arachnefly says the state is terminal. Closing a
+        // `starting` machine's session would bill for a VM the caller never got
+        // to use, and would race the boot that was about to succeed.
+        if (machineIsGone(frame.code, frame.state)) {
+          try {
+            // Takes the record out of the live-session quota and stamps
+            // `idleDeadline`, which is what lets the reaper destroy the machine.
+            // This is the "machine destroyed ⇒ session closed" rule: immediate,
+            // instead of waiting for the idle window to expire.
+            await closeBrowserSession(uid, id, Date.now())
+            console.warn(
+              `browser-session: closed ${id}; its machine is ${frame.state}`
+            )
+          } catch (error) {
+            // The caller asked for a frame, and the answer to that is unchanged
+            // by a failed bookkeeping write. The reaper still finds the record.
+            console.error(
+              `browser-session: closing ${id} after ${frame.state} failed: ` +
+              `${String(error)}`
+            )
+          }
+        }
+        res.status(409).json({
+          error: "This session's machine is no longer available",
+          code: "no_frame_source",
+        })
+        return
+      }
+
       res.status(502).json({
         error: "The machine did not return a frame",
         code: "frame_failed",
@@ -922,7 +1057,21 @@ export const browserSessionFrame = async (
     // a live view frozen on a stale image is worse than one showing nothing. The
     // client's per-poll nonce defends the same thing at the URL.
     res.set("Cache-Control", "no-store")
-    res.status(200).type(frame.contentType).send(Buffer.from(frame.bytes))
+
+    // Two numbers decide whether a higher fps cap can actually be honoured, and
+    // neither is visible anywhere else: the frame's SIZE (billed twice,
+    // machine→BFF and BFF→browser) and the round trip that produced it -- a poll
+    // can never run faster than one capture, whatever the tier allows, so a cap
+    // above `1000 / frameMs` is decoration. Logged only past the point where each
+    // stops being a rounding error, because a per-frame line is a cost of its own.
+    if (frame.bytes.length > 200_000 || frameMs > 500) {
+      console.warn(
+        `browser-session: frame for ${id} is ${frame.bytes.length} bytes ` +
+        `in ${frameMs}ms (${frame.contentType})`
+      )
+    }
+
+    res.status(200).type(sniffImageType(frame.bytes) ?? frame.contentType).send(Buffer.from(frame.bytes))
   } catch (error) {
     internal(res, "frame", error)
   }
@@ -1070,5 +1219,159 @@ export const browserSessionTool = async (
     res.status(200).json({tool: tool, result: call.json})
   } catch (error) {
     internal(res, "session tool", error)
+  }
+}
+
+/**
+ * Whether one argv element is something the daemon will accept.
+ *
+ * Mirrors the daemon's own refusal rather than inventing a rule: a blank
+ * program name cannot be executed, and a NUL byte truncates argv at `execve`,
+ * so `["sh", "-c", "id\0; rm -rf /"]` would run something other than what the
+ * caller sent. The daemon checks this too -- this copy exists so the caller
+ * gets a 400 that names the field instead of a 500 from a child that never
+ * started.
+ * @param {unknown} part One element of the command.
+ * @return {boolean} True when it is a non-blank string without NUL.
+ */
+const usableArg = (part: unknown): boolean =>
+  typeof part === "string" && part.trim() !== "" && !part.includes("\u0000")
+
+/**
+ * Runs one command in a session's own sandbox.
+ *
+ * The machine is the lease, and the sandbox is a child of it: uid 10001, cwd
+ * `/work`, an empty network namespace and rlimits set by the daemon. That is
+ * why this needs no tool allowlist of its own -- unlike `SESSION_TOOLS`, where
+ * the boundary was "which tools may act on a page", the boundary here is the
+ * process itself. Nothing on the caller's side decides what runs; they name it
+ * and the daemon bounds it.
+ *
+ * Owner-scoped and closed-session-refusing, in that order and before the
+ * machine is touched, for the same reason as its siblings.
+ *
+ * The argv cap and the timeout cap are the daemon's numbers repeated, not new
+ * ones: a body the daemon will refuse should be refused here, where the answer
+ * names the offending field.
+ * @param {Request} req The request carrying `{command, timeout}`.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const browserSessionExec = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    unauthorized(res)
+    return
+  }
+
+  try {
+    const id = sessionIdOf(req)
+    if (!id) {
+      notFound(res)
+      return
+    }
+
+    const record = await readBrowserSessionRecord(uid, id)
+    if (!record) {
+      notFound(res)
+      return
+    }
+
+    if (record.state === "closed") {
+      notFound(res)
+      return
+    }
+
+    if (!record.machineId) {
+      res.status(409).json({
+        error: "This session has no machine to run on",
+        code: "no_session_machine",
+      })
+      return
+    }
+
+    const token = req.authToken
+    if (!token) {
+      unauthorized(res)
+      return
+    }
+
+    const input = bodyOf(req)
+    const body: Record<string, unknown> =
+      input && typeof input === "object" ?
+        (input as Record<string, unknown>) :
+        {}
+
+    const command = body["command"]
+    if (
+      !Array.isArray(command) ||
+      command.length === 0 ||
+      command.length > EXEC_MAX_ARGS ||
+      !command.every(usableArg)
+    ) {
+      res.status(400).json({
+        error: "command must be a non-empty array of strings",
+        code: "bad_command",
+        max_args: EXEC_MAX_ARGS,
+      })
+      return
+    }
+
+    const rawTimeout = body["timeout"]
+    const timeout =
+      typeof rawTimeout === "number" && Number.isFinite(rawTimeout) ?
+        Math.trunc(rawTimeout) :
+        0
+
+    if (timeout < 0 || timeout > EXEC_MAX_SECONDS) {
+      res.status(400).json({
+        error: "timeout is out of range",
+        code: "bad_timeout",
+        max_seconds: EXEC_MAX_SECONDS,
+      })
+      return
+    }
+
+    // The payload the command reads on stdin, base64 so bytes survive JSON. Length
+    // is not checked here: arachnefly refuses a body over 64 KiB before forwarding,
+    // and the daemon caps the decoded size — a second ceiling would only be a third
+    // number to keep in step.
+    const rawStdin = body["stdin_b64"]
+    if (rawStdin !== undefined && typeof rawStdin !== "string") {
+      res.status(400).json({
+        error: "stdin_b64 must be a base64 string",
+        code: "bad_stdin",
+      })
+      return
+    }
+
+    const call = await callMachineExec({
+      baseUrl: arachneflyBaseUrl(),
+      token: token,
+      machineId: record.machineId,
+      command: command as string[],
+      timeout: timeout,
+      stdinB64: typeof rawStdin === "string" ? rawStdin : "",
+    })
+
+    if (!call.ok) {
+      // Status only, as above: the upstream body is not the caller's to read.
+      console.error(`browser-session: exec for ${id} failed: ${call.error}`)
+      res.status(502).json({
+        error: "The sandbox did not answer",
+        code: "machine_call_failed",
+      })
+      return
+    }
+
+    // Relayed whole and unreshaped. `exit_code` is the caller's to interpret:
+    // rewriting a non-zero exit into an HTTP error would make every probe that
+    // legitimately fails indistinguishable from a broken machine.
+    res.status(200).json(call.json)
+  } catch (error) {
+    internal(res, "session exec", error)
   }
 }

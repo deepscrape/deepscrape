@@ -16,7 +16,7 @@
  * would force the sweep into one billing read per session.
  */
 import {db} from "../app/config"
-import {consumeBillingCredits} from "../app/billing-credits"
+import {billingDocPath, consumeBillingCredits} from "../app/billing-credits"
 import {getBillingAccessMode, type BillingSnapshot} from "../domain/billing.domain"
 import {resolveBillingPricingPolicy} from "../domain/billing-pricing.domain"
 import {machineChargeFor, type BrowserSessionRecord} from "../domain/browser-session.domain"
@@ -59,14 +59,19 @@ export type MeterWallet = {
  * charge nothing rather than pick a wallet — choosing one "as a fallback" is how
  * an unbillable session gets billed to a pot nobody agreed to.
  * @param {string} uid The verified caller uid.
+ * @param {string | undefined} orgId The caller's current workspace, if any. This
+ * is the org whose wallet pays for the session, and it is stored at session
+ * creation so a later change of workspace does not move an hour of already-billed
+ * compute to somebody else's balance.
  * @param {number} now Epoch ms, for the access-mode derivation.
  * @return {Promise<MeterWallet | undefined>} The wallet, or undefined.
  */
 export const meterWalletFor = async (
   uid: string,
+  orgId: string | undefined,
   now: number,
 ): Promise<MeterWallet | undefined> => {
-  const snapshot = await db.doc(`users/${uid}/billing/current`).get()
+  const snapshot = await db.doc(billingDocPath(uid, orgId)).get()
   const billing = snapshot.data() as BillingSnapshot | undefined
   const accessMode = getBillingAccessMode(billing, now)
   const charge = machineChargeFor(
@@ -127,6 +132,9 @@ export const chargeSessionMeter = async (
   for (const key of plan.keys) {
     const applied = await consumeBillingCredits({
       uid,
+      // The session's own payer, read from the record rather than from the caller's
+      // current workspace: the record is what the price was quoted against.
+      orgId: record.orgId,
       amount: 1,
       bucket: wallet.bucket,
       // Mandatory, not stylistic: `consumeBillingCredits` defaults `reservedDelta`

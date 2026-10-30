@@ -38,6 +38,7 @@ import {
 import {
   chargeSessionMeter,
   meterWalletFor,
+  type MeterWallet,
 } from "../infrastructure/browser-meter-charge"
 import {
   alertCapReached,
@@ -116,20 +117,15 @@ export const sweepBrowserMeter = onSchedule(
     let stopped = 0
 
     for (const [uid, owned] of groupByOwner(sessions)) {
-      // Resolved ONCE per caller: the wallet depends on the caller and not on
-      // which session is being charged. `undefined` means there is no billable
-      // wallet at all — free, admin, grace, or a zero-priced deploy action — and
-      // the sweep must then charge nothing rather than pick a pot.
-      const wallet = await meterWalletFor(uid, now)
-      if (!wallet) {
-        unbillable += owned.length
-        continue
-      }
+      // One wallet read per PAYER, not per caller: a caller can hold sessions billed to
+      // their own wallet and to a workspace's, and charging one wallet for the other is
+      // how a team ends up paying for somebody's personal experiments. `undefined` means
+      // there is no billable wallet at all — free, admin, grace, or a zero-priced deploy
+      // action — and the sweep must then charge nothing rather than pick a pot.
+      const wallets = new Map<string, MeterWallet | undefined>()
 
-      // The CUSTOMER's own cap, resolved ONCE per caller for the same reason the
-      // wallet is: it depends on the caller, not on the session. Checked before
-      // the loop so a tenant with several sessions costs two reads and not two
-      // per session.
+      // The CUSTOMER's own cap, resolved ONCE per caller: it depends on the caller, not
+      // on which session or which wallet is paying.
       //
       // The response is a STOP, not a refusal. `chargeSessionMeter` must still
       // collect for time already run — refusing the charge would leave a running
@@ -145,6 +141,16 @@ export const sweepBrowserMeter = onSchedule(
       const atCap = await capReached(uid, now)
 
       for (const {record} of owned) {
+        const payer = record.orgId ?? ""
+        if (!wallets.has(payer)) {
+          wallets.set(payer, await meterWalletFor(uid, record.orgId, now))
+        }
+        const wallet = wallets.get(payer)
+        if (!wallet) {
+          unbillable += 1
+          continue
+        }
+
         let outOfCredits = false
         try {
           // CHARGE FIRST. Both the cap and the ceiling end the session, and

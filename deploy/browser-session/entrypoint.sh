@@ -41,9 +41,17 @@ fi
 # reachable by, and can be mistaken for, another tenant's. Exclusivity is the
 # safety boundary (invariant I2) and it only holds while this is enforced.
 #
-# The value arrives as a Fly APP SECRET, not as machine env: machine env is
-# echoed by `GET /v1/apps/{app}/machines/{id}`, and app secrets are injected
-# into every machine in the app without appearing there.
+# The value arrives in MACHINE env, injected by arachnefly's `BuildConfigMap` from
+# the orchestrator's own WEBRAIN_HTTP_TOKEN. Do NOT also set it as an app secret on
+# `deepscrape-browser-session`: webrain would then load the app secret while
+# arachnefly sends the env value, and every /mcp call answers 401 with both sides
+# convinced they are configured — measured 2026-10-28, after both were set to
+# different values. One token, one place.
+#
+# It IS visible in `GET /v1/apps/{app}/machines/{id}` because it lives in config.env,
+# which is exactly where arachnefly re-reads it to build the Authorization header.
+# That read requires the platform's token, so the exposure is to the orchestrator
+# itself, not to a tenant.
 if [ -z "${WEBRAIN_HTTP_TOKEN:-}" ]; then
   echo "browser-session: WEBRAIN_HTTP_TOKEN is not set — refusing to start." >&2
   echo "  A session machine is publicly addressable and must authenticate." >&2
@@ -109,10 +117,22 @@ webrain_pid=$!
 nginx -g 'daemon off;' &
 nginx_pid=$!
 
+# The sandbox exec daemon (Phase 5). Loopback only, on 9225 because obscura has 9224.
+#
+# Started as a FOURTH essential child rather than an optional one: a dead exec daemon
+# behind nginx answers 502 per call with nothing to explain why, which is exactly the
+# "looks like a live session that answers nothing" failure the loop below exists to
+# prevent. It exits at boot if the token or /work is missing, so a misconfigured image
+# fails here, once, instead of on the first customer command.
+mkdir -p /work
+chown 10001:10001 /work
+/usr/local/bin/execd &
+execd_pid=$!
+
 # Propagate a shutdown to every child. Fly sends SIGTERM on scale-in and on
 # rolling deploys, and webrain drains in-flight requests when it receives one.
 shutdown() {
-  kill -TERM "$obscura_pid" "$webrain_pid" "$nginx_pid" 2>/dev/null || true
+  kill -TERM "$obscura_pid" "$webrain_pid" "$nginx_pid" "$execd_pid" 2>/dev/null || true
 }
 trap shutdown TERM INT
 
@@ -135,7 +155,7 @@ fi
 # listener on the routed port is worse than a restart: it looks like a live
 # session that answers nothing. Fly's `processes` contract says the machine stops
 # when a process exits, so this aligns with the platform rather than fighting it.
-while kill -0 "$obscura_pid" 2>/dev/null && kill -0 "$webrain_pid" 2>/dev/null && kill -0 "$nginx_pid" 2>/dev/null; do
+while kill -0 "$obscura_pid" 2>/dev/null && kill -0 "$webrain_pid" 2>/dev/null && kill -0 "$nginx_pid" 2>/dev/null && kill -0 "$execd_pid" 2>/dev/null; do
   sleep 2
 done
 

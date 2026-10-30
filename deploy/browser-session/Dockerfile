@@ -60,7 +60,25 @@
 # every future session runs — the same reasoning that gives
 # `BROWSER_MACHINE_IMAGE` no default on the platform side.
 
+# GLOBAL scope, and it has to be here rather than beside the FROM that consumes it:
+# an ARG declared after any FROM belongs to that stage only, so a later
+# `ARG WEBRAIN_IMAGE` is invisible to the next FROM and the build dies with
+# "base name (${WEBRAIN_IMAGE}) should not be blank". No default, deliberately — a
+# silent default is how an image ends up built on a base nobody chose.
 ARG WEBRAIN_IMAGE
+
+# The sandbox exec daemon (Phase 5), built in its own stage because the base image
+# carries no toolchain of any kind (verified in the built image: no gcc, go, rustc,
+# node). CGO_ENABLED=0 so the result is static and needs nothing at runtime on this
+# glibc base — the same reasoning that made the engines a build-time concern.
+#
+# A separate stage, not `RUN go build` in the main one: the main stage must stay
+# free of a toolchain, because it is the image a tenant's code runs in.
+FROM golang:1.24-alpine AS execd
+WORKDIR /src
+COPY execd/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /execd .
+
 FROM ${WEBRAIN_IMAGE}
 
 # THE BASE MUST BE GLIBC, AND THIS RUN IS THE ASSERTION.
@@ -99,7 +117,7 @@ RUN apt-get update \
 # default package is the RENDER build, which is the one live view needs: the
 # no-render build silently serves no frames, and `--no-render` must not be
 # passed here.
-RUN webrain install obscura && webrain install lightpanda
+RUN webrain install chrome && webrain install obscura && webrain install lightpanda
 
 # Engines must EXEC here, at BUILD time -- not at the first session.
 #
@@ -135,6 +153,29 @@ COPY nginx.conf /etc/nginx/nginx.conf
 # entrypoint to `app`, so this file must be reachable as `app` on PATH.
 COPY entrypoint.sh /usr/local/bin/app
 RUN chmod +x /usr/local/bin/app
+
+# The exec daemon, statically linked in the stage above. Installed next to `app` and
+# owned by root: uid 10001 executes it but cannot rewrite it, so a sandboxed command
+# cannot replace the binary that polices the next command.
+COPY --from=execd /execd /usr/local/bin/execd
+RUN chmod 0755 /usr/local/bin/execd
+
+# The sandbox's working directory (Phase 5). Created in the image, not the
+# entrypoint, so the ownership is part of the artifact rather than something a
+# boot has to remember to apply.
+#
+# uid 10001 with NO passwd entry, deliberately: this base has no `useradd`
+# (verified in the built image — `command -v useradd` prints nothing), and
+# `SysProcAttr.Credential{Uid: 10001, Gid: 10001}` needs neither a passwd entry
+# nor a package. The exec child is dropped to that numeric id, so it cannot write
+# outside /work and cannot be root the way this container's own `app` process is.
+#
+# EPHEMERAL BY CONSTRUCTION: `BuildConfigMap` sets no `mounts`, so a session
+# machine has no volume and Fly resets the rootfs on a cold start. /work is
+# scratch that dies with the machine. Persistence is a separate phase (an object
+# store snapshot), not something this directory can provide — and any code that
+# reads it must treat "empty" as the normal case, not as corruption.
+RUN mkdir -p /work && chown 10001:10001 /work
 
 EXPOSE 11235
 

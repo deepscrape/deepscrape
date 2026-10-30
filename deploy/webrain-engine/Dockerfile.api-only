@@ -1,10 +1,39 @@
 # syntax=docker/dockerfile:1
 #
-# The API-ONLY webrain engine: webrain's binary, NO browser.
+# The webrain engine with a browser webrain installed ITSELF — no apt `chromium`.
 #
 # ============================================================================
-# READ THIS BEFORE DEPLOYING IT. IT IS NOT A DROP-IN FOR `fly.toml`'s IMAGE.
+# READ THIS BEFORE DEPLOYING IT. THIS FILE IS NO LONGER BROWSERLESS.
 # ============================================================================
+#
+# CHANGE (2026-10-26): the browser is now downloaded by `webrain install
+# --engine chrome` (Chrome for Testing) instead of coming from Debian's
+# `chromium` package. The suffix `api-only` in the tag is now a lie; treat this
+# as the "CfT" variant. Every paragraph below that says "no browser" describes
+# the PREVIOUS contract.
+#
+# WHY CfT AND NOT apt `chromium`:
+#   * the apt package is what cannot be pinned per Chrome version — it moves with
+#     Debian's repo, so two builds of the same image a month apart can carry two
+#     browsers, and a browser difference is the hardest thing to attribute from a
+#     failing scrape.
+#   * webrain already prefers its own download: `find_cft_chrome()` in
+#     `webrain-core/src/install.rs` is consulted before system Chrome, so a CfT
+#     build is the path webrain's own code exercises.
+#   * `webrain install` resolves the current stable CfT version from
+#     googlechromelabs' JSON at BUILD time, so the version is pinned inside the
+#     image rather than resolved at run time.
+#
+# WHAT THIS COSTS: the shared libraries Chrome links against must still be apt
+# installed (below) — CfT ships a binary, not its .so files. So this is NOT the
+# 268 MB saving the old api-only image claimed; the win here is version pinning
+# and one code path, not size. If size is the goal, keep the old image and point
+# `CDP_URL` at a remote browser instead.
+#
+# The old contract, kept because the failure it documents is still real: with
+# NO local browser, `POST /api/serp` fails on engine=google and engine=brave
+# ("cannot connect to a browser and guest-launch failed", `lib.rs:468`), and
+# `WEBRAIN_NO_STATE` does not gate it because SERP is not a stateful tool.
 #
 # What it removes: the `chromium` package webrain's own runtime stage installs.
 # That package is a single ~268 MB layer — the largest in the engine image, and
@@ -57,8 +86,8 @@
 # engine every future request runs.
 #
 #   docker build -f deploy/webrain-engine/Dockerfile.api-only \
-#     --build-arg WEBRAIN_IMAGE=registry.fly.io/deepscrape-webrain:webrain-2026-10-15 \
-#     -t registry.fly.io/deepscrape-webrain:webrain-2026-10-15-api .
+#     --build-arg WEBRAIN_IMAGE=registry.fly.io/deepscrape-webrain:webrain-2026-10-28 \
+#     -t registry.fly.io/deepscrape-webrain:webrain-2026-10-28-api .
 #
 # Note the source tag: the API-only image is built FROM an existing engine image,
 # so it is a DERIVATION of one. Keep the suffix so the two can never be confused
@@ -74,21 +103,75 @@ FROM debian:12-slim
 
 # `ca-certificates` is NOT optional and is the one package that must survive the
 # cut: the engine fetches HTTPS pages and a missing trust store fails opaquely,
-# mid-request, with a TLS error that reads as "the site is down".
+# mid-request, with a TLS error that reads as "the site is down". It is also what
+# lets `webrain install` reach googlechromelabs below.
+#
+# The rest are Chrome's shared-library requirements, installed as LIBRARIES only:
+# no `chromium` package, because the browser comes from webrain's installer. An
+# incomplete set here does not fail the build on its own — which is exactly why
+# the headless render in the assertion step below is the real gate.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libnss3 libnspr4 \
+        libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
+        libcups2 libdrm2 libgbm1 libasound2 \
+        libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+        libxshmfence1 libdbus-1-3 libudev1 \
+        libpango-1.0-0 libcairo2 libglib2.0-0 \
+        libx11-6 libxcb1 libxext6 libexpat1 \
+        fonts-liberation xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # The binary, verbatim from webrain's own image. Path is where webrain's
 # Dockerfile puts it (`COPY --from=builder /app/webrain /usr/local/bin/webrain`).
 COPY --from=engine-source /usr/local/bin/webrain /usr/local/bin/webrain
 
-# ASSERT THE CUT, so "no browser" is a build-time fact rather than a hope.
+# Where the browser lands, stated explicitly instead of left to the default
+# `$HOME/.cache/webrain/browsers`: the build runs as root and the entrypoint may
+# not, so a HOME-derived path would be found at build time and lost at run time.
+# webrain reads this at process start, and `find_cft_chrome()` scans it.
+ENV WEBRAIN_BROWSERS_DIR=/opt/webrain/browsers
+
+# OPTIONAL: replace the pinned binary with the LATEST webrain release, via
+# webrain's own updater (in a container it resolves as `self-update`).
+#
+# OFF BY DEFAULT, and the default is the whole point. `WEBRAIN_IMAGE` exists so a
+# floating tag cannot silently change which engine a request runs — that is
+# invariant I1, stated below in capitals. An unconditional `webrain upgrade`
+# would make the build-arg decorative: the image would be named after one tag and
+# run whatever GitHub released most recently, so two builds of the same tag would
+# be two different engines and no failure could be attributed to a version.
+#
+# Opt in deliberately:   --build-arg WEBRAIN_UPGRADE=1
+#
+# Placed BEFORE the browser install on purpose: the upgraded binary's own
+# installer should be the one that resolves and fetches Chrome for Testing, not
+# the older binary's.
+ARG WEBRAIN_UPGRADE=0
+RUN set -eux; \
+    if [ "$WEBRAIN_UPGRADE" = "1" ]; then \
+        webrain upgrade; \
+    else \
+        echo "webrain upgrade skipped: keeping the binary copied from the pinned source image"; \
+    fi
+
+# Fetch Chrome for Testing with webrain's own installer, so the image carries the
+# build webrain's own code prefers. `--engine chrome` is the documented flag; the
+# download is resolved from googlechromelabs' last-known-good JSON, which is also
+# why the version is fixed at build time rather than at run time.
+RUN set -eux; \
+    webrain install --engine chrome
+
+# ASSERT THE CONTRACT: the browser exists, it is webrain's own download, and it
+# actually RENDERS. A CfT binary with a missing shared library links lazily, so
+# `--version` alone would pass and the first real request would fail instead.
 # A `chromium` that reappeared — because the base changed, or someone added a
 # package — would otherwise surface as a working build and a broken SERP.
 #
-# `command -v` is the right test rather than a file check: it asks the same
-# question the SERP path asks when it spawns Chrome.
+# The `command -v chromium` check is now inverted on purpose: this image gets its
+# browser from webrain, so a SYSTEM chromium appearing again means the base or a
+# package list changed under us, and the two would race for `chrome_path()`.
 #
 # The executability check tolerates a non-zero exit from `--help` and FAILS ONLY
 # ON 127, which is the dynamic-loader code. That is the failure this re-host
@@ -98,8 +181,14 @@ RUN set -eux; \
     command -v webrain; \
     rc=0; webrain --help > /dev/null 2>&1 || rc=$?; \
     test "$rc" -ne 127; \
+    webrain --version || true; \
+    CHROME="$$(find "$$WEBRAIN_BROWSERS_DIR" -type f -name chrome | head -n 1)"; \
+    test -n "$$CHROME"; \
+    "$$CHROME" --version; \
+    "$$CHROME" --headless=new --no-sandbox --disable-gpu \
+        --disable-dev-shm-usage --dump-dom about:blank | grep -qi "<html"; \
     if command -v chromium > /dev/null 2>&1 || command -v chromium-browser > /dev/null 2>&1; then \
-        echo "FATAL: chromium is present in an API-only image" >&2; \
+        echo "FATAL: a system chromium is installed; this image must use webrain's own Chrome" >&2; \
         exit 1; \
     fi
 

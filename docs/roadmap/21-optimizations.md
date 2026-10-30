@@ -297,15 +297,24 @@ Not repeated in full; these are the ones that interact with cost or latency:
 - **Fix:** Bun's global `fetch` (pooled) with `signal: AbortSignal.timeout(25_000)` on the tool and
   read paths. `storage.ts` already uses `AbortSignal.timeout`, so the pattern exists.
 
-### O12. One QStash client per crawl target — 🟡 MEDIUM
+### O12. One QStash client per crawl target — ✅ APPLIED 2026-10-23, half of the premise corrected
 
-- **What this is (read):** `infrastructure/qstash.ts` constructs `new Client(...)` inside
-  `publishCrawlTarget`, which `multiCrawlEnqueue` calls once per target.
-- **Problem (reasoned):** a 50-target job = 50 client constructions, 50 TLS handshakes, 50
-  sequential publishes **inside one HTTP request**. Enqueue latency is O(targets) with a handshake
-  constant, and it races the platform timeout before the job id is even returned.
-- **Fix:** module-scope singleton `Client`, and publish the batch with `Promise.all` (each message
-  keeps its own retries and failure callback).
+- **What it was (read):** `infrastructure/qstash.ts` constructed `new Client({token, baseUrl})`
+  inside the publish function, so every message built one.
+- **Applied:** a lazy module-scope singleton, `qstashClient()` via `??=`. Lazy rather than at import
+  because a process without `QSTASH_TOKEN` — a test, a laptop — must still be able to import the
+  module; `qstashConfigured()` is what gates publishing.
+- **Correction to this entry:** the "50 TLS handshakes" claim was an **estimate I never verified**,
+  and it is probably wrong — the SDK publishes with `fetch`, and Node pools connections per origin,
+  so the handshake count was likely already 1. What the change actually removes is 50 object
+  constructions per job. Real, small, and not the latency win this row claimed.
+- **The parallel half was already done:** `enqueueTargets` publishes with
+  `Promise.allSettled(urls.map(...))`, not a sequential loop. Nothing to change there.
+- **Found while doing it, and worth knowing:** the functions build was **red on a half-applied
+  rename**. `publishCrawlTarget` had become `publishJobTarget` in `qstash.ts` (uncommitted work, not
+  mine) while `scripts/qstash-verify-smoke.ts` still imported and called the old name, so `tsc`
+  failed on a file nothing had exercised. Fixed by finishing the rename in that script — two
+  identifiers. Gates after: `tsc` 0, `eslint` 0 errors, `bun run test` 0.
 
 ---
 
@@ -783,3 +792,63 @@ deploy or not at all).
 | **O32** org-list cache — **implemented 2026-10-20** | The "not worth it blind" note was about invalidation cost. The service has a public `user$`, so the cache can be scoped to the identity and dropped on a uid change, which removes the cross-account leak that made this feel unsafe. Four mutations invalidate (`createOrganization`, `acceptInvitation`, `renameOrganization`, `removeMember`); an in-flight handle collapses the concurrent calls that `HttpTestingController` cannot otherwise distinguish. |
 | **O22** the `functions/tsconfig.json` spec exclusion — **rejected on reflection** | Excluding `**/*.spec.ts` would shrink the deploy, but `bun x tsc --noEmit` is the **only** typecheck those 38 specs ever get (`tsx --test` does not typecheck). Trading the only static check on the test suite for ≈200 KB of upload is the wrong direction. Left as is. |
 | **O22** dependency removals and the `@angular/*` devDependency move — **blocked** | Editing `package.json` without regenerating `bun.lock` breaks `bun install --frozen-lockfile` in the image build. No shell here, so the lockfile cannot be regenerated. |
+
+---
+
+## §13 Re-audit 2026-10-23 — cache coverage, and what the poll actually costs
+
+Three measurements were taken this session. The rest is carried forward with its date.
+
+### O39. Where the cache IS and where it is NOT — 🟠, the map, not a guess
+
+Redis is applied on five hot paths, each with a stated TTL:
+
+| Cached | Key | TTL | Evidence |
+|---|---|---|---|
+| Memberships | `membershipsKey(uid)` | 60 s | `syncaiapi.ts`, `authz.middleware.ts` |
+| Session access resolution | `SESSION_ACCESS_CACHE_TTL_SECONDS` | 60 s | `resolveActorSessionAccess` |
+| Session / revocation / device-trust / geo | `sessionKey`, `revokedKey`, `trustedDeviceKey`, `geoCacheKey` | per key | `src/config/redis-keys.ts:392-412` |
+| Org list (client side) | in-process | 30 s + in-flight collapse | O32 |
+| Traffic counter, limiter | `trafficDailyKey`, `rateLimitWindow` | window | `redis-keys.ts:173`, `:359` |
+
+Two reads on the hottest paid paths are **not** cached, and both were already named: **egress per
+uid** (O17, one Firestore read before every tool call) and **entitlement** (O13, the billing document
+read up to four times per paid AI request). Those are the two to close, in that order — egress is a
+pure lookup with no money attached, entitlement sits upstream of `reserveBillingCredits` and needs
+the transactional read to stay transactional.
+
+### O40. The ceiling is not ops/s, it is round trips — 🟡, measured
+
+On `crawlcache` (2026-10-16): `max_ops_per_sec: 10000` against a measured 0.5–0.9 ops/s, i.e.
+**>99.9% headroom**; `evicted_keys: 0` with `maxmemory_policy: optimistic-volatile` (so only
+TTL-carrying keys are even at risk — the lease/rate-limit class, not the analytics zsets).
+
+Consequence for this document: **no throughput optimisation is justified, and none should be
+written.** Every remaining Redis item is round-trip *count* (O6's un-awaited counter, O12's one
+client per target, the `presencePipeline` fold in `home_handler.ts`). Do not re-open eviction or
+`max_ops_per_sec` without a non-zero counter — that was measured once and the measurement says no.
+
+Still open and genuinely costly in **keyspace**, not latency: `functionsRateLimit:*:events:*`
+carries no TTL and was ~3,000 of 3,540 keys on 2026-09-16 (4.3k total today). It belongs to
+`redis-hygiene`, not to a hot path.
+
+### O41. What the job poll costs, now that it is the only transport — 🟠
+
+`scripts/route-parity.ts` reports **6 routes with no client**, and five of them are the job surface:
+`/api/job/stream/:taskId`, `/api/job/stream/status/:taskId`, `/api/job/:taskId/cancel`,
+`/api/jobs/crawl/failed`, `/api/jobs/crawl/worker`. The last two are QStash targets and should have
+no client. The first three are a **documented choice**: `websocket.service.ts:45-46` records that the
+poller subscribes to the same data the SSE route would push.
+
+That makes O16 the cost of the choice rather than an independent defect: the polled
+`getTaskStatus` reads a document containing every item's `data`, and the cheap transport that would
+avoid it is already built, tested and unused. The cheapest real win is therefore not new code — it
+is O16 option 1 (pre-serialise each item's `data` at write time) plus, if the poll is to stay, a
+`liveStatus` field so the status read never touches `items`.
+
+### O42. Coherence of the two ledgers
+
+`20-must-fix.md` gained R1–R6 on the same date. Two of those are performance items wearing a
+correctness label and are cross-referenced rather than duplicated here: **R1** (`/operations` sends
+pack settings a webrain job discards — the user pays for the request and gets none of the
+configuration) and **R5** (= O16's justification).

@@ -150,6 +150,10 @@ code — and that is the trap: **`bff/.env.dev` must repeat every server-side va
 
 Two gotchas in that table, both measured:
 
+- **`.env.local` overrides `.env` PER KEY, not per file** — and this was measured on 2026-10-21 because it was misread once. `firebase-tools` appends `.env.local` last when emulating (`functions/env.js:185`, `FUNCTIONS_EMULATOR_DOTENV = ".env.local"`), so every key it defines wins; every key it omits keeps the `.env` value. Loading `.env` alone and loading both produced the **same** `STRIPE_SECRET_KEY` (`sk_live_`, 107 chars), which is proof the key is absent from `.env.local`. A partial `.env.local` is therefore not a dev env at all — it is a patch, and everything it omits silently runs on production values. Reproduction, printing only the mode:
+  `bun --env-file=.env --env-file=.env.local -e 'const k=process.env.STRIPE_SECRET_KEY||String();console.log(k.slice(0,8),k.length)'`
+- **`.env.local` is loaded only when emulating**, so production genuinely sees `.env` and nothing else. That half needs no change.
+
 - **`FIREBASE_AUTH_EMULATOR_HOST` is load-bearing twice.** It is what points the Admin SDK at the
   Auth emulator, and it is what lets `firebase-admin` accept the emulator's unsigned `alg:none`
   tokens. `bff/security.ts:74` refuses to boot when it is set together with `PRODUCTION=true`,

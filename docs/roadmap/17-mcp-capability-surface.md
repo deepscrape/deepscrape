@@ -131,6 +131,33 @@ And GitHub's own default agrees with the caution: in `mode: "empty"` (multi-user
 stay **disabled** until explicitly enabled. That is the same judgement `15` reached about shared
 skills — arrived at independently.
 
+## Plugins, agents, skills, custom MCP servers — one answer per word
+
+Added 2026-10-30. The ask was "add plugins, agents, skills and custom MCPs to the chat". Four of the
+five words name the same missing thing — a sandbox — so they get one table rather than four features.
+
+| Ask | What it would take here | Verdict |
+|---|---|---|
+| **Plugins** (user-authored tools) | A sandbox, plus a boundary between `AI_TOOLS` and a request issued with the caller's token. Neither exists. Tools and instructions are shared per workspace, so one member's plugin runs on another member's credentials. | **Refused** — unchanged from the section above |
+| **Skills** (user-authored instructions) | The same sharing problem one layer up: a skill is prompt text that reaches a model holding the caller's tool set and spend cap. `15` reached the same conclusion about shared write tools, independently | **Refused** for a shared workspace. A single-member workspace could have it; that is a separate decision, not a config flag |
+| **Agents** (a named persona over a tool subset) | Cheapest of the five, and the only one that adds no capability: prompt text plus a **narrowed** tool list. Narrowing can only withhold, so it cannot widen the boundary. `availableTools(paid)` already returns the list a preset would filter | **Not refused, not built.** Presentation only, so it ranks below `26` P1 |
+| **MCPs** — our tools to their runtime | Phases 1–4 below | **Adopted.** This is the direction that ships |
+| **Custom MCPs** — their server as our tool source | An outbound connection to a caller-supplied URL, and tools whose code we do not control returning text into our model loop. Needs the SSRF guard, a per-user credential in the vault, and a ruling on whose spend the call lands on | **Not now.** It is the only one of the five that ADDS execution surface, and it needs phase 2's metering proof first |
+
+The rule that decides all five: **a capability may only be added where the tool boundary still holds.**
+That boundary is one function, `resolveToolCall(call, paid)`, applied before dispatch. A plugin or a
+custom MCP server introduces a tool that function has never heard of, so the tool must first be
+representable in `AI_TOOLS` — which is exactly what phase 1's acceptance criteria already require.
+
+What would unblock custom MCP servers, in order: phase 2 (metering parity) proven; an SSRF ruling
+recorded against `url-guard`; a credential path in the vault rather than a config field; and the same
+`requiresConfirm` parking applied to any tool their server declares destructive. Until all four hold,
+offering the feature would be selling a second execution surface with no metering and no approval.
+
+**What shipped instead of the framework, 2026-10-30:** the chat now lists the tools it can actually
+use, read from `availableTools(paid)` — the same array phase 1 must serve over `tools/list`. One
+catalogue, two readers, so the panel and the MCP surface cannot disagree about what exists.
+
 ## Acceptance criteria
 
 - `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call`.

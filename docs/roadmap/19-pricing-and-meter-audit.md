@@ -389,7 +389,8 @@ blocks. The three things worth copying are cheap and honest:
 | step | state |
 |---|---|
 | `creditPackCatalog` amounts → 150 / 600 / 2000 | code, committed in working tree |
-| `CUSTOM_CREDIT_UNIT_AMOUNT_EUR` default 19 → 1 | code |
+| `CUSTOM_CREDIT_UNIT_AMOUNT_EUR` default 19 → 1 | **never landed**: `stripe.ts` changed its own fallback to 1, but `env.ts` still handed it `"19"`, so EUR0.19/credit stayed in force |
+| Custom credit price derived from the pack ladder, variable deleted | code (2026-10-28) |
 | Fallbacks repointed to active test ids (D6) | code |
 | Test account: 3 new prices, keys transferred, 3 old archived | done |
 | Live account: 3 new prices, keys transferred | done |

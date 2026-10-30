@@ -701,7 +701,8 @@ firebase deploy --only functions
      `checkout.session.completed`, `customer.subscription.created|updated|deleted`,
      `invoice.created|finalized|paid|payment_failed|upcoming|voided`,
      `payment_intent.succeeded|payment_failed`, `charge.refunded`,
-     `charge.dispute.created`, `customer.updated`, and - required for the saved-card list on
+     `charge.dispute.created`, `charge.dispute.closed` (the wallet unfreezes on the second
+     one), `customer.updated`, and - required for the saved-card list on
      `/billing/paymentmethods` - `payment_method.attached`, `payment_method.detached`,
      `payment_method.updated` and `payment_method.automatically_updated` (the last two catch
      network/API changes to an existing card's brand, last4 or expiry).

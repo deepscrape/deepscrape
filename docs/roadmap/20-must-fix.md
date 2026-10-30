@@ -45,6 +45,150 @@ Two things were removed, deliberately:
   reproduce, is not actionable. Line numbers rot within days in this repo; re-locate
   before editing.
 
+## Re-audit 2026-10-23 — production readiness, money, and surfaces that promise what is retired
+
+Run against the working tree after `crawl4ai` was retired (`23-crawlagent-second-provider.md` §24).
+Four measurements were made rather than re-read: `scripts/route-parity.ts` (81 BFF routes / 29 client
+bases / **0 client calls with no route** / 6 routes with no client), both Stripe accounts' price
+lists, the webrain tier sets in `domain/webrain-tools.domain.ts`, and the `/operations` enqueue path.
+Everything else is cited.
+
+| # | Sev | Status | Finding |
+|---|---|---|---|
+| **R1** | critical | **fixed** | `/operations` ran on a retired engine's config; Run was a silent no-op on a fresh account. |
+| **R2** | ops | **closed** | Price fallbacks are test-account ids; every `STRIPE_PRICE_*` is confirmed bound on the production revision (2026-10-23). |
+| **R3** | — | **fixed** | Enterprise pricing drift between the accounts; test brought to the live floor. |
+| **R4** | high | **fixed** | Three tool tabs advertised a capability whose door is deliberately locked. |
+| **R5** | high | open | The crawl job SSE routes have no consumer, by a documented choice — so the expensive poll carries the whole document. |
+| **R6** | info | recorded | Three credential/capacity clients my earlier audit called missing are in fact wired. |
+
+### R1. `/operations` ran on a retired engine's config — FIXED 2026-10-23
+
+Two faults compounding:
+
+- `enqueueCrawlOperation` → `multiCrawlEnqueue(urls, operationData, pack)`, and the service built the
+  body as `{ urls, operation_data, ...crawlPack.config.value }`. The job route is served by webrain
+  (`handlers/webrain-jobs.ts:3`), which reads neither `crawler_config` nor `browser_config`, so every
+  setting the operator chose was transmitted and discarded.
+- Run **refused** without a pack. Once `/crawlpack` began redirecting, no pack could be created, so a
+  fresh account's Run was an early `return` with no message at all — a silent no-op on the most
+  obvious button in the product.
+
+Four small edits, and the first one is the root cause:
+
+| File | Change |
+|---|---|
+| `core/services/crawlapi.service.ts` | `multiCrawlEnqueue(urls, operationData)` — the third parameter and the `...crawlPack.config.value` spread are gone. This is the only place the body is built, so both callers were fixed at once. |
+| `pages/user/operations/operations.component.ts` | the `if (!pack) refuse` guard deleted; `enqueueCrawlOperation(operationData)` |
+| `core/components/app-crawl/app-crawl.component.ts` | `submitCrawlJob` no longer refuses on a default pack selection; the pack is no longer passed |
+| both `.html` files | the pack picker deleted, and with it the `SETUP_CONFIGURATION *` link that pointed at the retired editor while marking the choice required. `app-crawl` keeps its stream toggle, which lives in the same branch. |
+
+Specs moved with the code rather than being deleted: the old `refuses Run without a pack` and
+`should stop submit when crawl pack selection is default` now assert the opposite, and
+`crawlapi.service.spec.ts` pins the body's key set to exactly `operation_data` + `urls`, so a
+crawl4ai-shaped field cannot come back unnoticed.
+
+Gates: app `tsc --noEmit` 0 · `bun run build` 0 (templates + prerender) · Karma **904 / 904**.
+
+Left behind deliberately: `packsByCode`, `loadCrawlPacks`, `crawlConfigPack`, `crawlpack`,
+`crawlPackSelector` and `openJsonFormat` in `app-crawl` are now unreferenced. `loadCrawlPacks` is the
+only one with a cost — one ≤10-document read plus a `localStorage` write on every playground mount,
+with nothing reading the result.
+
+### R2. The test-account price fallbacks are a KNOWN, MONITORED condition — ops item, not a code gap
+
+I first filed this critical and was wrong to: the mechanism is documented in the module that owns it.
+
+- `functions/src/app/stripe-price-resolution.ts` header states it outright — *"the catalog used to
+  carry hardcoded `price_…` ids, and Stripe ids do not cross modes. The 14 ids in the catalog are
+  test-mode … so a live deployment with unset env vars failed every checkout with 'No such price'.
+  Lookup keys are mode- and environment-independent."* `resolvePriceId` resolves by `lookup_key`
+  first and falls back to the hardcoded id **on purpose**, so a miss degrades rather than breaking
+  checkout, and logs `[billing] lookup_key … not found in this account`.
+- It is watched: `checkStripeCatalogHealth` (`stripe.ts:4642`, hourly) walks every sellable price and
+  records a `billing_incidents` row for each one that could not be sold, with a cooldown.
+- **Residual was an OPS item — CLOSED 2026-10-23.** The fallbacks are still
+  `env.STRIPE_PRICE_* || "price_1UHr…FVGcR0rD8f…"`, and `FVGcR0rD8f` is the test account while live
+  is `FBBAUAyJFB`, so an unbound variable would have shown a customer `No such price` before the
+  incident row. **The operator confirmed every `STRIPE_PRICE_*` is bound on the production revision**,
+  which is the only check that could have closed this. Refusing in production instead stays
+  **declined**: converting a degraded checkout into a hard one trades a visible Stripe error for an
+  outage.
+
+### R3. Enterprise pricing drift between the accounts — FIXED in TEST 2026-10-23
+
+Live `acct_1OELbFBBAUAyJFB` was the reference and the **code already matched it**
+(`billingPlanCatalog` prices Enterprise at 9900 / 27900 / 99900 minor units, no `stripePriceId`,
+`salesLed`, `unlimited`). Test was the stale side; it now matches.
+
+| | Test `acct_1Qag9KFVGcR0rD8f`, before | Test, after |
+|---|---|---|
+| Enterprise monthly | 49.99 active, product default | **99 active** `price_1UTTGQFVGcR0rD8fB8c7KHWJ`, `ds_enterprise_monthly`, product default |
+| Enterprise quarterly | 149.99 active | **279 active** `price_1UTTHSFVGcR0rD8fgpPrMu1r`, `ds_enterprise_quarterly`, **`interval_count: 3`** |
+| Enterprise annual | 499.99 active | **999 active** `price_1UTTGPFVGcR0rD8fwXj5UyHM`, `ds_enterprise_annual` |
+| the three old ones | — | archived, nicknamed `superseded 2026-10-23`, lookup keys cleared |
+
+Verified by re-reading `GET /v1/prices?product=prod_U5l65btpkNeKPm`: exactly three active prices, all
+at the live floor. Starter, Pro and the credit packs were already identical in both accounts.
+
+Two things paid for in the doing:
+
+- **A price that is a product's `default_price` cannot be archived.** Move `default_price` first
+  (`PostProductsId` — `PostProductsProduct` does not exist).
+- **`interval_count` is part of the parity contract, not just the amount.** Quarterly is
+  `interval: month, interval_count: 3`; re-creating it as `count: 1` sells 279 EUR **every month**.
+  The first replacement I wrote did exactly that and had to be archived.
+- Residual: `tax_behavior` is immutable after creation, so two re-created floor prices are
+  `unspecified` where live is `inclusive`. Harmless — no code path resolves an Enterprise price id,
+  because the tier is refused before resolution. Do not "fix" it in code.
+
+### R4. `batch` / `spider` / `watch` promised what the guard refuses — FIXED 2026-10-23
+
+Corrected while fixing it: it was **three** tabs, not two, and the note mechanism was not what the
+code said it was.
+
+- **What the code claimed:** the comment above `costs` read *"`vision` and the three capacity tools
+  (`batch`, `spider`, `watch`) are PAID routes, so their `note` says so in words rather than the box
+  implying 'free, so it works'."*
+- **What was true:** `NOTE_BATCH` never used the word paid, `NOTE_SPIDER` never did, and neither
+  mentioned the lease. Meanwhile `bff/api.ts:443-465` says of batch and spider — *"These two
+  therefore answer a refusal until an exclusive pool exists. The door is built and locked on
+  purpose."* So the panel shipped three tabs whose only possible answer was a refusal, with nothing
+  on screen explaining why or what would change the answer.
+- **The fix uses the mechanism that already existed** instead of adding a badge component: three rows
+  in the `costs` table, which the template already renders as `TOOLS.REQ_LEASE` + a credit price +
+  `TOOLS.LEASE_COST`. Credits are `billing-pricing.domain.ts`'s own numbers — 3, 10, 5 — so nothing
+  was estimated. The row type gained `paid?: boolean`, rendered with an existing string
+  (`FEATURE_GATE.REQUIRES_PLAN_TITLE`) so **no locale was touched**: a free caller's remedy is an
+  upgrade, a paid caller's is a machine, and the two had been collapsed into silence.
+- The stale comment was rewritten rather than left contradicting the table; `vision` is now the only
+  tool with no row, deliberately, with the reason stated.
+
+Gates: app `tsc --noEmit` 0 · `bun run build` 0 · Karma **904 / 904**.
+
+### R5. The SSE job routes have no client, deliberately — so make the poll cheap — OPEN
+
+- **Measured:** `scripts/route-parity.ts` → 6 routes with no client: `/api/download` (capacity tool,
+  no UI, intentional) and five job routes (`/api/job/:taskId/cancel`, `/api/job/stream/:taskId`,
+  `/api/job/stream/status/:taskId`, `/api/jobs/crawl/failed`, `/api/jobs/crawl/worker`).
+- **Not a defect:** `websocket.service.ts:45-46` documents the choice — *"same data as SSE at
+  `GET /api/job/stream/status/:taskId` … So this class is now a [poller]"*. The QStash targets are
+  server-to-server by definition.
+- **What it means:** the platform pays for the cheap transport's absence. The polled route is
+  `getTaskStatus` on a document holding every item's `data` (`handlers/webrain-jobs.ts`), which is
+  O16 in `21-optimizations.md`. So O16 is not an optimisation, it is the bill for choosing polling.
+  The fix is O16 option 1 (pre-serialise each item's `data` at write time) plus a `liveStatus` field
+  so the status read never touches `items` — a schema change, not a client feature.
+
+### R6. Three "missing clients" are wired — recorded so they stop being re-derived
+
+My 2026-10-11 note said no Angular code sent `store`/`load` to the durable vault. It does:
+`core/services/browser-session.service.ts:195-218` posts `POST /api/browser/vault`. Same round:
+`/api/storage/*` has `bucket-storage.service.ts` plus three AI tool entries, `/api/compute` has
+`compute.service.ts` (mounted in the settings general tab), `/api/admin/machines` has
+`machine-fleet.service.ts` behind the platform-admin route. `/api/vision` is registered
+(`bff/api.ts:488`) — the 404 it used to answer is closed.
+
 ## Work list — easiest first
 
 Ordered by what the change costs: files touched, then the gate that proves it, then whether a

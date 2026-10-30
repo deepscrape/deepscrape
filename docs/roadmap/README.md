@@ -30,8 +30,13 @@ you can actually check.
 | `20-must-fix.md` | cross-cutting — **defect ledger** | open / verify / decision / refused rows and a dated gate table; status re-verified 2026-10-21. Do not work it in numeric order |
 | `21-optimizations.md` | cross-cutting | **latency, cost, duplicate work and shrink** — what one request actually costs, what is unnecessary in it, and the zero-to-scale flag plan. Phases A–B applied and gated 2026-10-21; O2, O4 and O21 still need a real deploy or a measured build |
 | `22-dev-prod-parity.md` | cross-cutting | **where dev and production are different systems** — the Fly org literal, emulator/callable split-brain, two databases in one page, and the mail/SMS gaps. Sorted easiest-first, with probes for what is not yet measured |
+| `24-interactive-live-view-and-proxies.md` | cross-cutting — **§1 applied** | **why the live view is 1 fps and what 30 costs** — frame encoding (WebP) now shipping, the fps cap still to be measured up, a WebSocket push transport across four services, and proxies bound to an identity profile at session creation instead of to a request |
+| `25-billing-subject-and-lifecycle.md` | cross-cutting — **§1 shipped** | **who pays, and what deletion is allowed to destroy** — the person/workspace/billing-subject model, the recommendation on workspace plans, the three deletions side by side, the refund policy that is still a decision, and one structured gap table with a recommendation per row |
+| `26-chat-frontend-upgrade.md` | Phase 11 — **P0 applied** | **build our own chat frontend, in place** — why a new Angular library is wrong with one project and one build, the ten real gaps against an advanced chat with a verdict on each, threads staying in `localStorage` until a storage decision exists, and the light/dark token map the chat already uses |
 
-Companion decision record: `docs/ADR-2026-10-BROWSER-SESSIONS.md`.
+Companion decision records: `docs/ADR-2026-10-BROWSER-SESSIONS.md`. The chat frontend is our own,
+in place: no chat kit is adopted, because `@copilotkit/angular@0.6.0` peers `@angular/core ^22.0.0`
+and this repo is on 20 — see `26-chat-frontend-upgrade.md` §1.
 
 ---
 

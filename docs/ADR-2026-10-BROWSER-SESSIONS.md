@@ -61,7 +61,8 @@ Everything below is from the code, not from the earlier plan documents.
 - `TileEngine` (`engines.rs:17`) returns `Vec<TileShot>` where
   `TileShot { index, x, y, width, height, png_b64 }`, one `Page.captureScreenshot` clip per tile.
   `webrain_screenshot` returns `screenshot_b64` plus a file.
-- A sweep for `webrtc|rtc|neko|vnc|mjpeg|sse` returns **zero**. The only WebSocket in the tree is the
+- A sweep for `webrtc|rtc|neko|vnc|mjpeg|sse` returns **zero** *(falsified at platform scope — see
+  the amendment below)*. The only WebSocket in the tree is the
   CDP *client* (`tokio-tungstenite`). The MCP HTTP transport is one-shot: request ->
   `Content-Length` response -> `Connection: close`. There is no chunked response, no SSE, and no
   WebSocket server -- so there is nothing to hang WebRTC signalling on.

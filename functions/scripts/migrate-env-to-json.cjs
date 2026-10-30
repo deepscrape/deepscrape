@@ -4,8 +4,20 @@ const crypto = require("node:crypto")
 const { spawnSync } = require("node:child_process")
 
 const rootDir = path.resolve(__dirname, "..")
-const sourcePath = path.resolve(rootDir, ".env.dev")
 const targetPath = path.resolve(rootDir, ".deploy-secrets.json")
+
+// Which file the secret is built FROM. `functions/.env` is what the operator
+// edits; `.env.local` is what `functions:shell` loads; `.env.dev` is the name
+// this script used to hard-code and it never existed here, which is why nothing
+// ever regenerated the JSON. `FUNCTIONS_ENV_SOURCE` overrides the order, because
+// guessing wrong pushes the wrong environment's values into a live secret.
+const ENV_SOURCES = [".env", ".env.local", ".env.dev"]
+const namedSource = (process.env.FUNCTIONS_ENV_SOURCE || "").trim()
+const sourcePath = namedSource
+  ? path.resolve(rootDir, namedSource)
+  : ENV_SOURCES
+    .map((name) => path.resolve(rootDir, name))
+    .find((candidate) => fs.existsSync(candidate))
 
 const IP_INTEL_DATABASES = [
   // {
@@ -175,8 +187,11 @@ const uploadIpIntelDatabasesAndSyncEnv = (envContent, parsedEnv) => {
   return { updatedEnvContent, updatedParsedEnv: parsedEnv }
 }
 
-if (!fs.existsSync(sourcePath)) {
-  console.error(`Missing source env file: ${sourcePath}`)
+if (!sourcePath || !fs.existsSync(sourcePath)) {
+  console.error(
+    `Missing source env file: ${sourcePath || "none found"}. Looked for ` +
+    `${ENV_SOURCES.join(", ")} in ${rootDir}; set FUNCTIONS_ENV_SOURCE=<file> ` +
+    "to name one.")
   process.exit(1)
 }
 
@@ -184,9 +199,42 @@ const envContent = fs.readFileSync(sourcePath, "utf8")
 const parsed = parseEnvFile(envContent)
 
 const { updatedEnvContent, updatedParsedEnv } = uploadIpIntelDatabasesAndSyncEnv(envContent, parsed)
-fs.writeFileSync(sourcePath, updatedEnvContent, "utf8")
-console.log("Updated .env.dev with IP intelligence storage paths and checksums")
 
-fs.writeFileSync(targetPath, `${JSON.stringify(updatedParsedEnv, null, 2)}\n`, "utf8")
+// Only when the IP-intelligence pass actually changed something, so a plain run
+// never rewrites an env file that holds credentials.
+if (updatedEnvContent !== envContent) {
+  fs.writeFileSync(sourcePath, updatedEnvContent, "utf8")
+  console.log(`Updated ${path.basename(sourcePath)} with IP intelligence storage paths`)
+}
 
-console.log(`Wrote ${Object.keys(updatedParsedEnv).length} keys to ${targetPath}`)
+const keyCount = Object.keys(updatedParsedEnv).length
+if (keyCount === 0) {
+  console.error(
+    `Refusing to write an empty ${path.basename(targetPath)}: no KEY=value ` +
+    `lines parsed from ${path.basename(sourcePath)}`)
+  process.exit(1)
+}
+
+// MERGED, not replaced. Keys that exist only in the JSON (an operator-set
+// BROWSER_MACHINE_IMAGE, anything added by hand) are not in the env file, and
+// replacing the file is what pushed them out of the secret. The env file still
+// wins for every key it defines.
+let previous = {}
+if (fs.existsSync(targetPath)) {
+  try {
+    previous = JSON.parse(fs.readFileSync(targetPath, "utf8"))
+  } catch (error) {
+    console.error(
+      `${path.basename(targetPath)} is not valid JSON (${error.message}). ` +
+      "Fix or delete it, then run again.")
+    process.exit(1)
+  }
+}
+
+const merged = {...previous, ...updatedParsedEnv}
+fs.writeFileSync(targetPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8")
+
+console.log(
+  `Wrote ${Object.keys(merged).length} keys to ${path.basename(targetPath)} ` +
+  `(${keyCount} from ${path.basename(sourcePath)}, ` +
+  `${Object.keys(previous).length} already there)`)

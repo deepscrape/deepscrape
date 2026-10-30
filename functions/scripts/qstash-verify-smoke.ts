@@ -36,7 +36,7 @@
  */
 import { createServer } from "node:http"
 import {
-  publishCrawlTarget,
+  publishJobTarget,
   verifyQstashDelivery,
 } from "../src/infrastructure/qstash"
 
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
       server.listen(PORT, HOST, () => resolve())
     )
 
-    const messageId = await publishCrawlTarget({
+    const messageId = await publishJobTarget({
       taskId: "smoke-1",
       uid: "smoke-user",
       url: "https://example.com",

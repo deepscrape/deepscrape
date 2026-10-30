@@ -38,7 +38,11 @@ crawlagent **20** (pool claim/release, contexts, sessions, janitor, WebRTC), BFF
 2. The app calls `/api/*` on the BFF. The BFF imports handlers from
    `functions/src/handlers/*` and runs them **in the same process** — it does not call the
    Functions host. A function that only exists as an Express route is not reachable.
-3. Browser work goes BFF → arachnefly → Fly machine → **webrain MCP on :11235**.
+3. Browser work goes BFF → arachnefly → Fly machine → **nginx on `:11235` → webrain MCP on
+   `:9223` (loopback)**. `11235` is the adapter's listener, not webrain's: `arachnefly`'s
+   `targetServicePort` is `11235` for both `/machine/mcp/:id` and `/machine/proxy/:id`, and
+   webrain binds `9223` on loopback behind it (`deploy/browser-session/nginx.conf`). Port-scanning
+   or health-checking `11235` as "the MCP server" reaches nginx.
 4. Money lives in `functions/src/gfunctions/*` and Stripe webhooks; the metered sweep runs
    `*/5 * * * *`. Charging is `applyBillingCreditMutation` with an idempotency key.
 5. Queues: QStash publishes crawl targets to the BFF's worker route. That route has no

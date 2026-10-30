@@ -95,6 +95,9 @@ export const PAID_ONLY_TOOLS: readonly string[] = [
   // so no caller's answer changes.
   "webrain_download",
   "webrain_watch",
+  // Only meaningful on a machine the caller leases, and leasing is paid: a free
+  // caller owns no machine whose /proc could be read.
+  "webrain_stats",
 ]
 
 /**
@@ -182,6 +185,10 @@ export const EXCLUSIVE_PAID_TOOLS: readonly string[] = [
   "webrain_crawl",
   "webrain_download",
   "webrain_watch",
+  // Reads the HOST's /proc. On a shared worker those numbers describe a box other
+  // tenants are also running in, so they are neither this caller's to see nor true
+  // for them — the same exclusion the page tools get, for a different reason.
+  "webrain_stats",
 ]
 
 /**
@@ -281,6 +288,10 @@ export const SESSION_TOOLS: readonly string[] = [
   "webrain_download",
   "webrain_watch",
   "webrain_pdf",
+  // The machine's own /proc. Listed for the same reason `extract` is: on a pooled
+  // worker these numbers describe a box shared with other tenants, so the reading is
+  // only true on a lease -- which is where this list sends it.
+  "webrain_stats",
 ]
 
 /**

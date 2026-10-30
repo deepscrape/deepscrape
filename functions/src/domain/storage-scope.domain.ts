@@ -166,6 +166,25 @@ export const userObjectKey = (uid: string, url: string): string =>
   `${userObjectKeyPrefix(uid)}${digest(`url:${SEP}${url}`)}`
 
 /**
+ * One caller's key for one NAMED payload.
+ *
+ * The fetch-keyed shape above answers "the bytes of this url". Bytes the caller
+ * already HOLDS -- a job result, a tool reply -- have no url, so they are keyed
+ * by the name the caller gave them. Still inside the caller's own namespace and
+ * still a digest, so the shape matches `KEY_SHAPE` and `isReadableObjectKey`
+ * keeps working unchanged, and no raw filename reaches a key.
+ *
+ * There is deliberately no shared-tier equivalent: the shared tier is a
+ * URL-keyed cache, and a payload has no url to key it by. A payload is always
+ * the caller's own, which is also why this cannot leak.
+ * @param {string} uid The verified caller uid.
+ * @param {string} name The sanitized name the payload was filed under.
+ * @return {string} The object key.
+ */
+export const userPayloadKey = (uid: string, name: string): string =>
+  `${userObjectKeyPrefix(uid)}${digest(`payload:${SEP}${name}`)}`
+
+/**
  * Whether a key names a shared-tier object.
  *
  * Shape-checked, not prefix-checked: `shared/../users/...` starts with the

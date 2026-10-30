@@ -10,6 +10,7 @@
 import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {
+  TOOL_JOB_ROUTES,
   extractArguments,
   pdfArguments,
   scrapeArguments,
@@ -318,5 +319,45 @@ describe("toolFailure", () => {
 
   it("returns null for a successful call", () => {
     assert.equal(toolFailure(result({})), null)
+  })
+})
+
+describe("TOOL_JOB_ROUTES", () => {
+  it("queues exactly the playground's eight tools", () => {
+    // The panel's tabs are `search`, `extract`, `pdf`, `vision`, `batch`,
+    // `spider`, `watch`. A tab missing here answers 400 on submit, which reads
+    // as a broken panel rather than as a missing row.
+    //
+    // `serp` is the eighth and it is NOT one of the panel's tabs: the SEARCH
+    // mode queues it. It is listed here for the same reason as the others --
+    // `app-search` sends this id, so the id has to exist or the submit 400s.
+    assert.deepEqual(
+      Object.keys(TOOL_JOB_ROUTES).sort(),
+      ["batch", "extract", "pdf", "search", "serp", "spider", "vision", "watch"]
+    )
+  })
+
+  it("queues serp as the worker tool the search mode uses", () => {
+    const route = TOOL_JOB_ROUTES["serp"]
+
+    // The tool name is the worker's, not the route's: `webrain_serp` is what
+    // `webrainTool` is called with by the queued path, and a mismatch would
+    // queue a call the worker has no executor for.
+    assert.equal(route.tool, "webrain_serp")
+
+    // The echo is the query, because that is what the row is labelled with.
+    const mapped = route.mapper({ query: "bun runtime" })
+    assert.equal(mapped.ok, true)
+    assert.equal(mapped.ok ? mapped.echo : undefined, "bun runtime")
+  })
+
+  it("names a worker tool and refuses an empty body for every row", () => {
+    for (const [id, route] of Object.entries(TOOL_JOB_ROUTES)) {
+      assert.match(route.tool, /^webrain_/, `${id} is not a worker tool`)
+      // Every one of these tools takes something required, so a mapper that
+      // accepted `{}` would queue a call the worker can only reject -- and the
+      // rejection would arrive minutes later, on the operations page.
+      assert.equal(route.mapper({}).ok, false, `${id} accepted an empty body`)
+    }
   })
 })

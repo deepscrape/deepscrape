@@ -80,18 +80,31 @@ describe("isPaidAccess", () => {
 })
 
 describe("selectableProviders", () => {
-  it("offers a free user only the free providers on a route", () => {
+  it("offers a free user the engine the platform actually runs", () => {
+    // `crawl4ai` used to be the free option and `webrain` the paid one. With
+    // `crawl4ai` retired this list is the whole answer to "which engine will
+    // run my crawl", so it must never come back empty.
     assert.deepEqual(
       selectableProviders("free", "crawl").map((provider) => provider.id),
-      ["crawl4ai"],
+      ["webrain"],
     )
   })
 
-  it("offers a paid user the paid provider too", () => {
+  it("offers a paid user nothing extra, because webrain is not gated", () => {
     assert.deepEqual(
       selectableProviders("plan", "crawl").map((provider) => provider.id),
-      ["crawl4ai", "webrain"],
+      ["webrain"],
     )
+  })
+
+  it("never offers a retired provider, whatever the plan", () => {
+    for (const accessMode of ["free", "plan", "admin"]) {
+      assert.ok(
+        !selectableProviders(accessMode, "crawl")
+          .some((provider) => provider.id === "crawl4ai"),
+        `crawl4ai was offered to ${accessMode}`,
+      )
+    }
   })
 
   it("offers jina only on the jina route, for anyone", () => {
@@ -116,11 +129,28 @@ describe("resolveProvider", () => {
     assert.equal(resolution.source, "user")
   })
 
-  it("REFUSES a paid provider for a free user, and says why", () => {
+  it("honours webrain for a FREE user, because it is not gated", () => {
+    // The `entitlement` branch is unreachable from this catalogue today: no
+    // crawl-route provider is paid. What still matters is the consequence —
+    // a free caller gets the same engine as everyone else rather than an empty
+    // list.
     const resolution = resolveProvider("webrain", "free")
-    assert.equal(resolution.provider, platformDefaultProvider("crawl"))
-    assert.equal(resolution.source, "platform")
-    assert.equal(resolution.rejected?.reason, "entitlement")
+    assert.equal(resolution.provider, "webrain")
+    assert.equal(resolution.source, "user")
+    assert.equal(resolution.rejected, undefined)
+  })
+
+  it("refuses a RETIRED provider, and says 'retired' rather than 'upgrade'", () => {
+    // A stored `crawl4ai` is the case that matters: the document exists in
+    // production, its pipeline is gone, and reporting `entitlement` would send
+    // a paying caller to the pricing page instead of to the engine picker.
+    for (const accessMode of ["free", "plan", "admin"]) {
+      const resolution = resolveProvider("crawl4ai", accessMode)
+      assert.equal(resolution.provider, platformDefaultProvider("crawl"))
+      assert.equal(resolution.source, "platform")
+      assert.equal(resolution.rejected?.reason, "retired")
+      assert.equal(resolution.rejected?.value, "crawl4ai")
+    }
   })
 
   it("refuses a provider that does not serve the route", () => {

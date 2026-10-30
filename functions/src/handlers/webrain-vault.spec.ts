@@ -1,6 +1,7 @@
 import {strict as assert} from "node:assert"
 import {describe, it} from "node:test"
 import {vaultArguments} from "./webrain-tools"
+import {VAULT_PAYLOAD_MAX_BYTES} from "../domain/vault-payload.domain"
 
 // The vault mapper is the boundary between the UI and a WORKER-HELD credential
 // store, so two things matter beyond field plumbing: that only the five vault
@@ -211,5 +212,84 @@ describe("vaultArguments", () => {
       url: "https://example.com/login",
     })
     assert.equal(badProfile.ok, false)
+  })
+
+  it("forwards inline only when save_state asks for it", () => {
+    // Opt-in and boolean-only: the file-backed form stays the default, so a
+    // caller that does not ask for the payload is unchanged.
+    const asked = vaultArguments({
+      op: "save_state",
+      service: "github",
+      profile: "me",
+      inline: true,
+    })
+    assert.equal(asked.ok, true)
+    assert.equal(asked.ok ? asked.args["inline"] : undefined, true)
+
+    const notAsked = vaultArguments({
+      op: "save_state",
+      service: "github",
+      profile: "me",
+    })
+    assert.equal(notAsked.ok ? "inline" in notAsked.args : true, false)
+
+    // A truthy non-boolean is not a request, and there is no other op it means.
+    const noisy = vaultArguments({
+      op: "save_state",
+      service: "github",
+      profile: "me",
+      inline: "yes",
+    })
+    assert.equal(noisy.ok ? "inline" in noisy.args : true, false)
+  })
+
+  it("forwards a whole-profile payload to restore_state", () => {
+    const state = {cookies: [{name: "sid", value: "x"}], localStorage: {a: "b"}}
+    const mapped = vaultArguments({
+      op: "restore_state",
+      service: "github",
+      profile: "me",
+      payload: state,
+    })
+    assert.equal(mapped.ok, true)
+    assert.deepEqual(mapped.ok ? mapped.args["payload"] : undefined, state)
+  })
+
+  it("refuses a restore payload that is not an object", () => {
+    // The worker reads `cookies` and `localStorage` off this value, so anything
+    // else restores nothing and still answers ok -- a silent no-op is the one
+    // outcome a caller cannot detect.
+    for (const payload of ["junk", 42, [1, 2], true]) {
+      const mapped = vaultArguments({
+        op: "restore_state",
+        service: "github",
+        profile: "me",
+        payload,
+      })
+      assert.equal(mapped.ok, false, JSON.stringify(payload))
+    }
+  })
+
+  it("refuses a restore payload over the vault's size limit", () => {
+    // Derived from the constant, so raising the cap cannot leave this test
+    // asserting a bound nothing enforces any more.
+    const huge = {localStorage: {blob: "x".repeat(VAULT_PAYLOAD_MAX_BYTES)}}
+    const mapped = vaultArguments({
+      op: "restore_state",
+      service: "github",
+      profile: "me",
+      payload: huge,
+    })
+    assert.equal(mapped.ok, false)
+  })
+
+  it("does not forward a payload to any other op", () => {
+    const mapped = vaultArguments({
+      op: "setcookies",
+      cookies: [{name: "sid", value: "x"}],
+      payload: {cookies: []},
+    })
+    assert.equal(mapped.ok, true)
+    assert.equal(mapped.ok ? "payload" in mapped.args : true, false)
   })
 })

@@ -32,18 +32,39 @@ import { DEFAULT_APP_ORIGIN, env } from "../config/env"
 import { webrainWorkerPool } from "./webrain-config.store"
 
 /**
- * The payload of one queued crawl target.
+ * The payload of one queued unit of work.
  *
- * A reference, never the scraped result: the result belongs in Firestore, and a
- * large body would be copied through a third party and signed along with it.
+ * A reference, never the result: the result belongs in Firestore, and a large
+ * body would be copied through a third party and signed along with it.
+ *
+ * ONE message shape for a scrape target and for a tool call, because the
+ * delivery, the job document, the status derivation and the cancel check are
+ * identical for both. `tool` is what separates them: absent means
+ * `webrain_scrape` against `url`, present means that tool against `args`.
  */
 export interface CrawlTargetMessage {
   /** The job this target belongs to. */
   taskId: string
   /** The owner, carried so the worker need not trust anything else. */
   uid: string
-  /** One already-validated target. */
-  url: string
+  /**
+   * One already-validated target.
+   *
+   * Optional because a tool call has no url; `label` is what the results view
+   * shows for one.
+   */
+  url?: string
+  /** The worker tool to call. Absent means `webrain_scrape`. */
+  tool?: string
+  /**
+   * The tool's WORKER arguments.
+   *
+   * Already mapped by the same argument mapper the direct route uses, so a job
+   * and a direct call cannot disagree about what the worker takes.
+   */
+  args?: Record<string, unknown>
+  /** What the results view calls this unit of work. */
+  label?: string
   /**
    * The entitlement resolved when the job was queued.
    *
@@ -134,7 +155,23 @@ export const queueTargetsProduction = (
   !isProduction && origin.replace(/\/+$/, "") === DEFAULT_APP_ORIGIN
 
 /**
- * Publishes one target to the queue.
+ * The publishing client, built once per process.
+ *
+ * It used to be constructed inside `publishJobTarget`, so a 50-target job built
+ * 50 of them inside one HTTP request. Lazy rather than at import because a
+ * process without `QSTASH_TOKEN` (a test, a laptop) must be able to import this
+ * module; `qstashConfigured()` is what gates publishing.
+ */
+let qstashClientCache: Client | undefined
+
+const qstashClient = (): Client =>
+  (qstashClientCache ??= new Client({
+    token: env.QSTASH_TOKEN,
+    baseUrl: env.QSTASH_URL,
+  }))
+
+/**
+ * Publishes one unit of work to the queue.
  *
  * `retries` is explicit rather than left to the default: three attempts is the
  * intended budget for a transient worker failure, and a silent default change
@@ -143,7 +180,7 @@ export const queueTargetsProduction = (
  * @return {*} The QStash message id — also the billing idempotency key, and
  * stable across a retry, which is what makes it usable as one.
  */
-export async function publishCrawlTarget(
+export async function publishJobTarget(
   message: CrawlTargetMessage
 ): Promise<string> {
   if (queueTargetsProduction(env.APP_ORIGIN, env.IS_PRODUCTION)) {
@@ -152,10 +189,7 @@ export async function publishCrawlTarget(
         "non-production process. Set APP_ORIGIN to this machine's address."
     )
   }
-  const response = await new Client({
-    token: env.QSTASH_TOKEN,
-    baseUrl: env.QSTASH_URL,
-  }).publishJSON({
+  const response = await qstashClient().publishJSON({
     url: workerUrl(),
     body: message,
     retries: 3,

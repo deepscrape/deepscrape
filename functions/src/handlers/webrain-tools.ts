@@ -42,6 +42,7 @@ import { Request, Response } from "express"
 import {
   integer,
   nonEmptyString,
+  serpJobRoute,
 } from "./serp"
 import {
   MAX_TARGETS,
@@ -50,6 +51,7 @@ import {
   targetUrlFrom,
 } from "../domain/url-guard.domain"
 import { isSafeVaultName } from "../domain/vault-entry.domain"
+import { VAULT_PAYLOAD_MAX_BYTES } from "../domain/vault-payload.domain"
 import {
   webrainTool,
   type WebrainToolResult,
@@ -674,42 +676,63 @@ const runRoute = async (
 }
 
 /**
+ * One tool route's handler, carrying the spec it was built from.
+ *
+ * The extra two fields are what let `TOOL_JOB_ROUTES` queue the SAME tool with
+ * the SAME mapper the direct route uses, instead of naming both a second time.
+ */
+export interface ToolRouteHandler {
+  (req: Request, res: Response): Promise<void>
+  /** The worker tool this route calls. */
+  readonly tool: string
+  /** The route's argument mapper, in the HTTP surface's field names. */
+  readonly mapper: (body: unknown) => ToolArguments
+}
+
+/**
  * A route handler for one argument mapper.
  *
  * Four near-identical handlers would each repeat the 400-then-`runRoute` body;
  * this keeps the difference between them to the mapper, which is the only part
  * that is actually different.
+ *
+ * The tool name and the mapper are ALSO attached to the returned function, so a
+ * queued job can run the exact same tool against the exact same arguments
+ * without a second table to keep in step. See `TOOL_JOB_ROUTES`.
  * @param {unknown} mapper The route's pure argument mapper.
  * @param {string} tool The worker tool name.
  * @param {string} echo The field echoed back for correlation.
- * @return {*} An Express handler.
+ * @return {*} An Express handler, carrying its own spec.
  */
 const route = (
   mapper: (body: unknown) => ToolArguments,
   tool: string,
   echo: string
-) =>
+): ToolRouteHandler =>
   /**
    * The handler.
    * @param {Request} req
    * @param {Response} res
    * @return {Promise<void>} Resolves once the response has been written.
    */
-  async (req: Request, res: Response): Promise<void> => {
-    const mapped = mapper(req.body)
-    if (!mapped.ok) {
-      res.status(400).json({ error: mapped.error })
-      return
-    }
+  Object.assign(
+    async (req: Request, res: Response): Promise<void> => {
+      const mapped = mapper(req.body)
+      if (!mapped.ok) {
+        res.status(400).json({ error: mapped.error })
+        return
+      }
 
-    await runRoute(
-      { tool, echo, echoValue: mapped.echo, args: mapped.args },
-      req.accessMode,
-      req.user?.uid,
-      req.authToken,
-      res
-    )
-  }
+      await runRoute(
+        { tool, echo, echoValue: mapped.echo, args: mapped.args },
+        req.accessMode,
+        req.user?.uid,
+        req.authToken,
+        res
+      )
+    },
+    { tool, mapper }
+  )
 
 /**
  * `POST /scrape` — `webrain_scrape`, one static page.
@@ -841,6 +864,45 @@ export const vaultArguments = (body: unknown): ToolArguments => {
       return { ok: false, error: "op=setcookies needs a cookies array" }
     }
     args["cookies"] = kept
+  }
+
+  // The whole-profile round trip. `save_state inline` returns the state to the
+  // caller and writes no file on the worker; `restore_state payload` applies a
+  // state the caller kept itself. Both are opt-in, because the historical
+  // file-backed form is what a same-machine caller still uses.
+  if (op === "save_state" && source?.["inline"] === true) {
+    args["inline"] = true
+  }
+
+  if (op === "restore_state") {
+    const sent = source?.["payload"]
+    if (sent !== undefined && sent !== null) {
+      // The same trust boundary as `setcookies`: this is credential material
+      // arriving in a request body. Only an object is accepted, because the
+      // worker reads `cookies` and `localStorage` off it and anything else would
+      // restore nothing while answering `ok`. The size bound is the VAULT's own
+      // number, so a state this route accepts is one the vault could have
+      // returned.
+      // Strictly an OBJECT, which `asRecord` alone does not enforce: it lets an
+      // array through, while the worker's own `is_object()` does not -- so an
+      // array would pass this guard, restore nothing, and answer ok.
+      if (asRecord(sent) === undefined || Array.isArray(sent)) {
+        return {
+          ok: false,
+          error: "op=restore_state payload must be an object",
+        }
+      }
+      const size = Buffer.byteLength(JSON.stringify(sent), "utf8")
+      if (size > VAULT_PAYLOAD_MAX_BYTES) {
+        return {
+          ok: false,
+          error:
+            `op=restore_state payload is ${size} bytes, over the ` +
+            `${VAULT_PAYLOAD_MAX_BYTES}-byte limit`,
+        }
+      }
+      args["payload"] = sent
+    }
   }
 
   // Only the four entry ops read a port, and it defaults worker-side; sending
@@ -1016,6 +1078,12 @@ const OBSERVE_ARGS: readonly string[] = [
   "word_threshold",
   "exclude_social",
   "wait_ms",
+  // `what: "screenshot"` FOLDS to `webrain_screenshot` (map_surface), whose
+  // handler reads `format` and `quality` directly. Without these two the live view
+  // could only ever be a PNG: the encoder that produces a jpeg or a webp exists in
+  // webrain and was unreachable through this allowlist.
+  "format",
+  "quality",
 ]
 
 /**
@@ -1612,3 +1680,31 @@ export const webrainDownload = route(
  * @return {Promise<void>} Resolves once the response has been written.
  */
 export const webrainWatch = route(watchArguments, "webrain_watch", "url")
+
+/**
+ * The routes a playground tool run may be QUEUED as a job, keyed by the id the
+ * client sends.
+ *
+ * The values are the HANDLERS above rather than a second copy of their tool
+ * names and mappers, so a queued call and a direct call cannot disagree about
+ * what the worker takes. A mapper is what turns the HTTP surface's field names
+ * (`q`, `mode`, `op`) into the worker's, and quoting one twice is exactly how
+ * "the queued version needs different arguments" would come true.
+ *
+ * `download` and `vault` are deliberately absent. `download` writes files on
+ * the worker and `vault` needs an admin/key guard, so neither is a playground
+ * tool; a job for either would queue work no screen can start.
+ */
+export const TOOL_JOB_ROUTES: Record<string, ToolRouteHandler> = {
+  // `serp` first because it is the one tool a FREE caller may queue: search was
+  // the only mode with no job at all, so a free account's own query outlived
+  // neither the tab nor the page.
+  serp: serpJobRoute,
+  search: webrainSearch,
+  extract: webrainExtract,
+  pdf: webrainPdf,
+  vision: webrainVision,
+  batch: webrainBatch,
+  spider: webrainSpider,
+  watch: webrainWatch,
+}

@@ -97,9 +97,15 @@ export const onSecurityAlertCreated = onDocumentCreated(
       const emailOptedIn =
         category !== "spend_cap" ||
         notifications?.preferences?.spendCapEmail === true
-      const linkUrl = category === "spend_cap" ?
-        `${env.APP_ORIGIN}/machines` :
-        securityUrl
+      // A writer-set same-origin path wins: it reaches the service worker's
+      // navigate(), so an absolute URL there would leave the app.
+      const storedLink = typeof data.link === "string" &&
+        data.link.startsWith("/") ? data.link : ""
+      const linkUrl = storedLink ?
+        `${env.APP_ORIGIN}${storedLink}` :
+        category === "spend_cap" ?
+          `${env.APP_ORIGIN}/machines` :
+          securityUrl
 
       const work: Promise<unknown>[] = []
 

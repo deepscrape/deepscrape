@@ -2427,6 +2427,11 @@ export const updateMfaSecurityPreferences = onCall(
           mfa: preferences,
         },
       },
+      // The fan-out enforces its opt-out on `notifications`, not on
+      // `settings.security.mfa`; mirror the toggle onto the field it reads.
+      notifications: {
+        securityAlerts: preferences.riskEmailNotifications,
+      },
       updated_At: new Date(),
     }, { merge: true })
 
@@ -2667,6 +2672,15 @@ export const verifyAndTrustDevice = onCall(
         .collection("trusted_devices")
         .doc(deviceId)
 
+      // The login session this device is being trusted for already knows what the
+      // browser, the OS and the city are — that is what "Active Sessions" renders.
+      // This record used to be written with empty strings and a comment saying "will
+      // be filled by client", but `trusted_devices` denies every client write, so it
+      // never was: every trusted device read "Unknown • Unknown location".
+      const trustedSessionId = sessionId || ""
+      const sessionSnap = trustedSessionId ? await db.collection("loginSessions").doc(trustedSessionId).get() : null
+      const sessionFacts = sessionSnap?.data() || {}
+
       await Promise.all([
         trustedDeviceRef.set({
           deviceId,
@@ -2674,9 +2688,9 @@ export const verifyAndTrustDevice = onCall(
           trustedAt: Timestamp.now(),
           trustedUntil: trustedUntilTs,
           lastUsedAt: Timestamp.now(),
-          browser: "", // Will be filled by client
-          os: "", // Will be filled by client
-          location: "",
+          browser: String(sessionFacts["browser"] || ""),
+          os: String(sessionFacts["os"] || ""),
+          location: String(sessionFacts["location"] || ""),
         }),
         // A trusted device skips device verification for 90 days, so the owner has
         // to learn about it. Written concurrently with the trust record, and its

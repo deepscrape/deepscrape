@@ -2,7 +2,7 @@
 /* eslint-disable indent */
 /* eslint-disable object-curly-spacing */
 import { FieldPath, FieldValue } from "firebase-admin/firestore"
-import { db, dbName, getSecretFromManager, purgeSecretAndAllRevisions, saveToSecretManager, secretPathFor, auth as adminAuth } from "./config"
+import { db, dbName, generateApiKey, getSecretFromManager, purgeSecretAndAllRevisions, saveToSecretManager, secretPathFor, auth as adminAuth } from "./config"
 import { auth, runWith } from "firebase-functions/v1"
 import { onDocumentWritten } from "firebase-functions/v2/firestore"
 import { HttpsError } from "firebase-functions/v2/https"
@@ -10,7 +10,7 @@ import { HttpsError } from "firebase-functions/v2/https"
 // site changes. Includes createBootstrapAdminPasswordAccount and enableTotpMfa.
 import { guardedOnCall as onCallv2 } from "../infrastructure/callable-limiter"
 import { env, functionsEnvJson } from "../config/env"
-import { API_KEY_INDEX_COLLECTION, apiKeyIndexId } from "../domain/api-key-index.domain"
+import { API_KEY_INDEX_COLLECTION, API_KEY_PREFIX, apiKeyIndexId } from "../domain/api-key-index.domain"
 
 const bootstrapAdminEmails = new Set(
     env.ADMIN_EMAILS
@@ -403,7 +403,8 @@ export const createDefaultOrganization = auth
                 slug: orgId,
                 ownerId: user.uid,
                 billingOwnerUid: user.uid,
-                plan: "free",
+                // No `plan`: an org has no subscription. See `createOrganization`
+                // in infrastructure/syncaiapi.ts for the full reason.
                 createdAt: FieldValue.serverTimestamp(),
                 updatedAt: FieldValue.serverTimestamp(),
             }, { merge: true })
@@ -651,18 +652,20 @@ export const createMyApiKey = onCallv2(async (req) => {
         // Save metadata in Firestore
         const newApiKeyDoc = await db.collection(`users/${userId}/apikeys`).doc()
 
-        // Save API key in Secret Manager
-        const secretName = `users_${userId}_apikey_${newApiKeyDoc.id}`
-        const secretPath = await saveToSecretManager(secretName, apiKey.key)
+          // Minted HERE, never accepted from the caller. A client-supplied
+          // credential is a caller-chosen secret: nothing stopped `dpsp-key-aaaa`,
+          // which would let the browser decide what protects the platform's API.
+          const key = `${API_KEY_PREFIX}${generateApiKey()}`
 
-        // The lookup direction, and the reason this feature could not work before:
-        // nothing could go from a presented key back to a uid. See
+          // Save API key in Secret Manager
+          const secretName = `users_${userId}_apikey_${newApiKeyDoc.id}`
+          const secretPath = await saveToSecretManager(secretName, key)
         // `api-key-index.domain.ts`. Written BEFORE the metadata, so a key that can
         // authenticate is never a key nobody can find.
         //
         // A failure here fails the whole call rather than logging and continuing:
         // minting a credential nothing can resolve is worse than refusing to mint it.
-        const keyHash = apiKeyIndexId(apiKey.key)
+        const keyHash = apiKeyIndexId(key)
 
         await db.collection(API_KEY_INDEX_COLLECTION).doc(keyHash).set({
             uid: userId,
@@ -673,19 +676,30 @@ export const createMyApiKey = onCallv2(async (req) => {
         // `keyHash` on the metadata too, so deletion can drop the index entry without
         // reading the secret back out of Secret Manager. A digest is not a credential,
         // which is what makes it safe to keep beside the metadata.
+        const showKey = `${API_KEY_PREFIX}${"*".repeat(24)}${key.slice(-4)}`
+
         await newApiKeyDoc.set({
             secretPath,
             keyHash,
             permissions: apiKey.permissions || [],
             name: apiKey.name,
             default: apiKey.default,
-            showKey: apiKey.showKey,
+            // Derived from the minted key. The client used to supply this too, so the
+            // card and the credential could disagree.
+            showKey,
             type: apiKey.type,
             created_At: new Date(),
             created_By: userId,
         }, { merge: true })
 
-        return { error: null, apiKeyId: newApiKeyDoc.id, message: "API key created successfully" }
+        return {
+            error: null,
+            apiKeyId: newApiKeyDoc.id,
+            showKey,
+            // Returned ONCE, to the caller who just created it, so the card can copy it.
+            apiKey: key,
+            message: "API key created successfully",
+        }
     } catch (error) {
         console.error("Error creating API key:", error)
         // throw new Error("Failed to create API key by id " + apiKeyId)
@@ -815,6 +829,93 @@ export const deleteMyApiKey = onCallv2(async (req) => {
         secretDeleted,
         versionsDestroyed,
         message: "API key deleted successfully",
+    }
+})
+
+
+/**
+ * Stop a key authenticating without destroying it.
+ *
+ * The index entry (`api-key-index.domain.ts`) is the only thing that turns a
+ * presented key into a uid, so disabling is removing that entry: metadata and
+ * secret both survive and re-enabling puts the entry back. That is why this is
+ * not `delete`, which purges the secret and every revision of it.
+ * @param {*} req Callable request carrying `apiKeyId` and `disabled`.
+ * @return {Promise<object>} The key's new status.
+ */
+export const setMyApiKeyDisabled = onCallv2(async (req) => {
+    const apiKeyIdRaw = req.data?.apiKeyId
+    const apiKeyId = typeof apiKeyIdRaw === "string" ? apiKeyIdRaw.trim() : ""
+    const disabled = req.data?.disabled !== false
+
+    if (!apiKeyId) {
+        throw new HttpsError("invalid-argument", "apiKeyId is required")
+    }
+
+    const userId = req?.auth?.uid
+    if (!userId) {
+        throw new HttpsError("unauthenticated", "User must be authenticated")
+    }
+
+    const apiKeyRef = db.doc(`users/${userId}/apikeys/${apiKeyId}`)
+    const apiKeySnap = await apiKeyRef.get()
+    if (!apiKeySnap.exists) {
+        throw new HttpsError("not-found", "API key not found")
+    }
+
+    const storedHash = apiKeySnap.get("keyHash")
+    const keyHash = typeof storedHash === "string" ? storedHash.trim() : ""
+    if (!keyHash) {
+        // Minted before the index existed, so it never authenticated at all.
+        throw new HttpsError(
+            "failed-precondition",
+            "This key predates the lookup index; delete it and create a new one",
+        )
+    }
+
+    const indexRef = db.doc(`${API_KEY_INDEX_COLLECTION}/${keyHash}`)
+    const indexSnap = await indexRef.get()
+    // `keyHash` is a field on a client-writable document, so it is a caller-supplied
+    // pointer. Without this check the call could remove or resurrect another
+    // tenant's index entry by aiming the field at their digest.
+    if (indexSnap.exists && indexSnap.get("uid") !== userId) {
+        throw new HttpsError(
+            "permission-denied",
+            "This key's hash belongs to another account",
+        )
+    }
+
+    const now = FieldValue.serverTimestamp()
+    const auditRef = db.collection(`users/${userId}/apikey_audit`).doc()
+    const batch = db.batch()
+
+    if (disabled) {
+        batch.delete(indexRef)
+    } else if (!indexSnap.exists) {
+        batch.set(indexRef, {
+            uid: userId,
+            keyId: apiKeyId,
+            created_At: new Date(),
+        })
+    }
+
+    batch.set(apiKeyRef, {
+        status: disabled ? "disabled" : "enabled",
+        updated_At: now,
+    }, { merge: true })
+    batch.set(auditRef, {
+        action: disabled ? "disabled" : "enabled",
+        apiKeyId,
+        keyHash,
+        at: now,
+        by: userId,
+    })
+    await batch.commit()
+
+    return {
+        error: null,
+        apiKeyId,
+        status: disabled ? "disabled" : "enabled",
     }
 })
 

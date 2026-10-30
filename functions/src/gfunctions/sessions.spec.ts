@@ -116,4 +116,13 @@ describe("sessions mfa preferences", () => {
     assert.equal(shouldNotify.shouldNotify, true)
     assert.equal(shouldNotify.reason, "notify")
   })
+
+  it("mirrors the risk-email opt-out onto notifications.securityAlerts", () => {
+    const src = readFileSync(join(__dirname, "sessions.ts"), "utf8")
+    const callable = src.slice(
+      src.indexOf("export const updateMfaSecurityPreferences"),
+    )
+
+    assert.match(callable, /notifications:\s*\{\s*securityAlerts:/)
+  })
 })

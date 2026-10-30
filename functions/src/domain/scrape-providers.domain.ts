@@ -47,6 +47,23 @@ export interface ScrapeProviderDescriptor {
   routes: readonly ScrapeRoute[]
   /** Minimum access mode required to SELECT it. */
   minAccess: "free" | "paid"
+  /**
+   * True when this platform no longer serves the provider, whatever a caller
+   * chose.
+   *
+   * A retired entry STAYS in the catalogue rather than being deleted. Stored
+   * preferences, task documents and historical records all name it, and
+   * removing it would turn a real value into an unknown id — a data repair
+   * presented as a typo. It is instead never selectable and never resolvable:
+   * `selectableProviders` hides it, `platformDefaultProvider` will not adopt
+   * it, and `resolveProvider` reports the stored value as rejected instead of
+   * routing to a pipeline that does not answer.
+   *
+   * This is the difference between "we stopped developing it" and "requests
+   * must not land on it". The `notes` field records the former; this flag
+   * enforces the latter.
+   */
+  retired: boolean
   jobModel: ScrapeJobModel
   /**
    * Whether a caller may point this provider at their own quota with their own key.
@@ -83,10 +100,12 @@ export interface ScrapeProviderDescriptor {
 /**
  * What the platform has integrated today.
  *
- * `crawl4ai` (the `crawlagent` service) is the FROZEN provider: it stays
- * installed and keeps working, and it receives no new development. `jina` is an
- * external reader. `webrain` is the embedded engine — the one the platform is
- * moving to, and the only one that reports gates and typed JSON.
+ * `webrain` is the engine this platform serves: the embedded MCP engine, the
+ * platform default, and the only provider that reports anti-bot gates and typed
+ * JSON. `jina` is an external reader on its own route. `crawl4ai` (the
+ * `crawlagent` service) is RETIRED — installed, no longer developed, and no
+ * longer reachable by a caller. It stays listed so that a stored `crawl4ai`
+ * preference resolves to a visible rejection rather than to an unknown id.
  *
  * `challenge` is `false` for every provider except webrain. That is not a gap
  * in
@@ -100,6 +119,10 @@ export const SCRAPE_PROVIDERS: readonly ScrapeProviderDescriptor[] = [
     labelKey: "SCRAPE_PROVIDER.CRAWL4AI",
     routes: ["crawl"],
     minAccess: "free",
+    // Retired. Its job pipeline is disabled at the route table (see the ADR
+    // §10), so a request that resolved here would not answer at all — the worst
+    // kind of gap, because the caller sees a hang and not a refusal.
+    retired: true,
     jobModel: "job",
     byok: false,
     capabilities: {
@@ -109,16 +132,15 @@ export const SCRAPE_PROVIDERS: readonly ScrapeProviderDescriptor[] = [
       challenge: false,
       typedJson: false,
     },
-    // Frozen: still installed and supported, no longer developed. Its job
-    // pipeline is currently disabled at the route table (see the ADR §10).
     notes:
-      "Frozen. Async job pipeline (temp_task_id -> Celery task_id -> SSE).",
+      "Retired. Async job pipeline (temp_task_id -> Celery task_id -> SSE).",
   },
   {
     id: "jina",
     labelKey: "SCRAPE_PROVIDER.JINAAI",
     routes: ["jina"],
     minAccess: "free",
+    retired: false,
     jobModel: "sync",
     byok: true,
     capabilities: {
@@ -134,10 +156,13 @@ export const SCRAPE_PROVIDERS: readonly ScrapeProviderDescriptor[] = [
     id: "webrain",
     labelKey: "SCRAPE_PROVIDER.WEBRAIN",
     routes: ["crawl"],
-    // Selecting it explicitly is a paid perk. Free traffic still reaches the
-    // shared, stateless pool when the platform default is webrain — that is a
-    // platform decision, not a user one.
-    minAccess: "paid",
+    // Free-selectable, because it is the only engine left on this route. It was
+    // a paid perk while `crawl4ai` was also selectable; keeping that would give
+    // a free caller an EMPTY engine list while their requests were already
+    // going to webrain as the platform default. The offer has to match what the
+    // platform actually does.
+    minAccess: "free",
+    retired: false,
     jobModel: "mcp",
     byok: false,
     capabilities: {
@@ -153,10 +178,14 @@ export const SCRAPE_PROVIDERS: readonly ScrapeProviderDescriptor[] = [
 ] as const
 
 /**
- * The provider used when nothing is stored. `crawl4ai` keeps today's
- * behaviour.
+ * The provider used when nothing is stored, and when a stored choice cannot be
+ * honoured.
+ *
+ * `webrain` is the platform's engine. `crawl4ai` must NOT be the fallback: it
+ * is `retired`, so its pipeline does not answer, which makes a fallback that
+ * lands there a fallback that fails.
  */
-export const FALLBACK_PROVIDER: ScrapeProviderId = "crawl4ai"
+export const FALLBACK_PROVIDER: ScrapeProviderId = "webrain"
 
 export const isScrapeProviderId = (value: unknown): value is ScrapeProviderId =>
   typeof value === "string" &&
@@ -172,13 +201,18 @@ export const providerDescriptor = (
   ) as ScrapeProviderDescriptor
 
 /**
- * The platform default: `SCRAPE_PROVIDER` when it names a real provider that
- * serves the route, otherwise the fallback.
+ * The platform default: `SCRAPE_PROVIDER` when it names a real, non-retired
+ * provider that serves the route, otherwise the fallback.
  *
  * Validation matters here. The env var used to be read as "webrain if it equals
  * webrain, else crawl4ai", which silently accepted a typo as crawl4ai. A
  * misconfigured default is now visible as a rejected value rather than being
  * indistinguishable from the intended one.
+ *
+ * A retired name is ignored for the same reason a typo is. This value is set by
+ * hand, so a stale `SCRAPE_PROVIDER=crawl4ai` left over from before the
+ * retirement would otherwise keep sending every defaulted request to a pipeline
+ * whose routes are gone — the exact failure this file exists to prevent.
  * @param {*} route
  * @return {*}
  */
@@ -188,6 +222,7 @@ export const platformDefaultProvider = (
   const configured = env.SCRAPE_PROVIDER
   if (
     isScrapeProviderId(configured) &&
+    !providerDescriptor(configured).retired &&
     providerDescriptor(configured).routes.includes(route)
   ) {
     return configured
@@ -203,6 +238,12 @@ export const isPaidAccess = (accessMode: string | undefined): boolean =>
   typeof accessMode === "string" && accessMode !== "" && accessMode !== "free"
 
 /** The descriptors a caller may choose from on a route, given their access.
+ *
+ * A `retired` provider is never offered, whatever the plan. Offering one is
+ * what let a caller select `crawl4ai` after its job pipeline had been removed
+ * from the route table: the setting was accepted, echoed back as stored, and
+ * then every run failed. An empty list is a worse-looking answer than a wrong
+ * one, but it is the honest one.
  * @param {*} accessMode
  * @param {*} route
  * @return {*}
@@ -213,6 +254,7 @@ export const selectableProviders = (
 ): ScrapeProviderDescriptor[] =>
   SCRAPE_PROVIDERS.filter(
     (provider) =>
+      !provider.retired &&
       provider.routes.includes(route) &&
       (provider.minAccess === "free" || isPaidAccess(accessMode))
   )
@@ -225,14 +267,19 @@ export interface ProviderResolution {
    */
   source: "user" | "platform"
   /**
-   * Set when a stored preference existed but could not be honoured — either
-   * the
-   * provider does not serve this route or the plan is not entitled to it. The
-   * caller should surface this: silently downgrading is how a user concludes
-   * the
-   * product ignored their setting.
+   * Set when a stored preference existed but could not be honoured — the
+   * provider is `retired`, does not serve this route, or the plan is not
+   * entitled to it. The caller should surface this: silently downgrading is how
+   * a user concludes the product ignored their setting.
+   *
+   * `retired` is distinct from `entitlement` on purpose. They lead a caller to
+   * opposite actions: one says "choose another engine", the other says "upgrade"
+   * and upgrading would change nothing.
    */
-  rejected?: { value: unknown; reason: "unknown" | "route" | "entitlement" }
+  rejected?: {
+    value: unknown
+    reason: "unknown" | "route" | "retired" | "entitlement"
+  }
 }
 
 /**
@@ -267,6 +314,18 @@ export const resolveProvider = (
   }
 
   const descriptor = providerDescriptor(stored)
+
+  // Checked BEFORE the route and the plan, because neither can make a retired
+  // provider answer. The reason has to describe the provider's state rather
+  // than the caller's entitlement, or support reads "not on your plan" and
+  // sells an upgrade that changes nothing -- and the request still fails.
+  if (descriptor.retired) {
+    return {
+      provider: platformDefaultProvider(route),
+      source: "platform",
+      rejected: { value: stored, reason: "retired" },
+    }
+  }
 
   if (!descriptor.routes.includes(route)) {
     return {

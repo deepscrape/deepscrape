@@ -61,6 +61,27 @@ import {callMachineTool} from "./browser-session.provisioner"
 import {ownBrowserMachine} from "./browser-session.store"
 import {arachneflyBaseUrl} from "../config/upstreams"
 
+/**
+ * Which worker answered a call, in the terms a user asks about it.
+ *
+ * Three kinds, because there are three arrangements and they differ in what the
+ * caller is paying for: `shared` is the single unleased `WEBRAIN_MCP_URL` that
+ * every tenant queues behind, `leased` is a pool worker held for THIS call, and
+ * `own-machine` is a machine the caller leased for their session -- already
+ * theirs, and already billed by the minute.
+ *
+ * No URLs and no tokens. A worker url is a credential-bearing address, and the
+ * hostname is all that distinguishes one worker from another in a report; the
+ * machine id is an address the caller already owns.
+ */
+export interface WorkerProvenance {
+  kind: "own-machine" | "leased" | "shared"
+  /** The Fly machine id, when the call ran on one. */
+  machineId?: string
+  /** The engine's hostname, when it answered over HTTP. */
+  host?: string
+}
+
 /** A tool result, normalised out of webrain's MCP envelope. */
 export interface WebrainToolResult {
   ok: boolean
@@ -112,6 +133,16 @@ export interface WebrainToolResult {
   refusal?: WebrainToolRefusal
   /** The worker could not be reached (or no URL is configured). */
   transportError?: boolean
+  /**
+   * The worker that answered.
+   *
+   * Present only on a call that PRODUCED a result: a call that failed on the
+   * transport or answered a non-2xx gives no attribution, because the target may
+   * already have been released by the time the failure is known and the
+   * actionable part is the message, not the worker. Reported rather than stored
+   * on the result object as a whole for the same reason: one place to read.
+   */
+  worker?: WorkerProvenance
   /** HTTP status, or 0 when the connection itself failed. */
   status: number
 }
@@ -428,6 +459,19 @@ export const webrainTool = async (
 
   let raw: string
   let status: number
+  // What this call is running on, decided ONCE here because this is the only
+  // point at which the answer is known: a machine, a pool worker held for the
+  // call, or the single worker every tenant shares.
+  const worker: WorkerProvenance =
+    acquired.target.transport.kind === "machine" ?
+      {
+        kind: "own-machine",
+        machineId: acquired.target.transport.machine.machineId,
+      } :
+      {
+        kind: acquired.target.exclusive ? "leased" : "shared",
+        host: hostnameOf(url),
+      }
   try {
     if (acquired.target.transport.kind === "machine") {
       // The caller's own machine, reached through arachnefly, which checks its
@@ -547,7 +591,24 @@ export const webrainTool = async (
     // the platform plan quotes a different string that does not exist.
     noStateRefused: isError && /WEBRAIN_NO_STATE/.test(text),
     error: isError ? text : undefined,
+    worker,
     status,
+  }
+}
+
+/**
+ * A worker url's hostname, or nothing when it does not parse.
+ *
+ * The hostname rather than the url: a worker url can carry a credential, and a
+ * report has no business printing one.
+ * @param {string} url The resolved worker url.
+ * @return {string | undefined} Its host, when it has one.
+ */
+const hostnameOf = (url: string): string | undefined => {
+  try {
+    return new URL(url).hostname || undefined
+  } catch {
+    return undefined
   }
 }
 

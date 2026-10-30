@@ -16,6 +16,7 @@ import * as notifications from "./gfunctions/notifications"
 import * as alertFanout from "./gfunctions/alert-fanout"
 import * as browserMeter from "./gfunctions/browser-meter"
 import * as monitors from "./gfunctions/monitors"
+import * as operations from "./gfunctions/operations"
 import * as adminUsers from "./gfunctions/admin-users"
 import * as userSettings from "./gfunctions/user-settings"
 // import path, { join } from "node:path"
@@ -122,11 +123,24 @@ export const createMyApiKey = auth.createMyApiKey
 export const retrieveMyApiKeysPaging = auth.retrieveMyApiKeysPaging
 export const getApiKeyDoVisible = auth.getApiKeyDoVisible
 export const deleteMyApiKey = auth.deleteMyApiKey
+export const setMyApiKeyDisabled = auth.setMyApiKeyDisabled
 
 
 // CRAWL OPERATIONS - Function TRIGGERS
 // export const enqueueCrawlOperation = auth.enqueueCrawlOperation
 export const getOperationsPaging = auth.getOperationsPaging
+
+// The scheduled dispatcher for `/operations`: a row the user scheduled is
+// queued here when its time comes. It must be exported from THIS module or it
+// never deploys, and "Scheduled" goes back to meaning "stored and ignored".
+// See `gfunctions/operations.ts`.
+export const runDueOperations = operations.runDueOperations
+
+// The job document outlives its operation unless something takes it: the list's
+// delete removes the row only, and `crawljobs/{taskId}` holds every payload.
+// Exported HERE for the same reason as the dispatcher — an unexported trigger
+// never deploys. See `gfunctions/operations.ts`.
+export const purgeDeletedOperationJob = operations.purgeDeletedOperationJob
 
 
 // CRAWL PACK CONFIGURATIONS - Function TRIGGERS
@@ -163,6 +177,8 @@ export const registerNotificationToken = notifications.registerNotificationToken
 export const unregisterNotificationToken = notifications.unregisterNotificationToken
 export const getMyNotificationTokens = notifications.getMyNotificationTokens
 export const sendTestNotification = notifications.sendTestNotification
+export const adminBroadcastNotification =
+  notifications.adminBroadcastNotification
 
 // SECURITY ALERTS - Firestore trigger (Resend email + web push fan-out)
 // Must be exported from the entry point above, not just the gfunctions barrel:

@@ -53,11 +53,21 @@ export const VAULT_PAYLOAD_ENVELOPE_VERSION = 1
 /**
  * The largest payload one entry may hold, in bytes of PLAINTEXT.
  *
- * A cookie jar for one site is a few KB. 64 KB is two orders of magnitude of
- * headroom, which is what keeps the limit from being a product decision while
- * still bounding what one account can park in the bucket.
+ * The payload is no longer a cookie jar: it is a whole `state.json` --
+ * cookies plus localStorage -- so the reference scale is Playwright's
+ * `storageState`, a few KB for a simple site and a few hundred KB for a heavy
+ * SPA. 1 MiB covers that with headroom and still bounds what one account can
+ * park in the bucket: 20 entries (`VAULT_MAX_ENTRIES`) cap an account at 20 MiB.
+ *
+ * It stays a HARD limit rather than a product quota, and it is checked before
+ * the sealer so an oversized body is a 400 naming the size instead of a 500.
+ *
+ * shortcut: the bytes still travel through a JSON request body, so this is the
+ * ceiling for a buffered round trip. Past it the fix is object transfer (a
+ * presigned PUT/GET against the same bucket, where the server never buffers),
+ * not a bigger body -- do that the first time a real profile is refused here.
  */
-export const VAULT_PAYLOAD_MAX_BYTES = 64 * 1024
+export const VAULT_PAYLOAD_MAX_BYTES = 1024 * 1024
 
 /**
  * A base64 field from an envelope, or undefined when it is not one.

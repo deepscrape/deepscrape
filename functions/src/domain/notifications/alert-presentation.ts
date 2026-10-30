@@ -32,6 +32,8 @@ export type AlertDocData = {
     message?: string
     severity?: string
     createdAt?: { toDate?: () => Date }
+    // Same-origin path the writer wants the notification to open.
+    link?: string
     metadata?: Record<string, unknown>
 }
 

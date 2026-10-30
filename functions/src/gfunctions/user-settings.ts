@@ -42,7 +42,7 @@ import {
   purgeSecretAndAllRevisions,
   upsertSecretValue,
 } from "../app/config"
-import { getBillingAccessMode } from "../domain/billing.domain"
+import { accessModeOf } from "../infrastructure/access-mode.store"
 import {
   readStoredProvider,
   writeStoredProvider,
@@ -74,27 +74,6 @@ const requireUid = (request: { auth?: { uid?: string } }): string => {
     throw new HttpsError("unauthenticated", "You must be signed in.")
   }
   return uid
-}
-
-/**
- * The caller's plan, read the same way `requirePaidAccess` reads it.
- *
- * Deliberately not cached between callables: a plan can change between two
- * settings writes, and a stale entitlement is how a downgraded account keeps a
- * paid feature.
- * @param {*} uid
- */
-const accessModeOf = async (uid: string): Promise<string> => {
-  const snapshot = await db
-    .collection("users")
-    .doc(uid)
-    .collection("billing")
-    .doc("current")
-    .get()
-  if (!snapshot.exists) {
-    return getBillingAccessMode(undefined)
-  }
-  return getBillingAccessMode(snapshot.data())
 }
 
 /** `users/{uid}/private/ai` — see the SECURITY note above.

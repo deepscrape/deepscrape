@@ -32,6 +32,7 @@ import {
   webrainTool,
   type WebrainToolResult,
 } from "../infrastructure/webrain-mcp"
+import type { ToolArguments, ToolRouteHandler } from "./webrain-tools"
 
 /**
  * webrain's engine vocabulary, taken from the tool's own MCP inputSchema
@@ -342,3 +343,39 @@ export const webrainSerp = async (
     ms: call.ms,
   })
 }
+
+/**
+ * `webrain_serp` as a QUEUEABLE tool, for `TOOL_JOB_ROUTES`.
+ *
+ * Why this exists
+ * ---------------
+ * Search was the one playground mode with no job: `app-search` called this
+ * route directly, so the query died with the tab and left nothing in
+ * `/operations`. Every other webrain tool is queueable, and serp is the one a
+ * FREE caller is entitled to, so it was both the tool most likely to be used
+ * and the only one that could not be looked at afterwards.
+ *
+ * How it runs
+ * -----------
+ * A queued job never invokes the handler below; `runJobTarget` calls
+ * `webrainTool` with the `tool` name and this `mapper`, so the two fields
+ * attached here ARE the job. The function body is delegated to the live route
+ * rather than re-implemented, so a direct call and a queued call cannot answer
+ * different things.
+ *
+ * `echo` is the query, because that is what the route echoes back and what a
+ * results view labels the row with.
+ */
+export const serpJobRoute: ToolRouteHandler = Object.assign(
+  (req: Request, res: Response): Promise<void> => webrainSerp(req, res),
+  {
+    tool: "webrain_serp",
+    mapper: (body: unknown): ToolArguments => {
+      const mapped = serpArguments(body)
+      if (!mapped.ok) {
+        return mapped
+      }
+      return {ok: true, args: mapped.args, echo: mapped.args["q"]}
+    },
+  }
+)

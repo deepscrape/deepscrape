@@ -43,6 +43,7 @@ import {
   isSharedObjectKey,
   sanitizeFilename,
   userObjectKeyPrefix,
+  userPayloadKey,
 } from "../domain/storage-scope.domain"
 import {
   toPublicSettings,
@@ -309,6 +310,97 @@ export const storageSave = async (
 }
 
 /**
+ * `POST /api/storage/payload` -- keep bytes the caller already holds.
+ *
+ * Why this exists
+ * ---------------
+ * `storageSave` fetches a URL, so it can only file something the platform can
+ * reach again. A playground tool result is the opposite: the worker returned it
+ * to us, `output` is a bare filename on the worker's own disk, and there is no
+ * address to fetch. So a run's result could be read in the UI and then lost --
+ * which is what "storage of tool payloads" was.
+ *
+ * Why it is user-scope only
+ * -------------------------
+ * The shared tier is keyed by URL, and a payload has no url to key it by. It is
+ * therefore filed in the caller's own namespace, which is also what makes it
+ * impossible for one tenant's result to be served to another: the key is a
+ * digest under `userObjectKeyPrefix(uid)`.
+ *
+ * The body is validated before the store is touched, and the size ceiling is
+ * the same one a downloaded artifact has, so one route cannot become the way
+ * around the other's limit.
+ * @param {Request} req The request carrying `{content, filename?, contentType?}`.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const storageSavePayload = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    fail(res, 401, "unauthorized")
+    return
+  }
+
+  const body = bodyOf(req)
+  const content = typeof body["content"] === "string" ? body["content"] : null
+  if (content === null) {
+    fail(res, 400, "invalid_content")
+    return
+  }
+
+  const bytes = Buffer.from(content, "utf8")
+  if (bytes.length === 0) {
+    fail(res, 400, "empty_content")
+    return
+  }
+
+  if (bytes.length > MAX_ARTIFACT_BYTES) {
+    fail(res, 413, "too_large")
+    return
+  }
+
+  const name = sanitizeFilename(body["filename"]) ?? "result.json"
+  const declared = typeof body["contentType"] === "string" ?
+    body["contentType"].trim() : ""
+  // Derived from the NAME rather than taken from the body when the caller says
+  // nothing: this value reaches a `Content-Disposition` header on the presigned
+  // path, and the name is the only part of the request that has already been
+  // sanitized.
+  const contentType = declared ||
+    (name.toLowerCase().endsWith(".json") ?
+      "application/json" :
+      "text/plain; charset=utf-8")
+
+  const key = userPayloadKey(uid, name)
+
+  try {
+    const store = await resolveBlobStore(uid, "user")
+    if (!store) {
+      fail(res, 501, "byob_unavailable")
+      return
+    }
+
+    await store.put(key, bytes, {
+      contentType,
+      cacheSeconds: ARTIFACT_CACHE_SECONDS,
+      custom: {
+        [META_SCOPE]: "user",
+        [META_CREATED_AT]: new Date().toISOString(),
+        [META_FILENAME]: name,
+      },
+    })
+
+    res.status(200).json({key, scope: "user", bytes: bytes.length})
+  } catch (error) {
+    console.error("storage: payload save failed:", errorLabel(error))
+    fail(res, 500, "internal")
+  }
+}
+
+/**
  * `GET /api/storage/list` -- the caller's own objects, plus the shared cache.
  *
  * A caller never sees another caller's objects: the user-tier read is scoped by
@@ -403,6 +495,89 @@ export const storagePresign = async (
     res.status(200).json({url})
   } catch (error) {
     console.error("storage: presign failed:", errorLabel(error))
+    fail(res, 500, "internal")
+  }
+}
+
+/**
+ * `GET /api/storage/object?key=...` -- the object's BYTES, under the normal
+ * auth guard, with no URL credential minted at all.
+ *
+ * Why this exists beside `presign`
+ * -------------------------------
+ * A presigned URL is a bearer credential: anyone holding the string can read the
+ * object until it expires, which is why the list route already filters out
+ * shared entries whose URL is capability-shaped. This route is for VIEWING a
+ * file the caller already has the right to read, and it hands out nothing that
+ * outlives the response -- the caller's own bearer token is the only credential
+ * in play, and it is checked here like every other route.
+ *
+ * A browser tab cannot attach an Authorization header to a navigation, so the
+ * client does not open this URL directly: it fetches the bytes with its normal
+ * authenticated request and renders them from a blob URL that never leaves the
+ * page. That is the whole point -- the credential stays in the request that
+ * carries it.
+ *
+ * 404 rather than 403 for a key the caller may not read, for the same reason
+ * `presign` does it: the answer must not reveal that another caller's object
+ * exists.
+ * @param {Request} req The request carrying `?key=`.
+ * @param {Response} res The response.
+ * @return {Promise<void>} Resolves once the response is written.
+ */
+export const storageObject = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const uid = uidOf(req)
+  if (!uid) {
+    fail(res, 401, "unauthorized")
+    return
+  }
+
+  const raw = (req.query ?? {})["key"]
+  const key = typeof raw === "string" ? raw.trim() : ""
+
+  if (!key || !isReadableObjectKey(uid, key)) {
+    fail(res, 404, "not_found")
+    return
+  }
+
+  try {
+    const store = isSharedObjectKey(key) ?
+      getPlatformBlobStore() :
+      await resolveBlobStore(uid, "user")
+
+    if (!store) {
+      fail(res, 501, "byob_unavailable")
+      return
+    }
+
+    const meta = await store.stat(key)
+    const bytes = meta ? await store.get(key) : null
+
+    if (!bytes) {
+      fail(res, 404, "not_found")
+      return
+    }
+
+    const name = sanitizeFilename(key.split("/").pop() ?? "download")
+
+    res.setHeader(
+      "Content-Type",
+      meta?.contentType || "application/octet-stream"
+    )
+    // `inline` so a PDF or an image opens in the tab it was fetched into; the
+    // filename is sanitised because it comes back from the store.
+    res.setHeader("Content-Disposition", `inline; filename="${name}"`)
+    // The bytes are one caller's artifact: never in a shared cache, and never
+    // reused from one without re-checking the token.
+    res.setHeader("Cache-Control", "private, no-store")
+    res.setHeader("Content-Length", String(bytes.length))
+
+    res.status(200).send(bytes)
+  } catch (error) {
+    console.error("storage: object read failed:", errorLabel(error))
     fail(res, 500, "internal")
   }
 }

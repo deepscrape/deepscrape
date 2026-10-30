@@ -220,3 +220,42 @@ describe("the listing cannot hand out another tenant's capability URL", () => {
     assert.match(list, /\[\.\.\.own, \.\.\.visible\]/)
   })
 })
+
+describe("the byte route hands out no credential", () => {
+  /**
+   * The `storageObject` handler's source, sliced from the file.
+   * @return {string} The handler's source text.
+   */
+  const objectHandler = (): string => {
+    const start = handlers.indexOf("export const storageObject")
+    const end = handlers.indexOf("export const storageDelete")
+    assert.ok(start > 0 && end > start, "storageObject moved or was renamed")
+    return handlers.slice(start, end)
+  }
+
+  it("reads the key from the query string, never from the body", () => {
+    const source = objectHandler()
+    assert.match(source, /req\.query/)
+    assert.doesNotMatch(source, /bodyOf\(/)
+  })
+
+  it("applies the same readability rule as the list and delete routes", () => {
+    assert.match(objectHandler(), /isReadableObjectKey\(uid, key\)/)
+  })
+
+  it("mints no URL: it answers the bytes", () => {
+    const source = objectHandler()
+    assert.doesNotMatch(source, /signedUrl\(/)
+    assert.match(source, /store\.get\(key\)/)
+  })
+
+  it("forbids caching the caller's own object", () => {
+    assert.match(objectHandler(), /Cache-Control", "private, no-store"/)
+  })
+
+  it("names the download from a sanitised key, not the raw one", () => {
+    const source = objectHandler()
+    assert.match(source, /sanitizeFilename\(/)
+    assert.match(source, /Content-Disposition/)
+  })
+})

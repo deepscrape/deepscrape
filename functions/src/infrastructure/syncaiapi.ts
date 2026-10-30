@@ -15,18 +15,26 @@ import {
     storageSetSettings,
 } from "../handlers"
 import { auth, db } from "../app/config"
-import { BillingSnapshot, getBillingAccessMode, isChargeableAccessMode, resolveBillingPricingPolicy } from "../domain"
+import { getBillingAccessMode, isChargeableAccessMode, resolveBillingPricingPolicy } from "../domain"
 // Not in the domain barrel, so imported from the module itself -- the shape
 // `bff/api.ts` already uses for the same type.
 import { aiVendorDescriptor, resolveAiKeySource, type ProviderKeyId } from "../domain/user-ai-settings.domain"
 import { isScrapeProviderId } from "../domain/scrape-providers.domain"
 import { API_KEY_INDEX_COLLECTION, apiKeyIndexId, isPlatformApiKey } from "../domain/api-key-index.domain"
 import { consumeBillingCredits, releaseBillingCredits, reserveBillingCredits } from "../app/billing-credits"
-import { requirePermission } from "./authz.middleware"
+import { getOrgIdFromRequest, requirePermission } from "./authz.middleware"
+import { resolveSpend } from "./spend-scope"
 import { authErrorCode as getAuthErrorCode } from "./auth-error"
+import {
+    deleteOrganizationCascade,
+    listOwnedOrganizations,
+    organizationMembershipId,
+} from "./organization-lifecycle"
 
 type BillingChargeContext = {
     uid: string
+    /** The organization paying, when one is. Absent means the caller's own wallet. */
+    orgId?: string
     amount: number
     bucket: "purchased" | "included"
     action: string
@@ -42,13 +50,11 @@ const ORG_ROLE_INVITE_CAP: Record<OrganizationRole, readonly OrganizationRole[]>
     viewer: [],
 }
 
-const getMembershipDocId = (userId: string, orgId: string): string => `${userId}_${orgId}`
-
 const getOrganizationMembership = async (
     userId: string,
     orgId: string
 ): Promise<{id: string; orgId?: string; userId?: string; role?: OrganizationRole} | null> => {
-    const membershipSnap = await db.collection("memberships").doc(getMembershipDocId(userId, orgId)).get()
+    const membershipSnap = await db.collection("memberships").doc(organizationMembershipId(userId, orgId)).get()
 
     if (!membershipSnap.exists) {
         return null
@@ -231,15 +237,7 @@ class ReverseAPIProxy {
         }
 
         try {
-            const billingSnap = await db.doc(`users/${uid}/billing/current`).get()
-
-            // `data()` is undefined for a missing document, and
-            // `getBillingAccessMode` accepts undefined and reads it as free —
-            // which is what a fresh account is. Calling it the same way the
-            // paid path does is what keeps the two from disagreeing about
-            // "free".
-            const billing = billingSnap.data() as BillingSnapshot | undefined
-
+            const {billing} = await resolveSpend(uid, getOrgIdFromRequest(req))
             req.accessMode = getBillingAccessMode(billing)
             next()
         } catch (error) {
@@ -271,12 +269,15 @@ class ReverseAPIProxy {
         }
 
         try {
-            const billingRef = db.doc(`users/${uid}/billing/current`)
-            const billingSnap = await billingRef.get()
+            // Which wallet pays is resolved ONCE, here, and carried on the charge
+            // context: a request whose workspace funds it must reserve, consume and
+            // release against the same document, or a refund lands in a wallet the
+            // charge never touched.
+            const spend = await resolveSpend(uid, getOrgIdFromRequest(req))
+            const {billing, orgId} = spend
 
             const now = Date.now()
-            if (billingSnap.exists) {
-                const billing = billingSnap.data() as BillingSnapshot
+            if (billing) {
                 const accessMode = getBillingAccessMode(billing, now)
 
                 // Same reason as the admin branch above: one read, one decision,
@@ -295,6 +296,7 @@ class ReverseAPIProxy {
 
                         await reserveBillingCredits({
                             uid,
+                            orgId,
                             amount: policy.credits,
                             bucket,
                             ledger: {
@@ -311,6 +313,7 @@ class ReverseAPIProxy {
 
                         chargeContext = {
                             uid,
+                            orgId,
                             amount: policy.credits,
                             bucket,
                             action: policy.action,
@@ -333,6 +336,7 @@ class ReverseAPIProxy {
                             if (shouldConsume) {
                                 await consumeBillingCredits({
                                     uid: chargeContext.uid,
+                                    orgId: chargeContext.orgId,
                                     amount: chargeContext.amount,
                                     bucket: chargeContext.bucket,
                                     releaseReserved: true,
@@ -353,6 +357,7 @@ class ReverseAPIProxy {
 
                             await releaseBillingCredits({
                                 uid: chargeContext.uid,
+                                orgId: chargeContext.orgId,
                                 amount: chargeContext.amount,
                                 bucket: chargeContext.bucket,
                                 ledger: {
@@ -402,7 +407,14 @@ class ReverseAPIProxy {
                 }
             }
 
-            res.status(402).json({
+            // A held wallet is not "out of credits": the balance may be full and the
+            // answer is still no. Saying so is the difference between a customer buying
+            // more credits and a customer contacting us about the dispute.
+            res.status(402).json(billing?.hold === true ? {
+                error: "payment_required",
+                code: "wallet_on_hold",
+                message: "Spending is paused while a payment dispute is open",
+            } : {
                 error: "payment_required",
                 code: "payment_required",
                 message: "Payment required to access this endpoint",
@@ -455,11 +467,11 @@ class ReverseAPIProxy {
 
             try {
                 const now = Date.now()
-                const billingSnap = await db.doc(`users/${uid}/billing/current`).get()
-                const accessMode = getBillingAccessMode(
-                    billingSnap.data() as BillingSnapshot | undefined,
-                    now,
-                )
+                // Same payer resolution as the paid path: a member whose workspace funds the
+                // work is not a free caller, and judging them free here would fall through to
+                // the branch that refuses the platform credential.
+                const {billing} = await resolveSpend(uid, getOrgIdFromRequest(req))
+                const accessMode = getBillingAccessMode(billing, now)
 
                 // A READER is not a chat vendor, so it has no plan entitlement to resolve: the
                 // scrape catalogue's `byok` is the whole rule.
@@ -595,6 +607,21 @@ class ReverseAPIProxy {
                 ...[...roleByOrgId.keys()].map((orgId) => db.collection("organizations").doc(orgId)),
             )
 
+            // The wallet, in the same round trip. Without it an organization is a name
+            // and a roster: the one thing it exists for -- credits several people spend
+            // from one balance -- was invisible, so nobody could see what they owned.
+            const walletSnaps = await db.getAll(
+                ...[...roleByOrgId.keys()].map((orgId) => db.doc(`orgs/${orgId}/billing/current`)),
+            )
+            const walletByOrgId = new Map<string, { balance: number; reserved: number; available: number }>()
+            for (const walletSnap of walletSnaps) {
+                const orgId = walletSnap.ref.parent.parent?.id
+                if (!orgId) continue
+                const balance = Number(walletSnap.get("balance") || 0)
+                const reserved = Number(walletSnap.get("reserved") || 0)
+                walletByOrgId.set(orgId, { balance, reserved, available: balance - reserved })
+            }
+
             const organizations = orgSnaps
                 .filter((orgSnap) => orgSnap.exists)
                 .map((orgSnap) => ({
@@ -603,6 +630,8 @@ class ReverseAPIProxy {
                     membership: {
                         role: roleByOrgId.get(orgSnap.id) || "member",
                     },
+                    wallet: walletByOrgId.get(orgSnap.id) ||
+                        { balance: 0, reserved: 0, available: 0 },
                 }))
 
             res.status(200).json({ organizations })
@@ -710,7 +739,10 @@ class ReverseAPIProxy {
                 slug: orgId,
                 ownerId: uid,
                 billingOwnerUid: uid,
-                plan: "free",
+                // No `plan`. An organization has no subscription: entitlement is
+                // resolved per person (`users/{uid}/billing/current`) and an org spends
+                // the credits transferred into its wallet. A `plan: "free"` here read as
+                // "orgs can be on a plan", and nothing ever wrote or read another value.
                 createdAt: new Date(),
                 updatedAt: new Date(),
             }, { merge: true })
@@ -888,7 +920,7 @@ class ReverseAPIProxy {
                 }
             }
 
-            const membershipId = `${memberUid}_${orgId}`
+            const membershipId = organizationMembershipId(memberUid, orgId)
             await db.collection("memberships").doc(membershipId).delete()
             res.status(204).send()
         } catch (error) {
@@ -1147,6 +1179,179 @@ class ReverseAPIProxy {
         }
     }
 
+    /**
+     * Remove an organization: identity, wallet, roster and pending invitations.
+     *
+     * The only route in this table that destroys an org, and deliberately not folded
+     * into member removal -- "remove the last owner" and "delete the organization"
+     * look identical from the outside and differ by everything inside.
+     *
+     * ponytail: a funded wallet refuses the OWNER, because credits were paid for and
+     * there is no refund route -- deleting an org that holds them destroys money
+     * nobody was warned about, and "spend them first" is a one-step remedy. A
+     * platform admin may delete one anyway: in the case that matters the owner is
+     * already gone, and support still has to be able to clean up. Give it the same
+     * refusal if a credit-refund path ever exists.
+     * @param {*} req
+     * @param {*} res
+     */
+    private deleteOrganization = async (req: Request, res: Response): Promise<void> => {
+        const actorUid = req.user?.uid
+        const orgId = req.params.orgId
+        if (!actorUid || !orgId) {
+            res.status(400).json({ error: "bad_request", code: "bad_request" })
+            return
+        }
+
+        if (!this.isOrgAuthorized(res, orgId)) {
+            res.status(403).json({ error: "forbidden", code: "forbidden" })
+            return
+        }
+
+        try {
+            const orgSnap = await db.collection("organizations").doc(orgId).get()
+            if (!orgSnap.exists) {
+                res.status(404).json({ error: "not_found", code: "not_found" })
+                return
+            }
+
+            const subject = res.locals?.authzSubject as {isPlatformAdmin?: boolean} | undefined
+            const isPlatformAdmin = subject?.isPlatformAdmin === true
+            const actorMembership = await getOrganizationMembership(actorUid, orgId)
+            const isOwner = actorMembership?.role === "owner" ||
+                orgSnap.get("ownerId") === actorUid
+
+            // `organization.manage` admits an org admin too, and an admin helps run a
+            // tenant rather than owning it. The capability to rename is not the
+            // capability to destroy.
+            if (!isOwner && !isPlatformAdmin) {
+                res.status(403).json({ error: "forbidden", code: "forbidden", message: "Only the organization's owner can delete it" })
+                return
+            }
+
+            const walletSnap = await db.doc(`orgs/${orgId}/billing/current`).get()
+            const available = Number(walletSnap.get("balance") || 0) -
+                Number(walletSnap.get("reserved") || 0)
+
+            if (available > 0 && !isPlatformAdmin) {
+                res.status(409).json({
+                    error: "conflict",
+                    code: "org_has_credits",
+                    message: `This organization holds ${available} credits. Spend them before deleting it.`,
+                })
+                return
+            }
+
+            await deleteOrganizationCascade(orgId)
+
+            // `users/{uid}.defaultOrgId` is the org context the app restores at
+            // login, the id org-scoped links are built from, and the workspace
+            // onboarding renames. Left pointing at this document it dangles: the
+            // switcher offers a workspace that is gone, and a user who has not
+            // finished onboarding can never finish it.
+            const userRef = db.collection("users").doc(actorUid)
+            if ((await userRef.get()).get("defaultOrgId") === orgId) {
+                const remaining = await listOwnedOrganizations(actorUid)
+                await userRef.set({
+                    defaultOrgId: remaining[0]?.orgId ?? null,
+                }, { merge: true })
+            }
+
+            if (available > 0) {
+                console.warn(
+                    `CRITICAL: support deleted organization ${orgId} while it held ${available} credits; they are forfeited.`
+                )
+            }
+
+            res.status(204).send()
+        } catch (error) {
+            console.error("Failed to delete organization:", error)
+            res.status(500).json({ error: "internal", code: "internal" })
+        }
+    }
+
+    /**
+     * Hand an organization to another member.
+     *
+     * The only way an owner can walk away without stranding the org: member removal
+     * refuses the last owner, and deletion is refused while teammates remain. Without
+     * this the sole exit route for an owner was a support ticket.
+     *
+     * The outgoing owner becomes an `admin` rather than a `member` -- they are handing
+     * over, not resigning, and dropping them to the lowest role that can still invite
+     * throws away the knowledge that keeps the org running. The new owner can change
+     * that back, and can hand it back, so this is reversible by design.
+     * @param {*} req
+     * @param {*} res
+     */
+    private transferOrganizationOwnership = async (req: Request, res: Response): Promise<void> => {
+        const actorUid = req.user?.uid
+        const orgId = req.params.orgId
+        const targetUid = typeof req.body?.userId === "string" ? req.body.userId : ""
+
+        if (!actorUid || !orgId || !targetUid) {
+            res.status(400).json({ error: "bad_request", code: "bad_request", message: "userId is required" })
+            return
+        }
+
+        if (!this.isOrgAuthorized(res, orgId)) {
+            res.status(403).json({ error: "forbidden", code: "forbidden" })
+            return
+        }
+
+        if (targetUid === actorUid) {
+            res.status(409).json({ error: "conflict", code: "already_owner" })
+            return
+        }
+
+        try {
+            const [actorMembership, targetMembership, orgSnap] = await Promise.all([
+                getOrganizationMembership(actorUid, orgId),
+                getOrganizationMembership(targetUid, orgId),
+                db.collection("organizations").doc(orgId).get(),
+            ])
+
+            if (!orgSnap.exists) {
+                res.status(404).json({ error: "not_found", code: "not_found" })
+                return
+            }
+
+            if (actorMembership?.role !== "owner") {
+                res.status(403).json({ error: "forbidden", code: "forbidden", message: "Only an owner can transfer an organization" })
+                return
+            }
+
+            if (!targetMembership) {
+                res.status(404).json({ error: "not_found", code: "not_found", message: "That person is not a member of this organization" })
+                return
+            }
+
+            const now = new Date()
+            const batch = db.batch()
+            batch.set(
+                db.collection("memberships").doc(organizationMembershipId(targetUid, orgId)),
+                { role: "owner", updatedAt: now },
+                { merge: true },
+            )
+            batch.set(
+                db.collection("memberships").doc(organizationMembershipId(actorUid, orgId)),
+                { role: "admin", updatedAt: now },
+                { merge: true },
+            )
+            batch.set(
+                db.collection("organizations").doc(orgId),
+                { ownerId: targetUid, billingOwnerUid: targetUid, updatedAt: now },
+                { merge: true },
+            )
+            await batch.commit()
+
+            res.status(204).send()
+        } catch (error) {
+            console.error("Failed to transfer organization ownership:", error)
+            res.status(500).json({ error: "internal", code: "internal" })
+        }
+    }
+
     // ------------------- Node JS Routes -------------------
 
     /**
@@ -1373,6 +1578,7 @@ class ReverseAPIProxy {
      */
     private httpRoutesPut(): void {
         this.router.put("/orgs/:orgId", requirePermission("organization", "manage"), this.renameOrganization)
+        this.router.put("/orgs/:orgId/owner", requirePermission("organization", "manage"), this.transferOrganizationOwnership)
 
         /**
          * Machines by Arachnefly
@@ -1405,6 +1611,7 @@ class ReverseAPIProxy {
      */
     private httpRoutesDelete(): void {
         this.router.delete("/orgs/:orgId/members/:userId", requirePermission("organization", "manage"), this.removeOrganizationMember)
+        this.router.delete("/orgs/:orgId", requirePermission("organization", "manage"), this.deleteOrganization)
 
         /**
          * Machines by Arachnefly

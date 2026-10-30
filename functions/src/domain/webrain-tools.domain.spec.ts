@@ -337,6 +337,7 @@ describe("SESSION_TOOLS", () => {
       "webrain_download",
       "webrain_watch",
       "webrain_pdf",
+      "webrain_stats",
     ])
   })
 

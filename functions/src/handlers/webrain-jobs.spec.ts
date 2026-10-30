@@ -20,6 +20,7 @@ import {
   finishedJobStatus,
   queueVerdict,
   terminalFrameStatus,
+  unitsForOperation,
   type WebrainJobItem,
 } from "./webrain-jobs"
 
@@ -312,5 +313,55 @@ describe("terminalFrameStatus", () => {
     assert.equal(terminalFrameStatus("Completed"), "completed")
     assert.equal(terminalFrameStatus("Failed"), "error")
     assert.equal(terminalFrameStatus("Canceled"), "canceled")
+  })
+})
+
+describe("unitsForOperation", () => {
+  it("rebuilds one scrape per url for a crawl batch", () => {
+    const units = unitsForOperation({
+      urls: ["https://a.example/x", "https://b.example/y"],
+    })
+
+    assert.deepEqual(units.map((unit) => unit.label), [
+      "https://a.example/x",
+      "https://b.example/y",
+    ])
+    assert.deepEqual(units[0].message, { url: "https://a.example/x" })
+  })
+
+  it("rebuilds a tool call when the row names a tool", () => {
+    // A scheduled run of a TOOL has no url to scrape: the row carries the tool
+    // and its arguments, and the label is what the results view shows.
+    const units = unitsForOperation({
+      name: "spider · https://a.example",
+      tool: "webrain_crawl",
+      args: { url: "https://a.example", mode: "spider" },
+      urls: ["spider · https://a.example"],
+    })
+
+    assert.equal(units.length, 1)
+    assert.equal(units[0].label, "spider · https://a.example")
+    assert.equal(units[0].message.tool, "webrain_crawl")
+    assert.deepEqual(units[0].message.args, {
+      url: "https://a.example",
+      mode: "spider",
+    })
+  })
+
+  it("answers nothing for a row that describes no work", () => {
+    // A row with neither a tool nor a valid url must not queue a scrape of
+    // nothing: the dispatcher marks it failed instead.
+    assert.deepEqual(unitsForOperation({ urls: [] }), [])
+    assert.deepEqual(unitsForOperation({ urls: ["not a url"] }), [])
+  })
+
+  it("drops the unsafe targets and keeps the rest", () => {
+    // `safeTargetUrls` is the shared guard: a private address in a scheduled row
+    // must be dropped here, exactly as it is on the HTTP path.
+    const units = unitsForOperation({
+      urls: ["https://a.example/x", "http://127.0.0.1/admin"],
+    })
+
+    assert.deepEqual(units.map((unit) => unit.label), ["https://a.example/x"])
   })
 })

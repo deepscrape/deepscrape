@@ -75,8 +75,17 @@ export const uidOf = (req: Request): string | undefined => {
  * @param {unknown} error The thrown value.
  * @return {string} A safe label for a log line.
  */
-export const errorLabel = (error: unknown): string =>
-  error instanceof Error ? error.name : typeof error
+export const errorLabel = (error: unknown): string => {
+  // `name` alone is almost always just "Error", which is a log line that costs
+  // something and says nothing: `storage: list failed: Error` took a Cloud Logging
+  // excavation to explain. The message is the only part that names the cause, and a
+  // storage/SDK failure carries a bucket or permission answer, never a credential.
+  if (!(error instanceof Error)) {
+    return typeof error
+  }
+
+  return `${error.name}: ${error.message}`.slice(0, 300)
+}
 
 /**
  * The request body as a record, `{}` when absent.

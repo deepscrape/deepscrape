@@ -34,6 +34,9 @@
 </header>
 
 <!-- Inner Section  -->
-<div [@routeAnimation]="getAnimationData(outlet)" class="block h-[100vh]">
+<!-- The header above is `fixed h-20`, so every routed page used to start at y=0 and its
+     top 80px sat under the header. The offset lives here, once, instead of each page
+     inventing its own `top-24`. -->
+<div [@routeAnimation]="getAnimationData(outlet)" class="block min-h-[100dvh] pt-20">
   <router-outlet #outlet="outlet"></router-outlet>
 </div>

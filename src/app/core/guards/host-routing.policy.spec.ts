@@ -21,6 +21,12 @@ describe('host-routing.policy', () => {
       expect(orgScopedUrl('/billing', 'acme')).toBe('/acme/billing');
       expect(orgScopedUrl('/billing/plans/starter', 'acme')).toBe('/acme/billing/plans/starter');
       expect(orgScopedUrl('/settings', 'acme')).toBe('/acme/settings');
+      // `browser` and `machines` were absent from ORG_APP_PAGES, so the sidebar emitted
+      // bare links: the org guard then paid a membership call per visit and the host
+      // rule read `/{org}/browser` as marketing. Pinned so the set cannot drift again.
+      expect(orgScopedUrl('/browser', 'acme')).toBe('/acme/browser');
+      expect(orgScopedUrl('/machines', 'acme')).toBe('/acme/machines');
+      expect(orgScopedUrl('/settings/general', 'acme')).toBe('/acme/settings/general');
     });
 
     it('leaves the console, the auth surface and marketing links alone', () => {

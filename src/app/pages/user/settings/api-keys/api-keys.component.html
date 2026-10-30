@@ -11,12 +11,6 @@
           {{ apiKeys.length }}
         </span>
       }
-      @if (!(apiKeys$ | async)) {
-        <div>
-          <div
-          class="relative h-6 w-6 px-[.7rem] py-1 animate-pulse rounded-full bg-gray4 dark:bg-slate-700"></div>
-        </div>
-      }
     </h1>
 
     <div class="relative">
@@ -38,21 +32,7 @@
               idName="newApiKeyName"
               [control]="newApiKeyName"></app-stinput>
             </div>
-            <div class="text-lg relative w-full">
-              <app-stinput
-                class="block w-full"
-                [control]="newApiKey"></app-stinput>
-                <mat-icon
-                  class="absolute top-[.7rem] right-[6px] text-gray-200 dark:text-gray-100"
-              [svgIcon]="
-                keyModalTitle.toLowerCase() === 'custom'
-                  ? ''
-                  : keyModalTitle.toLowerCase()
-              ">
-                  auto_fix_high
-                </mat-icon>
-              </div>
-            </div>
+          </div>
 
             <div class="mt-4 flex items-center justify-between">
               <div
@@ -86,7 +66,7 @@
                 class="rounded-lg p-2 min-w-fit text-white transition-colors duration-200 hover:bg-green-100/60 hover:text-green-700 focus:outline-none focus:ring-2 focus:ring-green-100/70 dark:bg-green-600/[.1] dark:text-white dark:hover:bg-green-500/70 dark:hover:text-white dark:focus:ring-green-200/60 disabled:opacity-50"
                 type="button"
             [disabled]="
-              newApiKey.invalid || newApiKeyName.invalid || apiKeyLoading.modal
+              newApiKeyName.invalid || apiKeyLoading.modal
             "
                 (click)="keyModalCompleted()">
                 {{ 'COMMON.OK' | translate }}
@@ -242,6 +222,12 @@
                 <h2 class="text-xl font-bold text-gray-800 dark:text-white">
                   {{ key.name }}
                 </h2>
+                @if (key.status === 'disabled') {
+                  <span
+                    class="ml-1 shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                    {{ 'SETTINGS_API_KEYS.DISABLED' | translate }}
+                  </span>
+                }
                 <div class="items-center flex flex-wrap">
                   <span
                     class="text-gray-500 inline-block relative top-1 dark:text-gray-400">
@@ -311,8 +297,8 @@
                             class="flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 disabled:opacity-50 text-red-600 dark:text-red-600/[.7] hover:bg-red-400/[0.2] focus:bg-red-400/[0.08] disabled:dark:hover:bg-gray-900/[0.5] disabled:dark:focus:bg-gray-900/[0.8] cursor-pointer font-medium duration-300 transition-colors"
                             [id]="'api-key-dis-' + key.id"
                             (click)="disableApiKey(key)">
-                            <mat-icon>hide_source</mat-icon>
-                            {{ 'SETTINGS_API_KEYS.DISABLE_KEY' | translate }}
+                            <mat-icon>{{ key.status === 'disabled' ? 'visibility' : 'hide_source' }}</mat-icon>
+                            {{ (key.status === 'disabled' ? 'SETTINGS_API_KEYS.ENABLE_KEY' : 'SETTINGS_API_KEYS.DISABLE_KEY') | translate }}
                             <span class="flex-grow"></span>
                           </a>
                         </li>
@@ -355,7 +341,7 @@
               class="w-full grid grid-row-1 md:grid-row-2 lg:grid-row-3 gap-4">
               @for (item of [1, 2, 3, 4]; track item) {
                 <div
-                class="relative h-36 w-full px-[.7rem] py-1 animate-pulse rounded-lg bg-gray4 dark:bg-gray4"></div>
+                class="loading-surface relative h-36 w-full animate-pulse rounded-lg"></div>
               }
             </div>
           }

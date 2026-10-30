@@ -9,6 +9,8 @@ export interface ApiKey {
     created_By?: string
     lastUsed?: Date;
     permissions?: string[];
+    /** `disabled` means the lookup index entry is gone, so it cannot authenticate. */
+    status?: 'enabled' | 'disabled';
     menu_visible: boolean;
     visibility: boolean;
 }

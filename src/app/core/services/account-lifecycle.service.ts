@@ -51,13 +51,20 @@ export class AccountLifecycleService {
    *
    * @param {string} code The code from the confirmation email.
    * @param {string} reason Optional note stored with the deletion.
+   * @param {boolean} forfeitCredits Acknowledge that a remaining purchased balance is
+   *   destroyed. Required by the server when the wallet is not empty, which is why the
+   *   danger zone lists the forfeiture before the code step.
    * @return {Promise<AccountDeletionConfirmResult>} The deletion id and purge deadline.
    */
-  confirmDeletion(code: string, reason?: string): Promise<AccountDeletionConfirmResult> {
+  confirmDeletion(
+    code: string,
+    reason?: string,
+    forfeitCredits: boolean = true,
+  ): Promise<AccountDeletionConfirmResult> {
     return this.firestoreService.callFunction<
-      { code: string; reason?: string },
+      { code: string; reason?: string; forfeitCredits: boolean },
       AccountDeletionConfirmResult
-    >('confirmMyAccountDeletion', { code, reason })
+    >('confirmMyAccountDeletion', { code, reason, forfeitCredits })
   }
 
   /**

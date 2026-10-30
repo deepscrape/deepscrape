@@ -482,13 +482,36 @@ export type CrawlOperation = {
     name: string
     type: CrawlJobType
     urlPath?: string
-    color: string
+    /**
+     * Retired: a colour NAME stored beside the status.
+     *
+     * Nothing renders this any more -- the badge takes its tone from `status`
+     * through `statusBadgeClass`, because a stored colour could disagree with
+     * the word printed inside it and a server-written hex default produced a
+     * class name that never existed. Kept optional only so rows already in
+     * Firestore still type-check; do not write it.
+     * @deprecated Use `statusBadgeClass(operation.status)` instead.
+     */
+    color?: string
     modelAI?: AIModel
     created_At: number
     updated_At?: number
     scheduled_At?: number
     prompt?: string
     status: CrawlOperationStatus
+    /**
+     * What the enqueue charged, stamped by the server on the row.
+     *
+     * Absent when nothing was charged -- a free tool, or a surface that does not
+     * bill. `billing_action` is the pricing-table action it was charged at, so a
+     * reader can check the row against the table instead of trusting the number.
+     */
+    credits?: number
+    billing_action?: string | null
+    /** The worker tool this row runs, when it is a tool run rather than a crawl. */
+    tool?: string
+    /** That tool's arguments, as the enqueue stored them. */
+    args?: Record<string, unknown>
     metadataId?: string | null // CrawlPack
     metrics?: CrawlOperationMetrics
     // Crawl Operation Metadata Results
@@ -575,6 +598,57 @@ export type CrawlTask = {
     },
 
  }
+
+/**
+ * Which worker answered one call, as `webrainTool` reports it.
+ *
+ * `shared` is the single unleased platform worker every tenant queues behind,
+ * `leased` is a pool worker held for the call, and `own-machine` is a machine
+ * the caller leased for their session. Mirrors `WorkerProvenance` in
+ * `functions/src/infrastructure/webrain-mcp.ts`; only the hostname is carried,
+ * never a url, because a worker url can hold a credential.
+ */
+export type WorkerProvenance = {
+    kind: 'own-machine' | 'leased' | 'shared'
+    machineId?: string
+    host?: string
+}
+
+/**
+ * One finished unit of work inside a job, as `GET /api/job/:id/result` returns
+ * it.
+ *
+ * `label` is what a surface shows and `url` is the row's identity: a tool call
+ * has no address, so the row borrows one. `data` is the worker's own payload,
+ * which the gateway passes through unchanged and this type deliberately does
+ * not model.
+ */
+export type JobResultItem = {
+    label: string
+    url: string
+    /** The worker tool this unit ran, e.g. `webrain_serp`. */
+    tool?: string
+    status: 'ok' | 'error'
+    message: string
+    challenge: string | null
+    tokens?: { chars?: number, est_tokens?: number }
+    ms?: number
+    worker?: WorkerProvenance
+    data?: unknown
+}
+
+/** A whole job as plain JSON, for a reader that is not watching a stream. */
+export type JobResult = {
+    task_id: string
+    status: CrawlOperationStatus
+    message: string
+    tool?: string
+    /** Every DISTINCT worker the job's targets ran on; empty when none reported. */
+    workers?: WorkerProvenance[]
+    total: number
+    updated_at?: number
+    items: JobResultItem[]
+}
 /** #######################################################
  *  # Chunking Strategy                                    #
  *  #######################################################

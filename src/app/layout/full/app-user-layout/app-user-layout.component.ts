@@ -17,7 +17,7 @@ import { ImageSrcsetDirective } from 'src/app/core/directives/image.srcset.direc
 import { Outsideclick } from 'src/app/core/directives/outsideclick.directive'
 import { RippleDirective } from 'src/app/core/directives/ripple.directive'
 import { ProviderPipe } from 'src/app/core/pipes'
-import { AuthService, CartService, FirestoreService, OrganizationInvitation, OrganizationService, OrganizationSummary, ScreenResizeService, ScrollService, ThemeService } from 'src/app/core/services'
+import { AuthService, AuthzService, CartService, FirestoreService, OrganizationInvitation, OrganizationService, OrganizationSummary, ScreenResizeService, ScrollService, ThemeService } from 'src/app/core/services'
 import { Users } from 'src/app/core/types'
 import { LangPickerComponent } from 'src/app/shared/lang-picker/lang-picker.component';
 import { NotificationBellComponent } from 'src/app/shared/notification-bell/notification-bell.component';
@@ -71,6 +71,7 @@ export class AppUserLayoutComponent implements OnDestroy {
   @HostBinding('class') classes = 'h-full w-full flex flex-col  min-h-svh'
   private firestoreService = inject(FirestoreService)
   private organizationService = inject(OrganizationService)
+  private authz = inject(AuthzService)
   size!: SCREEN_SIZE;
   
   footerColor = signal('');
@@ -169,6 +170,12 @@ export class AppUserLayoutComponent implements OnDestroy {
     }
 
     this.orgLoading.set(true)
+    // Seed from the org already known to `AuthzService` (localStorage + the user
+    // document's `defaultOrgId`) BEFORE the list is requested. `selectedOrgId` is what
+    // `orgScopedUrl` prefixes every sidebar, nav and tab link with, so while it is null
+    // those links render bare (`/dashboard`, `/settings/general`) — and they stayed bare
+    // for the whole session whenever this request failed, which is what an org 401 did.
+    this.selectedOrgId.set(this.authz.activeOrgId)
     this.orgLoadSubscription?.unsubscribe()
     this.orgLoadSubscription = this.organizationService.listMyOrganizations()
       .pipe(finalize(() => {

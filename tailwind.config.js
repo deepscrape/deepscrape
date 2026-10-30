@@ -4,6 +4,12 @@ const defaultTheme = require('tailwindcss/defaultTheme')
 import withMT from "@material-tailwind/html/utils/withMT"
 /** @type {import('tailwindcss').Config} */
 const tailwindcolors = require('tailwindcss/colors')
+
+// material-tailwind palettes stop at 900, so every `dark:*-950` class (91 of them)
+// generated no CSS and the light shade stayed on screen in dark mode - the light
+// cyan info banner that showed up on dark pages.
+const with950 = (name) => ({ ...colors[name], 950: tailwindcolors[name][950] })
+
 module.exports = withMT({
 
   enabled: true,
@@ -53,20 +59,25 @@ module.exports = withMT({
       gray6: '#2a2e35',
       gray7: '#12181b',
       link: '#0000ee',
-      blue: colors.blue,
-      green: colors.green,
-      pink: colors.pink,
-      purple: colors.purple,
-      orange: colors.orange,
-      red: colors.red,
-      yellow: colors.yellow,
+      // `slate` was absent from this list, so all 753 `slate-*` classes in src were
+      // dead CSS: `dark:bg-slate-900` never applied and dark surfaces fell back to
+      // their light shade.
+      slate: tailwindcolors.slate,
+      neutral: tailwindcolors.neutral,
+      blue: with950('blue'),
+      green: with950('green'),
+      pink: with950('pink'),
+      purple: with950('purple'),
+      orange: with950('orange'),
+      red: with950('red'),
+      yellow: with950('yellow'),
       brown: colors.brown,
-      cyan: colors.cyan,
-      gray: colors.gray,
-      indigo: colors.indigo,
+      cyan: with950('cyan'),
+      gray: with950('gray'),
+      indigo: with950('indigo'),
       light: colors.light,
-      lime: colors.lime,
-      teal: colors.teal,
+      lime: with950('lime'),
+      teal: with950('teal'),
       'deep-purple': colors['deep-purple'],
       'deep-orange': colors['deep-orange'],
       'blue-gray': colors['blue-gray'],

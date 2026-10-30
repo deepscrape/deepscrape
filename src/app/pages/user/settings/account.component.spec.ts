@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { AccountSettingsComponent } from './account.component';
+import { AuthzService } from 'src/app/core/services';
 import { getTestProviders } from 'src/app/testing';
 
 describe('AccountSettingsComponent', () => {
@@ -23,9 +24,17 @@ describe('AccountSettingsComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('routerLink should map account route to /settings root', () => {
-    expect(component.routerLink('account')).toEqual(['/settings']);
-    expect(component.routerLink('security')).toEqual(['/settings', 'security']);
+  it('routerLink should carry the active org onto every tab', () => {
+    // The tabs used to emit absolute paths, which dropped the org: the guard then had
+    // to re-derive it with an API call on every click, and that call answered 401 while
+    // the bearer token was still settling.
+    expect(component.routerLink('account')).toBe('/settings');
+    expect(component.routerLink('security')).toBe('/settings/security');
+
+    TestBed.inject(AuthzService).setActiveOrgId('acme');
+
+    expect(component.routerLink('account')).toBe('/acme/settings');
+    expect(component.routerLink('security')).toBe('/acme/settings/security');
   });
 
   it('getAnimationData should read animation key from outlet data', () => {

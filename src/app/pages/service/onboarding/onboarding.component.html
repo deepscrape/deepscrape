@@ -1,13 +1,13 @@
 <main
-  class="h-full top-24 relative flex items-center justify-center px-2 py-4 bg-gradient-to-br from-white via-blue-200 to-indigo-400 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 min-h-screen">
+  class="h-full flex items-center justify-center px-4 py-8 bg-gradient-to-br from-slate-50 via-primary-50 to-rose-50 dark:from-gray7 dark:via-slate-900 dark:to-gray7 min-h-[calc(100dvh-5rem)]">
   <section
-    class="relative z-10 mx-auto flex min-h-screen w-full items-center justify-center px-2 py-6 sm:px-4 lg:px-6">
+    class="relative z-10 mx-auto flex w-full items-center justify-center px-2 py-6 sm:px-4 lg:px-6">
     <div
       class="grid w-full max-w-5xl gap-6 lg:grid-cols-[0.95fr_1.15fr] lg:gap-7">
       <aside
-        class="overflow-hidden rounded-2xl border border-gray-100 bg-white/80 p-6 shadow-2xl backdrop-blur-sm dark:border-gray-800 dark:bg-gray-900/75 lg:p-8">
+        class="glass overflow-hidden rounded-2xl border-white/5 dark:border-white/10 p-6 shadow-xl lg:p-8">
         <div
-          class="inline-flex items-center gap-3 rounded-full border border-indigo-200/80 bg-indigo-50/90 shadow-[0_20px_40px_rgba(124,58,237,0.10)] dark:border-violet-500/20 dark:from-violet-950/35 dark:via-slate-900 dark:to-indigo-950/30 px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-200">
+          class="inline-flex items-center gap-3 rounded-full border border-primary-200/80 bg-primary-50/90 shadow-[0_20px_40px_rgba(2,132,199,0.12)] dark:border-primary-500/20 dark:bg-primary-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-primary-700 dark:text-primary-200">
           <mat-icon fontSet="material-icons-outlined" class="!h-4 !w-4">
             auto_awesome
           </mat-icon>
@@ -29,13 +29,14 @@
           @for (item of stepItems; track item.id) {
             <div
               class="group relative overflow-hidden rounded-3xl border px-4 py-4 transition-all duration-200 sm:px-5"
-              [class.border-indigo-300]="step() === item.id"
+              [class.border-primary-300]="step() === item.id"
               [class.bg-gradient-to-r]="step() === item.id"
-              [class.from-indigo-600]="step() === item.id"
-              [class.via-indigo-500]="step() === item.id"
-              [class.to-blue-500]="step() === item.id"
+              [class.from-primary-600]="step() === item.id"
+              [class.to-primary-400]="step() === item.id"
+              [class.dark:from-primary-900]="step() === item.id"
+              [class.dark:to-primary-700]="step() === item.id"
               [class.text-white]="step() === item.id"
-              [class.shadow-[0_18px_40px_rgba(79,70,229,0.28)] ]="
+              [class.shadow-[0_18px_40px_rgba(2,132,199,0.28)] ]="
                 step() === item.id
               "
               [class.border-green-300]="step() > item.id"
@@ -115,7 +116,7 @@
                   <h2 class="mt-2 text-lg font-semibold">{{ item.title | translate }}</h2>
                   <p
                     class="mt-1 text-sm"
-                    [class.text-indigo-100]="step() === item.id"
+                    [class.text-primary-50]="step() === item.id"
                     [class.text-green-700]="step() > item.id"
                     [class.dark:text-green-200]="step() > item.id"
                     [class.text-slate-500]="step() < item.id"
@@ -129,10 +130,10 @@
         </nav>
 
         <div
-          class="mt-8 rounded-3xl border border-violet-100 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-5 shadow-[0_20px_40px_rgba(124,58,237,0.10)] dark:border-violet-500/20 dark:from-violet-950/35 dark:via-slate-900 dark:to-indigo-950/30">
+          class="mt-8 rounded-3xl border border-primary-100 bg-gradient-to-br from-primary-50 via-white to-rose-50 p-5 shadow-[0_20px_40px_rgba(2,132,199,0.10)] dark:border-primary-500/20 dark:from-primary-950/35 dark:via-slate-900 dark:to-rose-950/20">
           <div class="flex items-start gap-3">
             <div
-              class="flex h-12 w-16 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-200">
+              class="flex h-12 w-16 items-center justify-center rounded-2xl bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-200">
               <mat-icon class="text-green-700 !h-6 !w-6">shield</mat-icon>
             </div>
             <div>
@@ -202,10 +203,10 @@
             role="group"
             aria-labelledby="step1-title">
             <div
-              class="rounded-3xl border border-violet-100 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-5 shadow-[0_20px_40px_rgba(124,58,237,0.10)] dark:border-violet-500/20 dark:from-violet-950/35 dark:via-slate-900 dark:to-indigo-950/30">
+              class="rounded-3xl border border-primary-100 bg-gradient-to-br from-primary-50 via-white to-rose-50 p-5 shadow-[0_20px_40px_rgba(2,132,199,0.10)] dark:border-primary-500/20 dark:from-primary-950/35 dark:via-slate-900 dark:to-rose-950/20">
               <div class="flex items-start gap-4">
                 <div
-                  class="flex h-12 w-16 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/25">
+                  class="flex h-12 w-16 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-lg shadow-primary-500/25">
                   <mat-icon fontSet="material-icons-outlined" class="!h-7 !w-7">
                     domain
                   </mat-icon>
@@ -269,7 +270,7 @@
                 <button
                   type="submit"
                   [disabled]="workspaceForm.invalid"
-                  class="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(79,70,229,0.28)] transition-all duration-200 hover:bg-indigo-500 hover:shadow-[0_18px_34px_rgba(79,70,229,0.34)] focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
+                  class="inline-flex items-center gap-2 rounded-2xl bg-primary-600 px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(2,132,199,0.28)] transition-all duration-200 hover:bg-primary-500 hover:shadow-[0_18px_34px_rgba(2,132,199,0.34)] focus:outline-none focus:ring-2 focus:ring-primary-400 dark:focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50">
                   {{ 'ONBOARDING.CONTINUE' | translate }}
                   <mat-icon fontSet="material-icons-outlined" class="!h-5 !w-5">
                     arrow_forward
@@ -288,10 +289,10 @@
             role="group"
             aria-labelledby="step2-title">
             <div
-              class="rounded-3xl border border-violet-100 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-5 shadow-[0_20px_40px_rgba(124,58,237,0.10)] dark:border-violet-500/20 dark:from-violet-950/35 dark:via-slate-900 dark:to-indigo-950/30">
+              class="rounded-3xl border border-primary-100 bg-gradient-to-br from-primary-50 via-white to-rose-50 p-5 shadow-[0_20px_40px_rgba(2,132,199,0.10)] dark:border-primary-500/20 dark:from-primary-950/35 dark:via-slate-900 dark:to-rose-950/20">
               <div class="flex items-start gap-4">
                 <div
-                  class="flex h-12 w-16 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/25">
+                  class="flex h-12 w-16 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-lg shadow-primary-500/25">
                   <mat-icon fontSet="material-icons-outlined" class="!h-7 !w-7">
                     group_add
                   </mat-icon>
@@ -374,7 +375,7 @@
                 </button>
                 <button
                   type="submit"
-                  class="flex-1 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(79,70,229,0.26)] transition-all duration-200 hover:bg-indigo-500 hover:shadow-[0_18px_34px_rgba(79,70,229,0.34)] focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500">
+                  class="flex-1 rounded-2xl bg-primary-600 px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(2,132,199,0.26)] transition-all duration-200 hover:bg-primary-500 hover:shadow-[0_18px_34px_rgba(2,132,199,0.34)] focus:outline-none focus:ring-2 focus:ring-primary-400 dark:focus:ring-primary-500">
                   {{ 'ONBOARDING.CONTINUE' | translate }}
                 </button>
               </div>
@@ -390,10 +391,10 @@
             role="group"
             aria-labelledby="step3-title">
             <div
-              class="rounded-3xl border border-violet-100 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-5 shadow-[0_20px_40px_rgba(124,58,237,0.10)] dark:border-violet-500/20 dark:from-violet-950/35 dark:via-slate-900 dark:to-indigo-950/30">
+              class="rounded-3xl border border-primary-100 bg-gradient-to-br from-primary-50 via-white to-rose-50 p-5 shadow-[0_20px_40px_rgba(2,132,199,0.10)] dark:border-primary-500/20 dark:from-primary-950/35 dark:via-slate-900 dark:to-rose-950/20">
               <div class="flex items-start gap-4">
                 <div
-                  class="flex h-12 w-16 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-lg shadow-violet-500/25">
+                  class="flex h-12 w-16 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-lg shadow-primary-500/25">
                   <mat-icon fontSet="material-icons-outlined" class="!h-7 !w-7">
                     workspace_premium
                   </mat-icon>
@@ -782,7 +783,7 @@
                       type="button"
                       (click)="submitEnterpriseRequest()"
                       [disabled]="enterpriseRequestLoading()"
-                      class="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-3 text-xs font-bold text-white shadow-[0_16px_30px_rgba(79,70,229,0.25)] transition-all duration-200 hover:bg-indigo-500 hover:shadow-[0_18px_34px_rgba(79,70,229,0.32)] focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60">
+                      class="inline-flex items-center gap-2 rounded-2xl bg-primary-600 px-4 py-3 text-xs font-bold text-white shadow-[0_16px_30px_rgba(2,132,199,0.25)] transition-all duration-200 hover:bg-primary-500 hover:shadow-[0_18px_34px_rgba(2,132,199,0.32)] focus:outline-none focus:ring-2 focus:ring-primary-400 dark:focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60">
                       @if (enterpriseRequestLoading()) {
                         <mat-spinner
                           [diameter]="14"
@@ -818,7 +819,7 @@
                 type="button"
                 (click)="complete()"
                 [disabled]="loading()"
-                class="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(79,70,229,0.28)] transition-all duration-200 hover:bg-indigo-500 hover:shadow-[0_18px_34px_rgba(79,70,229,0.34)] focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
+                class="inline-flex items-center gap-2 rounded-full bg-primary-600 px-6 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(2,132,199,0.28)] transition-all duration-200 hover:bg-primary-500 hover:shadow-[0_18px_34px_rgba(2,132,199,0.34)] focus:outline-none focus:ring-2 focus:ring-primary-400 dark:focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50">
                 @if (loading()) {
                   <mat-spinner
                     [diameter]="18"

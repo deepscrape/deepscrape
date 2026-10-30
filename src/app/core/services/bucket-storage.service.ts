@@ -1,6 +1,7 @@
-import { Injectable, inject } from '@angular/core'
+import { Injectable, inject, PLATFORM_ID } from '@angular/core'
+import { isPlatformBrowser } from '@angular/common'
 import { HttpClient, HttpHeaders } from '@angular/common/http'
-import { Observable } from 'rxjs'
+import { Observable, map, throwError } from 'rxjs'
 import { API_BASE_URL } from '../variables'
 import { AuthService } from './auth.service'
 import {
@@ -43,6 +44,7 @@ import {
 export class BucketStorageService {
   private readonly http = inject(HttpClient)
   private readonly authService = inject(AuthService)
+  private readonly platformId = inject(PLATFORM_ID)
   private readonly base: string = API_BASE_URL + '/storage'
 
   /** Send one URL to storage. The reply reports the scope the server chose. */
@@ -56,6 +58,33 @@ export class BucketStorageService {
     return this.http.post<StorageSaveResponse>(this.base + '/save', body, { headers: this.headers() })
   }
 
+  /**
+   * Keep bytes the caller already holds -- a job result, a tool reply.
+   *
+   * `save` above can only file something the platform can fetch again, and a
+   * worker artifact is a bare filename on the worker's disk: there is no address
+   * to fetch, so a run's result could be read in the UI and then lost. This
+   * posts the payload itself. The object lands in the caller's own tier, because
+   * the shared tier is keyed by URL and a payload has none.
+   *
+   * @param {string} content The bytes, as text.
+   * @param {string} filename The name to file it under.
+   * @param {string} [contentType] The type, when it is not implied by the name.
+   * @return {Observable<StorageSaveResponse>} The key the server filed it under.
+   */
+  savePayload(
+    content: string,
+    filename: string,
+    contentType?: string,
+  ): Observable<StorageSaveResponse> {
+    const body: Record<string, string> = { content, filename }
+    if (contentType) {
+      body['contentType'] = contentType
+    }
+
+    return this.http.post<StorageSaveResponse>(this.base + '/payload', body, { headers: this.headers() })
+  }
+
   /** Every object this caller may see. */
   list(): Observable<StorageListResponse> {
     return this.http.get<StorageListResponse>(this.base + '/list', { headers: this.headers() })
@@ -64,11 +93,53 @@ export class BucketStorageService {
   /**
    * Mint a short-lived link for one key.
    *
-   * The ONLY way the UI opens an object. Constructing a bucket URL here would
-   * put the storage layout in the client and break when it changes.
+   * A bearer credential in a query string: anyone holding the string can read
+   * the object until it expires. Use it only when the URL has to survive outside
+   * this tab -- a real download. To VIEW a file, use `objectUrl` below, which
+   * hands out nothing.
    */
   presign(key: string): Observable<StoragePresignResponse> {
     return this.http.post<StoragePresignResponse>(this.base + '/presign', { key }, { headers: this.headers() })
+  }
+
+  /**
+   * The object's bytes as a page-local blob URL.
+   *
+   * The bytes are fetched with this caller's normal bearer token and wrapped in
+   * a `blob:` URL that exists only in this document. Nothing replayable leaves
+   * the process, which is the difference between this and `presign`.
+   *
+   * The caller OWNS the returned URL and must pass it to `revokeObjectUrl` when
+   * it is done: a blob URL pins its bytes in memory until it is revoked or the
+   * document is destroyed.
+   *
+   * @param {string} key The object key.
+   * @return {Observable<string>} The blob URL.
+   */
+  objectUrl(key: string): Observable<string> {
+    if (!isPlatformBrowser(this.platformId)) {
+      return throwError(() => new Error('storage: no browser'))
+    }
+
+    return this.http
+      .get(this.base + '/object', {
+        headers: this.headers(),
+        params: { key },
+        responseType: 'blob',
+      })
+      .pipe(map((blob: Blob) => URL.createObjectURL(blob)))
+  }
+
+  /**
+   * Release a blob URL minted by `objectUrl`.
+   *
+   * Safe to call twice and safe on a URL this method did not mint: the caller
+   * that keeps the URL in a field may revoke it both on close and on destroy.
+   * @param {string} url The URL to release.
+   */
+  revokeObjectUrl(url: string): void {
+    if (!isPlatformBrowser(this.platformId)) return
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url)
   }
 
   /**

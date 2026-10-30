@@ -9,6 +9,8 @@ import { switchMap } from 'rxjs/internal/operators/switchMap';
 import { smoothfadeAnimation } from 'src/app/animations';
 import { RippleDirective } from 'src/app/core/directives';
 import { RouteService } from 'src/app/core/services';
+import { AuthzService } from 'src/app/core/services';
+import { orgScopedUrl } from 'src/app/core/guards/host-routing.policy';
 import { GlobalTabs } from 'src/app/core/types';
 import { ACCOUNT_DATA_TABS } from 'src/app/core/variables';
 import { myIcons } from 'src/app/shared/lucideicons';
@@ -24,6 +26,7 @@ import { myIcons } from 'src/app/shared/lucideicons';
 export class AccountSettingsComponent {
   readonly icons = myIcons
   private invService = inject(RouteService)
+  private authz = inject(AuthzService)
   private routeSub: Subscription
   private router = inject(Router)
   private route = inject(ActivatedRoute)
@@ -67,7 +70,12 @@ export class AccountSettingsComponent {
   }
 
   routerLink(id?: string) {
-    return id === 'account' ? ['/settings'] : ['/settings', id]
+    // Scoped through the one helper the sidebar uses. A bare `/settings/general` is
+    // not merely untidy: the org guard has to re-derive the org with a
+    // `listMyOrganizations` call on every tab click, and that call is the one that
+    // answers 401 while the bearer token is still settling on a cold load.
+    const target = id === 'account' ? '/settings' : `/settings/${id}`
+    return orgScopedUrl(target, this.authz.activeOrgId)
   }
 
   getAnimationData(outlet: RouterOutlet) {

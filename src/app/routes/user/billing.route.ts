@@ -1,5 +1,4 @@
 import { Routes } from "@angular/router";
-import { paywallGuard } from "src/app/core/guards";
 
 export const billingRoutes: Routes = [
     {
@@ -61,7 +60,9 @@ export const billingRoutes: Routes = [
     {
         path: 'passes',
         loadComponent: () => import('../../pages/user/billing/passes/passes.component').then(m => m.PassesComponent),
-        canActivate: [paywallGuard],
+        // NOT `paywallGuard`. This page SELLS the credits `paywallGuard` demands, so
+        // guarding it bounced the one caller who needs it (free, zero credits) to the
+        // plans upsell. Checkout itself is charged and validated server-side.
         data: { animation: 'billing-passes' },
     }
 ];

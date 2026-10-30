@@ -66,6 +66,17 @@ export const AdminRoutes: Routes = [
     data: { title: 'machines', animation: 'admin_machines' },
   },
   {
+    // One machine, from the platform side. NO live Fly read: arachnefly's
+    // `MachineOwnershipMiddleware` admits only the machine's owner and has no admin
+    // bypass on purpose (roadmap `05` Part D), so an operator sees the fleet
+    // projection — state, region, guest, events and checks as they were recorded in
+    // Firestore — and the page says nothing it cannot prove.
+    path: 'machines/:machineId',
+    loadComponent: () => import('../../pages/admin/admin-machine-detail.component').then(m => m.AdminMachineDetailComponent),
+    canActivate: [adminGuard],
+    data: { title: 'machine', animation: 'admin_machines' },
+  },
+  {
     // Guarded as well as authorized, for the same reason as the fleet above:
     // `/api/admin/sessions` re-checks `platform` on every call, but a list of
     // every tenant's LIVE browser activity is not something to render to someone

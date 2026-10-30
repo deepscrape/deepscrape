@@ -181,6 +181,14 @@ const MARKETING_SINGLE_SEGMENT_PATHS: ReadonlySet<string> = new Set([
  */
 const ORG_APP_PAGES: ReadonlySet<string> = new Set([
   'playground', 'chatai', 'crawlpack', 'operations', 'billing', 'settings',
+  // `browser` and `machines` were missing, and this set is not cosmetic: it is the
+  // switch for THREE behaviours at once — `orgScopedUrl` prefixes a link, the org
+  // guard takes its fast path instead of calling `listMyOrganizations`, and
+  // `ruleForPath` claims `/{org}/{page}` for the app origin. Omitting a page made
+  // the sidebar emit a bare `/browser`, forced a membership round-trip on every
+  // visit, and classified `/{org}/browser` as MARKETING so the host guard moved the
+  // page to the apex. Every one of those reads as "logged out" further down.
+  'browser', 'machines',
 ]);
 
 /**

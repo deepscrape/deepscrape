@@ -33,7 +33,6 @@ export class ApiKeysComponent implements OnInit {
   protected popupNewKeyVisible: boolean = false;
   protected apiKeys$: Observable<ApiKey[] | null>;
 
-  protected newApiKey: FormControl<string>
   protected newApiKeyName: FormControl<string>
   protected defaultKey: FormControl<boolean>
   protected isKeyModalOpen: FormControl<boolean>
@@ -74,7 +73,6 @@ export class ApiKeysComponent implements OnInit {
     this.isKeyModalOpen = new FormControl<boolean>(false, { nonNullable: true })
 
     this.defaultKey = new FormControl<boolean>(true, { nonNullable: true, validators: [Validators.required] })
-    this.newApiKey = new FormControl<string>('', { nonNullable: true, validators: [Validators.required] })
     this.newApiKeyName = new FormControl<string>('', { nonNullable: true, validators: [Validators.required] })
   }
 
@@ -104,13 +102,14 @@ export class ApiKeysComponent implements OnInit {
       })
   }
   disableApiKey(key: ApiKey) {
-    timer(500)
+    const disable = key.status !== 'disabled'
+    this.apiKeyService
+      .setApiKeyDisabled(key, disable)
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => {
-        this.closePopupMenu(new Event(''), key);
-        this.cdr.detectChanges()
+      .subscribe({
+        next: () => this.closePopupMenu(new Event(''), key),
+        error: (error) => console.error('Error changing API key status:', error),
       })
-    throw new Error('Method not implemented.');
   }
 
   copyToClipboard(key: ApiKey) {
@@ -193,7 +192,6 @@ export class ApiKeysComponent implements OnInit {
   clearKeysInput() {
 
     this.newApiKeyName.setValue('')
-    this.newApiKey.setValue('')
   }
 
   closePopupMenu(event: Event, key: ApiKey) {
@@ -212,7 +210,7 @@ export class ApiKeysComponent implements OnInit {
 
   keyModalCompleted() {
 
-    if (!this.newApiKeyName.valid || !this.newApiKey.valid) return
+    if (!this.newApiKeyName.valid) return
 
     // set the loading state
     this.apiKeyLoading.modal = true
@@ -220,13 +218,8 @@ export class ApiKeysComponent implements OnInit {
     // get the apiKey type from title
     const type = this.keyModalTitle.toLowerCase() as ApiKeyType
 
-    // create a fake key to hide the real key
-    const startFrom = 6
-    const fakeKey = this.apiKeyService.generateFakeKey(this.newApiKey.value.length - startFrom, startFrom - 1)
-
-    // generate the real key
-    const newKey = this.apiKeyService.generateApiKey(this.newApiKeyName.value, this.newApiKey.value,
-      this.newApiKey.value.substring(0, startFrom) + fakeKey, type, this.defaultKey.value)
+    // The credential is minted server-side; the form only names it.
+    const newKey = this.apiKeyService.generateApiKey(this.newApiKeyName.value, type, this.defaultKey.value)
 
     // subscribe
     this.apiKeySub = newKey

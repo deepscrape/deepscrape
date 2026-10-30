@@ -1,11 +1,12 @@
 <main
-  class="h-full flex items-center justify-center px-2 py-4 bg-gradient-to-br from-white via-blue-200 to-indigo-400 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 min-h-screen">
+  class="h-full flex items-center justify-center px-4 py-8 bg-gradient-to-br from-slate-50 via-primary-50 to-rose-50 dark:from-gray7 dark:via-slate-900 dark:to-gray7 min-h-[calc(100dvh-5rem)]">
   <!-- <app-animated-bg></app-animated-bg> -->
   <!-- Card Container -->
   <section
-    class="w-full max-w-sm bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm shadow-2xl rounded-xl p-4 flex flex-col gap-4 relative z-10 border border-gray-100 dark:border-gray-800 transition-all duration-300">
-    <!-- Logo/Icon placeholder -->
-    <div class="flex justify-center mb-1">
+    class="glass w-full max-w-sm rounded-2xl border-white/5 dark:border-white/10 p-5 sm:p-6 shadow-xl flex flex-col gap-4 relative z-10 transition-all duration-300">
+    <!-- One brand mark, centred, same as login. This card carried the logo image AND an
+         indigo check tile, so the two auth screens did not look like the same product. -->
+    <header class="flex flex-col items-center gap-3 text-center">
       <a [href]="homeUrl" aria-label="deepscrape home" class="inline-flex">
         <img
           alt="Logo"
@@ -14,33 +15,9 @@
               ? 'assets/logo-512x512_sky.png 2x'
               : 'assets/logo-512x512.png 2x'
           "
-          class="mt-4 h-9 w-9 rounded-full shadow-md border-none max-h-[80%] xs:max-h-max"
+          class="h-10 w-10 rounded-full shadow-md shadow-primary-600/20"
           loading="lazy" />
       </a>
-    </div>
-    <header class="flex gap-2 mb-2 text-center">
-      <div
-        class="w-8 h-8 rounded-xl bg-indigo-500 flex items-center justify-center shadow-md font-[system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif]"
-        aria-hidden="true">
-        <svg
-          class="w-5 h-5 text-white"
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden="true">
-          <circle
-            cx="12"
-            cy="12"
-            r="10"
-            class="cc-surface-fill"
-            fill="#6366f1"></circle>
-          <path
-            d="M8 13.5L10.5 16L16 8"
-            stroke="white"
-            stroke-width="1.7"
-            stroke-linecap="round"
-            stroke-linejoin="round"></path>
-        </svg>
-      </div>
       <div>
         <h1
           id="signup-title"
@@ -54,13 +31,6 @@
         </p>
       </div>
     </header>
-    <div class="flex items-center gap-2 my-1">
-      <div
-        class="flex-1 h-px bg-gradient-to-r from-transparent via-indigo-300 to-transparent dark:via-indigo-700"></div>
-      <span class="text-xs text-gray-400 dark:text-gray-500 font-medium"></span>
-      <div
-        class="flex-1 h-px bg-gradient-to-l from-transparent via-indigo-300 to-transparent dark:via-indigo-700"></div>
-    </div>
     <form
       [formGroup]="signupForm"
       (ngSubmit)="signup()"
@@ -70,7 +40,7 @@
       class="flex flex-col gap-3">
       @if (errorMessage) {
         <div
-          class="bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 px-2 py-2 rounded-lg relative mb-2 font-semibold flex items-center gap-2 animate-pulse text-xs"
+          class="bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-200 px-3 py-2 rounded-lg relative mb-2 font-semibold flex items-center gap-2 text-xs"
           role="alert">
           <svg
             class="w-4 h-4 text-red-500 dark:text-red-300"
@@ -326,7 +296,7 @@
           id="signup-button"
           type="submit"
           [disabled]="!signupForm.valid"
-          class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-800 text-white font-bold py-2 px-3 shadow-xl transition-all duration-200 ease-in-out disabled:bg-gray-400 dark:disabled:bg-gray-800 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500 cc-focus-ring text-sm">
+          class="w-full rounded-lg bg-primary-600 hover:bg-primary-700 dark:bg-primary-700 dark:hover:bg-primary-600 text-white font-semibold py-3 px-4 shadow-lg shadow-primary-600/25 transition-all duration-200 ease-in-out disabled:bg-gray-400 dark:disabled:bg-gray-800 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-primary-400 dark:focus:ring-primary-500 cc-focus-ring text-base">
           @if (loading.email) {
             <svg
               class="animate-spin h-4 w-4 text-white"
@@ -357,7 +327,7 @@
         {{ 'SIGNUP.ALREADY_HAVE_ACCOUNT' | translate }}
         <a
           [routerLink]="['/service/login']"
-          class="font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-gray-900 cc-focus-ring">
+          class="font-semibold text-primary-700 dark:text-primary-300 hover:text-primary-800 dark:hover:text-primary-200 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-gray-900 cc-focus-ring">
           {{ 'SIGNUP.LOGIN_LINK' | translate }}
         </a>
       </span>

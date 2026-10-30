@@ -309,8 +309,10 @@ export class OnboardingComponent implements OnInit {
       && !!selectedInterval;
 
     try {
-      // Step 1 result: rename the org
-      const orgId = this.defaultOrgId;
+      // Step 1 result: rename the org. `createDefaultOrganization` always writes
+      // `org_<uid>`, so a profile that has not delivered `defaultOrgId` yet must not
+      // silently drop the workspace name and every invitation below.
+      const orgId = this.defaultOrgId ?? `org_${uid}`;
       const workspaceName = this.workspaceForm.value.workspaceName?.trim();
       if (orgId && workspaceName) {
         await this.orgService.renameOrganization(orgId, workspaceName).toPromise();

@@ -120,13 +120,10 @@ export const navigation = [
 
         identity: true,
     },
-    {
-        name: 'Crawl Pack',
-        url: '/crawlpack',
-        icon: 'crawl_logo',
-
-        identity: true,
-    },
+    // `Crawl Pack` was removed from the nav (2026-10) rather than left pointing at
+    // a redirect. The editor is a `crawl4ai` artefact and the platform resolves
+    // to `webrain`, so a nav entry would promise a page that no longer keeps a
+    // single setting. `/crawlpack` still redirects, for bookmarks.
 
     // ponytail: browser SESSIONS, not `crawlpack/browser`. That page configures the
     // crawl engine's browser options; this one leases a browser you can drive. The
@@ -192,6 +189,14 @@ export const navigation = [
         badge: {
             variant: 'new',
             text: 'new'
+        },
+    },
+    {
+        name: 'Passes',
+        url: '/billing/passes',
+        identity: true,
+        icon: {
+            matIcon: 'confirmation_number'
         },
     },
     {

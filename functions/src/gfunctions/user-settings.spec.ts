@@ -73,7 +73,20 @@ describe("a legacy plaintext key keeps working", () => {
   it("returns the legacy value rather than falling through to null", () => {
     assert.match(
       settings,
-      /migrateLegacyKey\(uid, vendor, entry\)\s*\n\s*return entry/
+      /migrateLegacyKey\(uid, vendor, legacy\)\s*\n\s*return legacy/
+    )
+  })
+
+  it("cleans a legacy value before it migrates it", () => {
+    // A pasted `GROQ_API_KEY=gsk_...` was stored as the whole line, so migrating
+    // it verbatim would copy the defect into the secret store instead of fixing
+    // it once.
+    const clean = settings.indexOf("const legacy = normaliseApiKey(entry)")
+    const migrate = settings.indexOf("migrateLegacyKey(uid, vendor, legacy)")
+    assert.ok(clean > 0 && migrate > 0, "expected both a clean and a migrate")
+    assert.ok(
+      clean < migrate,
+      "the legacy value is migrated before it is normalised"
     )
   })
 

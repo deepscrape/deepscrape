@@ -59,6 +59,7 @@ import {
   availableVendors,
   isPlausibleApiKey,
   isProviderKeyId,
+  normaliseApiKey,
 } from "../domain/user-ai-settings.domain"
 
 /** Shared options: every callable here is a small settings write. */
@@ -130,8 +131,14 @@ export const readUserAiKey = async (
   // on read so an existing user keeps a working key without re-entering it, and
   // rewrite the field as metadata so this branch runs at most once per vendor.
   if (typeof entry === "string" && entry.length > 0) {
-    await migrateLegacyKey(uid, vendor, entry)
-    return entry
+    // Normalised before the migration, so a dirty legacy value is cleaned once
+    // here rather than copied verbatim into the secret store.
+    const legacy = normaliseApiKey(entry)
+    if (legacy.length === 0) {
+      return null
+    }
+    await migrateLegacyKey(uid, vendor, legacy)
+    return legacy
   }
 
   const secretPath = secretPathOf(entry)
@@ -142,8 +149,13 @@ export const readUserAiKey = async (
   // A path that resolves to nothing means the secret was purged while the
   // metadata survived; report absence rather than an empty credential, so the
   // caller falls back to the platform key instead of sending an empty header.
-  const value = await getSecretFromManager(secretPath)
-  return typeof value === "string" && value.length > 0 ? value : null
+  //
+  // Normalised on the way out too, not only on write: values stored before the
+  // paste guard existed (`GROQ_API_KEY=gsk_...`) are otherwise a 401 that looks
+  // like a bad key until someone reads the secret. Idempotent, so it costs
+  // nothing on a clean value.
+  const value = normaliseApiKey(await getSecretFromManager(secretPath))
+  return value.length > 0 ? value : null
 }
 
 /** The one vendor whose endpoint the caller, not the platform, supplies. */
@@ -354,7 +366,9 @@ export const setMyAiKey = onCall(OPTIONS, async (request) => {
   // as possibly-undefined to the compiler even
   // though the guard proved otherwise.
   const vendor = data?.vendor
-  const key = data?.key
+  // Normalised BEFORE the guard, because the paste that causes trouble
+  // (`GROQ_API_KEY=gsk_...`) is long enough to pass it. See `normaliseApiKey`.
+  const key = normaliseApiKey(data?.key)
   const endpoint = data?.endpoint
 
   // `isProviderKeyId`, NOT `isAiVendorId`: a caller may store a key for a reader exactly as
@@ -402,7 +416,7 @@ export const setMyAiKey = onCall(OPTIONS, async (request) => {
   // document.
   const secretPath = await upsertSecretValue(
     aiKeySecretId(uid, vendor),
-    key.trim()
+    key
   )
 
   await aiKeysRef(uid).set(

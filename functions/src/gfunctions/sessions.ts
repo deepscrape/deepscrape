@@ -1065,6 +1065,24 @@ const resolveHighestSessionRole = (roles: string[]): "admin" | "superadmin" | "o
   return "user"
 }
 
+/**
+ * Platform staff, and only platform staff.
+ *
+ * `owner` and `manager` are TENANT roles. `createDefaultOrganization` writes
+ * `memberships.role = "owner"` for every new account, so treating "any role but
+ * user" as privileged made every registered account a session administrator:
+ * `getUserLoginSessionsByAdmin`, `revokeAllUserSessionsByAdmin`,
+ * `revokeUserLoginSessionByAdmin` and `adminResetUserMfa` all gate on that single
+ * flag and none of them scope their target to the caller's tenant. `admin-users.ts`
+ * already draws this exact line in `isPlatformAdminRole`; this is the same
+ * predicate for the session surface.
+ * @param {*} role Resolved session role, from claims, the user doc and memberships.
+ * @return {boolean} True only for platform administrators.
+ */
+export const isPlatformSessionAdmin = (
+  role: ActorSessionAccess["role"],
+): boolean => role === "admin" || role === "superadmin"
+
 const isBootstrapAdminEmail = (email?: string | null): boolean => {
   if (!email) {
     return false
@@ -1158,7 +1176,7 @@ export const resolveActorSessionAccess = async (
 
   const resolvedRole = resolveHighestSessionRole(collectedRoles)
   const access = {
-    canManageSessions: resolvedRole !== "user",
+    canManageSessions: isPlatformSessionAdmin(resolvedRole),
     role: resolvedRole,
   }
   await redis.setex(accessCacheKey, SESSION_ACCESS_CACHE_TTL_SECONDS, JSON.stringify(access))

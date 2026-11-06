@@ -112,3 +112,26 @@ export const bodyOf = (req: Request): Record<string, unknown> => {
     (body as Record<string, unknown>) :
     {}
 }
+
+/**
+ * The anti-bot challenge a browser tool reported, or null.
+ *
+ * One definition rather than two. `scrape.ts` and `webrain-jobs.ts` carried
+ * this verbatim, and both routes can surface the same gate, so the rule that
+ * decides whether one exists was stated twice.
+ *
+ * Only `navigate` / `observe(what=state)` / `search` report one; `scrape` and
+ * `batch` carry no such field in webrain-core/src/browser.rs, so `null` here
+ * means "this provider does not answer that question", not "the page was
+ * clean". The value is rendered back to the caller as the reason their scrape
+ * was blocked, so only a non-empty string counts.
+ * @param {unknown} data The tool's typed JSON, or anything else.
+ * @return {string | null} The challenge, or null when there is none.
+ */
+export const challengeOf = (data: unknown): string | null => {
+  if (!data || typeof data !== "object") {
+    return null
+  }
+  const value = (data as Record<string, unknown>)["challenge"]
+  return typeof value === "string" && value.length > 0 ? value : null
+}

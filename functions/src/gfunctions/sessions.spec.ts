@@ -7,6 +7,7 @@ import {
   evaluateMfaDisabledNotification,
   getDefaultPrimaryMethod,
   getDefaultSecondaryMethod,
+  isPlatformSessionAdmin,
   readMfaPreferences,
 } from "./sessions"
 
@@ -124,5 +125,32 @@ describe("sessions mfa preferences", () => {
     )
 
     assert.match(callable, /notifications:\s*\{\s*securityAlerts:/)
+  })
+})
+
+// A tenant role is not a platform role. Every signup gets `memberships.role =
+// "owner"` for its own org, so "any role but user" made every registered account
+// a session administrator over every other account.
+describe("sessions platform capability", () => {
+  it("grants session administration to platform staff only", () => {
+    assert.equal(isPlatformSessionAdmin("admin"), true)
+    assert.equal(isPlatformSessionAdmin("superadmin"), true)
+    assert.equal(isPlatformSessionAdmin("owner"), false)
+    assert.equal(isPlatformSessionAdmin("manager"), false)
+    assert.equal(isPlatformSessionAdmin("elevated"), false)
+    assert.equal(isPlatformSessionAdmin("user"), false)
+  })
+
+  it("derives canManageSessions from the platform predicate", () => {
+    const src = readFileSync(join(__dirname, "sessions.ts"), "utf8")
+
+    assert.match(
+      src,
+      /canManageSessions: isPlatformSessionAdmin\(resolvedRole\)/,
+    )
+    assert.ok(
+      !/canManageSessions: resolvedRole !== "user"/.test(src),
+      "a tenant role must never satisfy a platform capability",
+    )
   })
 })

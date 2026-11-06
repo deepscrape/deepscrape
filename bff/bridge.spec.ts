@@ -39,11 +39,14 @@ describe('bridge: Express request surface', () => {
     ).toEqual({ email: 'a@b.c' })
   })
 
-  test('headers expose both bracket access and get()', () => {
+  test('headers expose bracket access, get() and header()', () => {
     const { req } = bridge('http://localhost/page', { 'User-Agent': 'probe' })
 
     expect(req.headers['user-agent']).toBe('probe')
     expect(req.get('User-Agent')).toBe('probe')
+    // `submitContact` calls req.header(...); without the alias it threw a
+    // TypeError and the contact route answered 500.
+    expect(req.header('User-Agent')).toBe('probe')
   })
 
   test('cookies are parsed and decoded', () => {

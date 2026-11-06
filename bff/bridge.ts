@@ -13,9 +13,9 @@ import { parseCookies } from './security'
  * already expects. This is the second option.
  *
  * ponytail: covers exactly what the ported handlers touch — `req.{body,cookies,
- * headers,ip,connection,app,user,get()}` and `res.{status().json(),json(),send(),
- * cookie(),setHeader()}`. Extend it when a route group needs more. Do NOT grow it
- * into a general Express emulator.
+ * headers,ip,connection,app,user,get(),header()}` and
+ * `res.{status().json(),json(),send(),cookie(),setHeader()}`. Extend it when a
+ * route group needs more. Do NOT grow it into a general Express emulator.
  */
 
 type CookieOptions = {
@@ -424,6 +424,9 @@ export const createBridge = (
     cookies: parseCookies(request.headers.get('cookie')) as Record<string, string>,
     headers: headerBag,
     get: (key: string) => headerBag[key.toLowerCase()],
+    // Express's name for `get`. Ported handlers call `req.header("X-Firebase-AppCheck")`;
+    // without this the contact route threw a TypeError and answered 500.
+    header: (key: string) => headerBag[key.toLowerCase()],
     // Same trust order as the limiter: cf-ray-gated cf-connecting-ip, then XFF.
     ip: clientIp(request),
     connection: { remoteAddress: clientIp(request) },

@@ -18,6 +18,7 @@
 import {describe, it} from "node:test"
 import assert from "node:assert/strict"
 import {readFileSync} from "node:fs"
+import {decodePayload} from "../domain/storage-payload.domain"
 
 // Relative to the package root, matching the other source-shape specs: the
 // functions tsconfig's module setting rejects `import.meta.url` (TS1343).
@@ -257,5 +258,42 @@ describe("the byte route hands out no credential", () => {
     const source = objectHandler()
     assert.match(source, /sanitizeFilename\(/)
     assert.match(source, /Content-Disposition/)
+  })
+})
+
+describe("a payload carries bytes, not necessarily text", () => {
+  /** The four magic bytes of a PNG, which are not valid UTF-8. */
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+
+  it("keeps text as UTF-8", () => {
+    const decoded = decodePayload({content: "hello"})
+    assert.ok(decoded.ok)
+    assert.equal(decoded.bytes.toString("utf8"), "hello")
+  })
+
+  it("decodes base64 back to the original bytes", () => {
+    const decoded = decodePayload({
+      contentBase64: png.toString("base64"),
+      contentType: "image/png",
+    })
+
+    assert.ok(decoded.ok)
+    assert.deepEqual([...decoded.bytes], [...png])
+  })
+
+  it("refuses a body carrying neither field", () => {
+    const decoded = decodePayload({filename: "a.png"})
+    assert.equal(decoded.ok, false)
+    assert.equal(decoded.ok === false && decoded.code, "invalid_content")
+  })
+
+  it("refuses an empty payload rather than storing a zero-byte object", () => {
+    const decoded = decodePayload({contentBase64: ""})
+    assert.equal(decoded.ok === false && decoded.code, "empty_content")
+  })
+
+  it("treats junk base64 as empty, because decoding is lenient", () => {
+    const decoded = decodePayload({contentBase64: "!!!!"})
+    assert.equal(decoded.ok === false && decoded.code, "empty_content")
   })
 })

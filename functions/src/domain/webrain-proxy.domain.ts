@@ -35,6 +35,10 @@ import {webrainTierFor} from "./webrain-tools.domain"
  * ignored and at worst a rejected call. `webrain_navigate` and friends also
  * take a proxy, but they are paid-only and their proxy is fixed at browser
  * launch, so rotation cannot move it per request anyway.
+ *
+ * `webrain_search` belongs here despite its name: over MCP it returns before
+ * any CDP connect and fetches with `engines::http_fetch`, so a per-call exit
+ * really does apply. Only NAVIGATING tools keep their exit at launch.
  */
 const PROXY_CAPABLE: ReadonlySet<string> = new Set([
   "webrain_serp",

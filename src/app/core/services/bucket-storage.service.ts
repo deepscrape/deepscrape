@@ -40,6 +40,26 @@ import {
  * Same-origin, like every other `/api` service: the credential must not leave
  * our origin, and the production CSP permits only our own.
  */
+
+/**
+ * Base64 for a byte array, in chunks.
+ *
+ * `String.fromCharCode(...bytes)` over a whole file overflows the argument list
+ * on anything past ~100 KB, which is every real image. 32 KB chunks keep the
+ * spread well inside the limit.
+ * @param {Uint8Array} bytes The bytes to encode.
+ * @return {string} The base64 text.
+ */
+const toBase64 = (bytes: Uint8Array): string => {  let binary = ''
+  const step = 0x8000
+
+  for (let at = 0; at < bytes.length; at += step) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + step))
+  }
+
+  return btoa(binary)
+}
+
 @Injectable({ providedIn: 'root' })
 export class BucketStorageService {
   private readonly http = inject(HttpClient)
@@ -80,6 +100,35 @@ export class BucketStorageService {
     const body: Record<string, string> = { content, filename }
     if (contentType) {
       body['contentType'] = contentType
+    }
+
+    return this.http.post<StorageSaveResponse>(this.base + '/payload', body, { headers: this.headers() })
+  }
+
+  /**
+   * Keep bytes that are not text -- an image the user picked.
+   *
+   * `savePayload` is defined as UTF-8 text and a PNG is not, so a file sent
+   * through it would arrive mangled. This base64-encodes instead: the only
+   * encoding a JSON body carries unchanged. What the bytes MEAN is the
+   * `contentType`'s job, and the route files it under exactly that.
+   *
+   * The 8 MiB request cap on the BFF is the real ceiling here, not any
+   * vendor's, and base64 spends 4/3 of it.
+   * @param {Uint8Array} bytes The file's bytes.
+   * @param {string} filename The name to file it under.
+   * @param {string} contentType The real type, e.g. `image/png`.
+   * @return {Observable<StorageSaveResponse>} The key the server filed it under.
+   */
+  saveBytes(
+    bytes: Uint8Array,
+    filename: string,
+    contentType: string,
+  ): Observable<StorageSaveResponse> {
+    const body: Record<string, string> = {
+      contentBase64: toBase64(bytes),
+      filename,
+      contentType,
     }
 
     return this.http.post<StorageSaveResponse>(this.base + '/payload', body, { headers: this.headers() })

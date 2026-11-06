@@ -27,6 +27,7 @@ import { webrainTool } from "../infrastructure/webrain-mcp"
 import { safeTargetUrls } from "../domain/url-guard.domain"
 import { resolveProvider } from "../domain/scrape-providers.domain"
 import { readStoredProvider } from "../infrastructure/scrape-provider.store"
+import { challengeOf } from "./request-helpers"
 
 /**
  * One target's outcome from `webrain_scrape`, flattened for the response.
@@ -72,18 +73,6 @@ interface WebrainScrapeResult {
   noStateRefused?: boolean
   /** The worker could not be reached, or `WEBRAIN_MCP_URL` is unset. */
   transportError?: boolean
-}
-
-/** Reads `challenge` out of whatever shape the tool returned.
- * @param {*} data
- * @return {*}
- */
-const challengeOf = (data: unknown): string | null => {
-  if (!data || typeof data !== "object") {
-    return null
-  }
-  const value = (data as Record<string, unknown>)["challenge"]
-  return typeof value === "string" && value.length > 0 ? value : null
 }
 
 /**

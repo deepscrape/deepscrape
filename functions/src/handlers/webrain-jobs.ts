@@ -67,6 +67,7 @@ import {
 } from "../domain/webrain-tools.domain"
 import { readStoredProvider } from "../infrastructure/scrape-provider.store"
 import { chargeToolJob } from "../infrastructure/tool-job-billing"
+import { challengeOf } from "./request-helpers"
 import type { BillingPricingPolicy } from "../domain/billing-pricing.domain"
 import { TOOL_JOB_ROUTES } from "./webrain-tools"
 import { db } from "../app/config"
@@ -159,24 +160,6 @@ const operationRef = (uid: string, taskId: string) =>
     .doc(uid)
     .collection(OPERATIONS_COLLECTION)
     .doc(taskId)
-
-/**
- * Reads `challenge` out of whatever shape the tool returned.
- *
- * Only `navigate` / `observe(what=state)` / `search` report one; `scrape` and
- * `batch` carry no such field in webrain-core/src/browser.rs, so `null` here
- * means
- * "this provider does not answer that question", not "the page was clean".
- * @param {*} data
- * @return {*}
- */
-const challengeOf = (data: unknown): string | null => {
-  if (!data || typeof data !== "object") {
-    return null
-  }
-  const value = (data as Record<string, unknown>)["challenge"]
-  return typeof value === "string" && value.length > 0 ? value : null
-}
 
 /**
  * The message shown per target when a call fails, distinguishing a refusal from

@@ -50,6 +50,7 @@ import {
   validateStorageSettingsInput,
 } from "../domain/storage-settings.domain"
 import {targetUrlFrom} from "../domain/url-guard.domain"
+import {decodePayload} from "../domain/storage-payload.domain"
 import type {StoredBlob} from "../infrastructure/blob-store.port"
 import {getPlatformBlobStore} from "../infrastructure/platform-blob-store"
 import {
@@ -345,18 +346,13 @@ export const storageSavePayload = async (
   }
 
   const body = bodyOf(req)
-  const content = typeof body["content"] === "string" ? body["content"] : null
-  if (content === null) {
-    fail(res, 400, "invalid_content")
+  const decoded = decodePayload(body)
+  if (!decoded.ok) {
+    fail(res, 400, decoded.code)
     return
   }
 
-  const bytes = Buffer.from(content, "utf8")
-  if (bytes.length === 0) {
-    fail(res, 400, "empty_content")
-    return
-  }
-
+  const bytes = decoded.bytes
   if (bytes.length > MAX_ARTIFACT_BYTES) {
     fail(res, 413, "too_large")
     return

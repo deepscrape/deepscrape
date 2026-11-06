@@ -111,33 +111,53 @@ export class ActionHandlerComponent implements OnInit {
     if (!this.oobCode || this.oobCode.trim().length === 0) {
       throw new Error('OobCode is empty or invalid');
     }
-    console.log('Starting email verification with oobCode:', this.oobCode);
   }
 
-  /** Apply action code to Firebase Auth */
+  /**
+   * Apply the action code, or accept that it was already applied.
+   *
+   * Which side consumes the code depends on one console setting, and only one:
+   * Authentication → Templates → *customize action URL*. Left unset, the link points at
+   * Firebase's hosted handler, which applies the code and then redirects here — so
+   * applying it again answers `auth/invalid-action-code`. Set to this page, the code
+   * arrives untouched and applying it here is mandatory. Both are supported, so this
+   * neither assumes nor forbids either: the account is the source of truth. Reload it,
+   * apply the code while it still reads unverified, and accept a consumed code once the
+   * account is verified (also what a page refresh after success produces).
+   * @return {Promise<void>} Resolves once the account is verified or the code applied.
+   */
   private async applyEmailVerification(): Promise<void> {
-    console.log('Step 1: Applying action code...');
+    if (await this.isCurrentUserVerified()) {
+      return;
+    }
+
     try {
       await applyActionCode(this.auth, this.oobCode!);
-      console.log('Step 1 ✅: Action code applied successfully');
     } catch (authError: any) {
-      console.error('❌ applyActionCode failed:', authError.code, authError.message);
-      this.logOobCodeDetails();
+      // A consumed code is not a failure when the account itself is verified.
+      if (await this.isCurrentUserVerified()) {
+        return;
+      }
       throw authError;
     }
   }
 
-  /** Log oobCode diagnostic information */
-  private logOobCodeDetails(): void {
-    console.error('Attempted oobCode:', this.oobCode);
-    console.error('OobCode details:', {
-      length: this.oobCode?.length,
-      startsWithLetter: /^[a-zA-Z]/.test(this.oobCode || ''),
-      containsSlash: this.oobCode?.includes('/'),
-      containsEqual: this.oobCode?.includes('='),
-      containsUnderscore: this.oobCode?.includes('_'),
-      containsDash: this.oobCode?.includes('-'),
-    });
+  /**
+   * Reload the signed-in user and report whether the address is verified.
+   * @return {Promise<boolean>} True only when a signed-in account is verified.
+   */
+  private async isCurrentUserVerified(): Promise<boolean> {
+    const user = this.auth.currentUser;
+    if (!user) {
+      // The link was opened in a browser with no session; nothing local to verify.
+      return false;
+    }
+    try {
+      await user.reload();
+    } catch {
+      return false;
+    }
+    return user.emailVerified === true;
   }
 
   /** Sync Firestore and refresh AuthService after verification */
@@ -213,13 +233,10 @@ export class ActionHandlerComponent implements OnInit {
 
     this.errorMessage = getErrorMessage(error.code, this.translate);
 
-    if (error.code === 'auth/invalid-action-code') {
-      this.errorMessage += '\n\nEmail verification link is invalid. This usually means:\n'
-        + '1. The link has been used already\n'
-        + '2. The link has expired (links expire after 24 hours)\n'
-        + '3. There may be a URL encoding issue\n\n'
-        + 'Please request a new verification email or contact support.';
-    }
+    // The old branch here appended an untranslated English paragraph about "the link has
+    // been used already / expired / URL encoding". None of it is actionable: reaching this
+    // point now means the account itself still reads unverified, so the generic message
+    // above is the honest one.
   }
 
   /** Handle password reset flow */

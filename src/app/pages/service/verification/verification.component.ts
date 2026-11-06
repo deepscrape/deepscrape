@@ -1,16 +1,16 @@
 import { Component, OnInit, OnDestroy, AfterViewInit, ViewChild, ChangeDetectionStrategy, ChangeDetectorRef, DOCUMENT, inject, PLATFORM_ID } from '@angular/core';
-import { applyActionCode, Auth, sendEmailVerification, User, RecaptchaVerifier, ConfirmationResult } from '@angular/fire/auth';
+import { Auth, sendEmailVerification, User, RecaptchaVerifier, ConfirmationResult } from '@angular/fire/auth';
 import { ActivatedRoute, Router } from '@angular/router';
 import { isPlatformBrowser } from '@angular/common';
 
-import { AuthService, FirestoreService, GuestTrackingService, SnackbarService } from 'src/app/core/services';
+import { AuthService, FirestoreService, GuestTrackingService, LocalStorage, SnackbarService } from 'src/app/core/services';
 import { WindowToken } from 'src/app/core/services';
 import { SnackBarType } from 'src/app/core/components';
 import { MatIcon } from '@angular/material/icon';
-import { delay, finalize, firstValueFrom, Subscription, timer } from 'rxjs';
+import { delay, finalize, firstValueFrom, interval, Subscription, timer } from 'rxjs';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Loading } from 'src/app/core/types';
-import { getErrorMessage } from 'src/app/core/functions';
+import { formatWait, getErrorMessage, resendStampKey, resendWaitMs } from 'src/app/core/functions';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { OtpInputComponent } from 'src/app/shared/otp-input/otp-input.component';
 import { resolveSafeReturnUrl } from 'src/app/core/functions';
@@ -42,6 +42,16 @@ export class VerifyEmailComponent implements OnInit, OnDestroy, AfterViewInit {
   };
   errorMessage: string = '';
 
+  /**
+   * Milliseconds the resend button is still held for, or `0` when it may be pressed.
+   *
+   * Only ever set from a stamp the provider wrote, so a failed send leaves it at `0` and the
+   * button stays live: a cooldown after a send that did not happen would hide the failure behind
+   * a disabled control.
+   */
+  cooldownLeft = 0;
+  private cooldownSub?: Subscription;
+
   public recaptchaVerifier!: RecaptchaVerifier;
   public confirmationResult!: ConfirmationResult;
   public verificationMethod: 'email' | 'phone' | null = null;
@@ -61,6 +71,8 @@ export class VerifyEmailComponent implements OnInit, OnDestroy, AfterViewInit {
   private readonly document = inject(DOCUMENT);
   private readonly translate = inject(TranslateService);
   private readonly cdr = inject(ChangeDetectorRef);
+  /** Platform-guarded store: a no-op during SSR and when the browser blocks storage. */
+  private readonly store = inject(LocalStorage);
 
   constructor() {
     this.phoneVerificationForm = this.fb.group({
@@ -117,6 +129,11 @@ export class VerifyEmailComponent implements OnInit, OnDestroy, AfterViewInit {
     }
     this.loading.email = true;
     try {
+      // The link in the email is applied by Firebase's own action handler, which then
+      // redirects here. The restored session still carries the pre-verification token,
+      // so `emailVerified` reads false until the profile is reloaded — that is why the
+      // page looked stuck until the user pressed "go to login" and signed in again.
+      await this.user.reload().catch(() => undefined);
       const userData = await this.firestoreService.getUserData(this.user.uid);
 
       const provider = userData?.providerId ?? '';
@@ -140,6 +157,15 @@ export class VerifyEmailComponent implements OnInit, OnDestroy, AfterViewInit {
       }
       if (!emailOk) {
         this.verificationMethod = 'email';
+        // Signup already sent one and stamped it, so on the normal path this only starts the
+        // countdown. The send fires for someone who arrived WITHOUT one -- a saved link, another
+        // browser -- which is the case that otherwise leaves them staring at an inbox with no mail
+        // in it. Once stamped, a resend is the user's choice, not something the page does for them.
+        if (this.stamp() === null) {
+          void this.resendVerificationEmail();
+        } else {
+          this.startCooldown();
+        }
         return;
       }
       // emailOk && !phoneOk: phone was registered but never verified
@@ -242,7 +268,53 @@ export class VerifyEmailComponent implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
+  /** Epoch ms of the last verification email the provider accepted for this account, or null. */
+  private stamp(): number | null {
+    const raw = this.store.getItem(resendStampKey(this.user?.uid ?? ''));
+    const value = raw ? Number(raw) : NaN;
+
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  /**
+   * Hold the button for whatever is left of the cooldown, and release it the second it expires.
+   *
+   * Read back from the stamp rather than counted down from a value passed in: a reload mid-window
+   * then shows the real remaining time instead of a fresh five minutes.
+   * @return {void}
+   */
+  private startCooldown(): void {
+    this.cooldownSub?.unsubscribe();
+    this.cooldownLeft = resendWaitMs(this.stamp());
+
+    if (this.cooldownLeft <= 0) {
+      this.cdr.markForCheck();
+      return;
+    }
+
+    this.cooldownSub = interval(1000).subscribe(() => {
+      this.cooldownLeft = resendWaitMs(this.stamp());
+
+      if (this.cooldownLeft <= 0) {
+        this.cooldownSub?.unsubscribe();
+      }
+
+      this.cdr.markForCheck();
+    });
+  }
+
+  /** `m:ss` left on the resend button, or '' once it may be pressed. */
+  cooldownLabel(): string {
+    return this.cooldownLeft > 0 ? formatWait(this.cooldownLeft) : '';
+  }
+
   async resendVerificationEmail() {
+    // Two guards, and both matter: `loading` stops a double click landing twice before change
+    // detection repaints, and the cooldown stops the third attempt pretending to be the first.
+    if (this.loading.email || this.cooldownLeft > 0) {
+      return;
+    }
+
     this.loading.email = true;
     try {
       if (this.auth.currentUser) {
@@ -258,6 +330,12 @@ export class VerifyEmailComponent implements OnInit, OnDestroy, AfterViewInit {
               }
             : undefined,
         );
+
+        // Stamped only AFTER the provider accepted it, which is the only evidence a client can
+        // get that the email is on its way -- delivery into an inbox is not observable from here.
+        // A rejection throws past this line, so a failed send never starts a cooldown.
+        this.store.setItem(resendStampKey(this.auth.currentUser.uid), String(Date.now()));
+        this.startCooldown();
         const message = this.translate.instant('VERIFICATION.EMAIL_SENT_SUCCESS');
         this.showSnackbar(message, SnackBarType.info, '', 5000);
       } else {
@@ -306,6 +384,7 @@ export class VerifyEmailComponent implements OnInit, OnDestroy, AfterViewInit {
   ngOnDestroy(): void {
     this.logoutSubscription?.unsubscribe();
     this.timerSubscriber?.unsubscribe();
+    this.cooldownSub?.unsubscribe();
     this.user = null;
     this.recaptchaVerifier?.clear()
   }

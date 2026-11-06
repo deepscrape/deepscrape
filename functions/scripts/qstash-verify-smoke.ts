@@ -29,8 +29,11 @@
  *   # The production ones are real; these are not.
  *   $env:QSTASH_URL="http://127.0.0.1:8090"
  *   $env:QSTASH_TOKEN="<the long token the server printed>"
- *   $env:QSTASH_CURRENT_SIGNING_KEY="sig_7kYjw48mhY7kAjqNGcy6cr29RJ6r"
- *   $env:QSTASH_NEXT_SIGNING_KEY="sig_5ZB6DVzB1wjE8S6rZ7eenA8Pdnhs"
+ *   # Both signing keys are printed by the dev server on every run. They are
+ *   # Upstash's published test-user constants, not secrets:
+ *   # upstash.com/docs/qstash/howto/local-development
+ *   $env:QSTASH_CURRENT_SIGNING_KEY="<printed by the dev server>"
+ *   $env:QSTASH_NEXT_SIGNING_KEY="<printed by the dev server>"
  *   $env:APP_ORIGIN="http://127.0.0.1:8099"
  *   bun x tsx scripts/qstash-verify-smoke.ts
  */

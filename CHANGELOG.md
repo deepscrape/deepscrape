@@ -1,3 +1,33 @@
+# [0.9.0-beta.26](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.25...v0.9.0-beta.26) (2026-11-06)
+
+
+### Bug Fixes
+
+* **auth:** only a platform admin manages other users sessions ([931178f](https://github.com/deepscrape/deepscrape/commit/931178fef44269d3e494f05d0d3cc6c9744b76c3))
+* **bff:** expose req.header() to the ported handlers ([c60c244](https://github.com/deepscrape/deepscrape/commit/c60c244181f9416ce6ee046f467c5c78471bcafb))
+* **bff:** harden request security and align streaming with Express ([31ff8a2](https://github.com/deepscrape/deepscrape/commit/31ff8a2fb0a4eb6e66def3df520d43df8afd548f))
+* **gitignore:** update BFF emulator wiring comment and adjust .env.dev path ([d9f1bb2](https://github.com/deepscrape/deepscrape/commit/d9f1bb2154fe075d4b857f3bba624fee8669e0f0))
+
+
+### Features
+
+* **ai:** let users bring their own provider keys ([8fd2496](https://github.com/deepscrape/deepscrape/commit/8fd249603a92bf867d58f7a9c218f122e90098d3))
+* **auth-ui:** shared field sizing, theme parity and route wiring ([cf9024b](https://github.com/deepscrape/deepscrape/commit/cf9024b09d3135218aa29ca54580c839b3688686))
+* **billing-ui:** workspace funding, plans and passes for the paying wallet ([6be1c87](https://github.com/deepscrape/deepscrape/commit/6be1c873d9a6d2ed2302528c32a52fe4a5dab796))
+* **billing:** one payer per request, workspace wallets, workspace plans ([f9a377f](https://github.com/deepscrape/deepscrape/commit/f9a377f89031470ab422108a7b08b1a5960bbe94))
+* **browser-sessions:** broker machine sessions through one provisioner ([ebbf11f](https://github.com/deepscrape/deepscrape/commit/ebbf11f45b98b2e9861caeaa8855c79253829c45))
+* **chatai:** pinned conversation rail in the chat workspace ([60bb4c1](https://github.com/deepscrape/deepscrape/commit/60bb4c1881d53800f5253ed68baa031947291808))
+* **deploy:** add session exec broker and tune browser-session image ([12a4bbb](https://github.com/deepscrape/deepscrape/commit/12a4bbb8a0eff5f0874912ca708e04a03bcca03c))
+* **functions:** operations, alerts and webrain tool surfaces ([1f28a09](https://github.com/deepscrape/deepscrape/commit/1f28a096f5a07821a3d04e4b003b9bb10517c9a2))
+* **hosting:** serve the CSR shell for app routes and add security headers ([0cb9ed6](https://github.com/deepscrape/deepscrape/commit/0cb9ed6be48ead96d7cb8cb92d9713ca10b0d7ad))
+* **i18n:** persist the chosen language across reloads ([698a10a](https://github.com/deepscrape/deepscrape/commit/698a10a2a732784b16923c21e94ef99dac92c9ac))
+* **security:** paginated activity, passkey probe and held sessions ([a18e04c](https://github.com/deepscrape/deepscrape/commit/a18e04c607fcf9b12454c0a394118f200a8fb661))
+* **storage:** validate storage payloads before they leave the handler ([e8f438e](https://github.com/deepscrape/deepscrape/commit/e8f438e20449e7b9fd441f25a7c50868726e8a7f))
+* **ui:** chat, dashboard and crawl work surfaces on shared helpers ([67ae773](https://github.com/deepscrape/deepscrape/commit/67ae7739faa3ce299a25eeba997f299cc4fdb7e9))
+* **ui:** machine detail, operation detail and alerts surfaces ([1e6e64c](https://github.com/deepscrape/deepscrape/commit/1e6e64cb16b1ec4d7b87c1767c53d3daab43eda6))
+* **ui:** share field sizing, card and toggle styling across surfaces ([9858e72](https://github.com/deepscrape/deepscrape/commit/9858e72c2e674f8b573b84f36e0ea18d28e29b06))
+* **verification:** finish email verification in one click ([323eb78](https://github.com/deepscrape/deepscrape/commit/323eb78ac4f6759c1cb31fc8867a89c29fe437c9))
+
 # [0.9.0-beta.2](https://github.com/deepscrape/deepscrape/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-10)
 
 

@@ -80,6 +80,14 @@
               "value": "nosniff"
             },
             {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=()"
+            },
+            {
               "key": "X-Frame-Options",
               "value": "DENY"
             }
@@ -125,6 +133,18 @@
         { "source": "/mcp-web-scraping/:rest*", "destination": "https://deepscrape.dev/mcp-web-scraping/:rest", "type": 301 }
       ],
       "rewrites": [
+        { "source": "/dashboard{,/**}", "destination": "/index.csr.html" },
+        { "source": "/settings{,/**}", "destination": "/index.csr.html" },
+        { "source": "/operations{,/**}", "destination": "/index.csr.html" },
+        { "source": "/playground{,/**}", "destination": "/index.csr.html" },
+        { "source": "/chatai{,/**}", "destination": "/index.csr.html" },
+        { "source": "/alerts{,/**}", "destination": "/index.csr.html" },
+        { "source": "/browser{,/**}", "destination": "/index.csr.html" },
+        { "source": "/machines{,/**}", "destination": "/index.csr.html" },
+        { "source": "/crawlpack{,/**}", "destination": "/index.csr.html" },
+        { "source": "/billing{,/**}", "destination": "/index.csr.html" },
+        { "source": "/service{,/**}", "destination": "/index.csr.html" },
+        { "source": "/user{,/**}", "destination": "/index.csr.html" },
         {
           "source": "**",
           "run": { "serviceId": "deepscrape-bff", "region": "us-central1" }
@@ -145,6 +165,14 @@
             {
               "key": "X-Content-Type-Options",
               "value": "nosniff"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=()"
             },
             {
               "key": "X-Frame-Options",
@@ -194,6 +222,7 @@
         { "source": "/mcp-web-scraping/:rest*", "destination": "https://deepscrape.dev/mcp-web-scraping/:rest", "type": 301 }
       ],
       "rewrites": [
+        { "source": "/admin{,/**}", "destination": "/index.csr.html" },
         {
           "source": "**",
           "run": { "serviceId": "deepscrape-bff", "region": "us-central1" }
@@ -214,6 +243,10 @@
             {
               "key": "X-Content-Type-Options",
               "value": "nosniff"
+            },
+            {
+              "key": "Permissions-Policy",
+              "value": "camera=(), microphone=(), geolocation=()"
             },
             {
               "key": "X-Frame-Options",

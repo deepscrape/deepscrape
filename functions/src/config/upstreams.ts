@@ -8,7 +8,7 @@
  * same expression:
  *
  *     env.PRODUCTION === "true"
- *       ? env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev"
+ *       ? env.API_ARACHNEFLY_URL || "https://arachne.deepscrape.dev"
  *       : "http://localhost:8080"
  *
  * Three things were wrong with that, and the repetition is what hid all three:

@@ -1,4 +1,4 @@
-import { buildModelOptions, calculateOpenAICost, chatInBatchesAI } from './aiapi.fun';
+import { buildModelOptions, calculateOpenAICost, chatInBatchesAI, isChatModel } from './aiapi.fun';
 import { sanitizeJSON } from './global.fun';
 import { AIModel, OpenAITokenDetails } from '../types';
 
@@ -145,6 +145,66 @@ describe('aiapi.fun', () => {
       );
 
       expect(options).toEqual([{ name: 'llama-3.1-8b-instant', code: 'groq' }]);
+    });
+
+    it('omits a vendor whose live catalogue holds no chat model', () => {
+      // Groq publishes its transcription and speech models on the same route as its chat ones.
+      // Offering one is a control that cannot work: the send is rejected by the vendor and reads
+      // to the user as our failure. The vendor is then reported as missing, because for a chat
+      // picker it has nothing to offer -- which is the honest answer, not an empty group.
+      const { options, missing } = buildModelOptions(
+        ['groq'],
+        { groq: ['whisper-large-v3', 'playai-tts', 'prompt-guard-2'] },
+        fallback,
+      );
+
+      expect(options).toEqual([]);
+      expect(missing).toEqual(['groq']);
+    });
+
+    it('keeps the chat models beside the ones it drops', () => {
+      const { options } = buildModelOptions(
+        ['groq'],
+        { groq: ['whisper-large-v3', 'llama-3.3-70b-versatile'] },
+        fallback,
+      );
+
+      expect(options).toEqual([{ name: 'llama-3.3-70b-versatile', code: 'groq' }]);
+    });
+  });
+
+  describe('isChatModel', () => {
+    it('keeps an ordinary chat id', () => {
+      expect(isChatModel('llama-3.3-70b-versatile')).toBeTrue();
+    });
+
+    it('rejects the ids a vendor publishes beside its chat models', () => {
+      const rejected = [
+        'whisper-large-v3',
+        'whisper-large-v3-turbo',
+        'playai-tts',
+        'canopylabs/orpheus-v1-english',
+        'meta-llama/llama-prompt-guard-2-86m',
+        'text-embedding-3-large',
+        'rerank-v3.5',
+      ];
+
+      for (const id of rejected) {
+        expect(isChatModel(id))
+          .withContext(id)
+          .toBeFalse();
+      }
+    });
+
+    it('rejects a model whose context window cannot hold a conversation', () => {
+      expect(isChatModel('tiny-512', { contextLength: 512 })).toBeFalse();
+      expect(isChatModel('big-200k', { contextLength: 200_000 })).toBeTrue();
+    });
+
+    it('keeps a model the registry has no facts for', () => {
+      // Absent is not a claim: the registry does not cover every vendor, and excluding on a
+      // missing field would empty the picker for the vendors it has never heard of.
+      expect(isChatModel('mystery-model')).toBeTrue();
     });
   });
 

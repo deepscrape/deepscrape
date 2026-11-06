@@ -389,3 +389,28 @@ export const isPlausibleApiKey = (value: unknown): value is string =>
   typeof value === "string" &&
   value.trim().length >= 16 &&
   value.trim().length <= 512
+
+/**
+ * The credential inside whatever the caller pasted.
+ *
+ * The field holds one value, but people paste the whole line out of a `.env`
+ * file -- `GROQ_API_KEY=gsk_...` -- and that string clears the length floor
+ * above, so it was stored verbatim. Every call after that sent
+ * `Authorization: Bearer GROQ_API_KEY=gsk_...` and the vendor answered 401,
+ * which reads as "your key is wrong" to everyone except whoever can see the
+ * secret. Real keys never contain a leading `NAME=`, so that prefix is the one
+ * thing worth removing; quotes and whitespace are the same paste artefact.
+ * @param {unknown} value Whatever arrived in the field.
+ * @return {string} The credential alone, or "" when the value is not a string.
+ */
+export const normaliseApiKey = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return ""
+  }
+
+  return value
+    .trim()
+    .replace(/^(?:export\s+)?[A-Za-z][A-Za-z0-9_]*\s*=\s*/, "")
+    .replace(/^["']|["']$/g, "")
+    .trim()
+}

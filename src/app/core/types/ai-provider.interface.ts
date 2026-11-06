@@ -119,6 +119,14 @@ export interface ModelFacts {
 export interface ModelCatalogue {
   models: string[];
   facts: Readonly<Record<string, ModelFacts>>;
+  /**
+   * Why the list is empty, when the server was willing to say.
+   *
+   * `401`/`403` is the provider REFUSING the key -- a wrong, expired or badly pasted credential -
+   * and it is the one cause the user can fix themselves. Without this the picker simply came back
+   * short and the only evidence was a shorter dropdown.
+   */
+  unavailable?: number | 'no-key' | 'error';
 }
 
 /**

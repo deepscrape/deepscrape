@@ -218,7 +218,35 @@ export function setAIModel(newModel: DropDownOption[]) {
 export const isRetired = (facts: ModelFacts | undefined): boolean =>
     facts?.deprecatedOn !== undefined && facts.deprecatedOn <= new Date().toISOString().slice(0, 10);
 
-/** * The models a picker may offer, and the vendors it could not offer any for.
+/** A context window under this cannot hold a conversation, whatever else a model claims. */
+const CHAT_MIN_CONTEXT = 1024;
+
+/**
+ * Whether a catalogue id can answer a chat turn at all.
+ *
+ * Vendors publish EVERYTHING they serve on one catalogue route: Groq returns two Whisper
+ * transcription models, two Orpheus text-to-speech voices and two prompt-guard classifiers beside
+ * its chat models. Listing those in a chat picker is a control that cannot work -- choosing one
+ * sends a chat completion the vendor rejects, which then reads to the user as OUR failure.
+ *
+ * Matched on the id because the catalogue carries no modality field, plus `contextLength` where the
+ * registry knows it: 512 tokens cannot hold a conversation even if the model is otherwise a chat
+ * one. Unknown facts never exclude -- the registry does not carry every vendor, and absent is not a
+ * claim (see `ModelFacts`).
+ * @param {string} id The model id as the vendor published it.
+ * @param {ModelFacts} facts What the registry knows, when it knows anything.
+ * @return {boolean} True when the id belongs in a chat picker.
+ */
+export function isChatModel(id: string, facts?: ModelFacts): boolean {
+    if (/whisper|orpheus|prompt-guard|embed|rerank|(^|[/-])tts([/-]|$)/i.test(id)) {
+        return false;
+    }
+
+    return (facts?.contextLength ?? Infinity) >= CHAT_MIN_CONTEXT;
+}
+
+/**
+ * The models a picker may offer, and the vendors it could not offer any for.
  *
  * Pure and exported so the spec can pin the rule, which is the interesting part:
  *
@@ -243,6 +271,7 @@ export const isRetired = (facts: ModelFacts | undefined): boolean =>
  * @param {readonly AiVendorId[] | null} allowed The vendors the server resolved as usable.
  * @param {Readonly<Record<string, string[]>>} live The fetched catalogue, per vendor.
  * @param {readonly AIModel[]} fallback The static list, already built by `setAIModel`.
+ * @param {Readonly<Record<string, ModelFacts>>} facts What the registry knows, per model id.
  * @return {{ options: AIModel[]; missing: AiVendorId[] }} The options, and the gaps.
  */
 export function buildModelOptions(
@@ -265,12 +294,17 @@ export function buildModelOptions(
         // shut-down OpenAI models came to be listed here by hand. The live half is left alone
         // because the VENDOR is the authority on what it serves today, and a third party's date
         // must not overrule it.
-        const ids = fromLive
+        const published = fromLive
             ? fetched
             : fallback
                 .filter(model => model.code === code)
                 .map(model => model.name)
                 .filter(name => !isRetired(facts[name]));
+
+        // A MODALITY filter applies to both halves. The vendor is the authority on what it serves
+        // today; it is not the authority on what a chat picker can use, and it publishes its
+        // transcription and speech models on the same route as its chat models.
+        const ids = published.filter(name => isChatModel(name, facts[name]));
 
         if (ids.length === 0) {
             missing.push(vendor);

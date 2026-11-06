@@ -22,8 +22,21 @@ const source = readFileSync("src/handlers/ai_handler.ts", "utf8")
 
 describe("ai_handler key selection", () => {
   it("routes every vendor key through keyFor", () => {
-    const direct = [...source.matchAll(/const apiKey = (?!await keyFor\()/g)]
+    // `resolveVendorKey` is an ALLOWED wrapper: it turns `keyFor`'s throw for a free caller with
+    // no key into a 402 the UI can explain, rather than the 500 reading "Handler produced no
+    // response" that a missing key used to produce. It must itself call `keyFor`, which the next
+    // test pins -- without that, this exemption would let a direct platform-key read through
+    // under a new name.
+    const direct = [...source.matchAll(/const apiKey = (?!await (?:keyFor|resolveVendorKey)\()/g)]
     assert.equal(direct.length, 0, `${direct.length} handler(s) read a platform key directly`)
+  })
+
+  it("keeps the resolveVendorKey exemption honest", () => {
+    const start = source.indexOf("const resolveVendorKey")
+    assert.ok(start >= 0, "resolveVendorKey is missing from ai_handler")
+
+    const body = source.slice(start, start + 1600)
+    assert.ok(body.includes("await keyFor("), "resolveVendorKey no longer routes through keyFor")
   })
 
   it("still detects a direct platform-key read", () => {

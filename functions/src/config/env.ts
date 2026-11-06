@@ -223,7 +223,7 @@ const getEnv = () => {
     UPSTASH_REDIS_REST_PASSWORD: getConfigValue("UPSTASH_REDIS_REST_PASSWORD"),
 
     // API configuration
-    API_ARACHNEFLY_URL: getConfigValue("API_ARACHNEFLY_URL", "https://arachnefly.fly.dev"),
+    API_ARACHNEFLY_URL: getConfigValue("API_ARACHNEFLY_URL", "https://arachne.deepscrape.dev"),
     API_CRAWL4AI_URL: getConfigValue("API_CRAWL4AI_URL", "https://crawlagent.fly.dev"),
 
     // webrain MCP worker (the Rust scraping engine).

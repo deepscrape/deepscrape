@@ -277,6 +277,26 @@ function isEmulatorSecretPath(secretPath: string): boolean {
 }
 
 /**
+ * Whether this path must be refused because it is an emulator path in production.
+ *
+ * An `_emulator_secrets/` path is a Firestore document, and Firestore is not where
+ * production credentials live. A record that somehow carries one is either stale data
+ * from a machine that ran against the emulator or a client that wrote the field, so
+ * reading it would hand back an emulator-era value as if it were a secret -- the one
+ * outcome worse than failing. Pure and exported so the rule is testable without
+ * flipping the process environment.
+ * @param {string} secretPath The full secret path as stored on the record.
+ * @param {boolean} isProduction Whether this process is a production deployment.
+ * @return {boolean} True only when the path must not be served.
+ */
+export function emulatorPathRefused(
+    secretPath: string,
+    isProduction: boolean
+): boolean {
+    return isProduction && isEmulatorSecretPath(secretPath)
+}
+
+/**
  * toEmulatorSecretPath
  * @param {*} secretId
  * @return {*}
@@ -595,6 +615,15 @@ async function retireSupersededVersions(
  * @param {*} secretPath
  */
 export async function getSecretFromManager(secretPath: string) {
+    // Loud, because silence here reads as "you have no key" to a user who does have one.
+    // The path is an identifier, never a credential, so it is safe to name in the message.
+    if (emulatorPathRefused(secretPath, env.IS_PRODUCTION)) {
+        throw new Error(
+            `Refusing to read an emulator secret path in production: 
+            ${secretPath}`
+        )
+    }
+
     if (isEmulatorSecretPath(secretPath)) {
         return readEmulatorSecret(secretPath)
     }
@@ -619,6 +648,13 @@ export type SecretPurgeResult = {
  */
 export async function purgeSecretAndAllRevisions(secretPath: string):
     Promise<SecretPurgeResult> {
+    // Reported as already absent rather than thrown: this runs on the account-erasure and
+    // key-removal paths, where blocking would be worse than the lie -- such a secret cannot
+    // exist in production, so "nothing was stored" is the truth.
+    if (emulatorPathRefused(secretPath, env.IS_PRODUCTION)) {
+        return {secretPath, versionsDestroyed: 0, secretDeleted: true}
+    }
+
     if (isEmulatorSecretPath(secretPath)) {
         return deleteEmulatorSecret(secretPath)
     }

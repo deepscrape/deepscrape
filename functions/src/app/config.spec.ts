@@ -2,7 +2,7 @@
 /* eslint-disable object-curly-spacing */
 import { strict as assert } from "node:assert"
 import { describe, it } from "node:test"
-import { versionsToRetire } from "./config"
+import { versionsToRetire, emulatorPathRefused } from "./config"
 
 /**
  * The two ways rotation hygiene fails, and both are silent.
@@ -70,6 +70,42 @@ describe("versionsToRetire", () => {
         assert.deepEqual(
             versionsToRetire([{name: null}, {state: "ENABLED"}], "keep"),
             [],
+        )
+    })
+})
+
+/**
+ * The one secret path production must never serve.
+ *
+ * A stored `_emulator_secrets/` path points at a Firestore document, so serving it in
+ * production would return an emulator-era value as if it were a real credential. The
+ * guard is a pure function so the rule is pinned here rather than by mutating the
+ * process environment, which `env` reads once at import.
+ */
+describe("emulatorPathRefused", () => {
+    it("refuses an emulator path in production", () => {
+        assert.equal(
+            emulatorPathRefused("emulator-secret://groq", true),
+            true,
+        )
+    })
+
+    it("serves an emulator path outside production", () => {
+        // The emulator is the only place such a path is legitimate.
+        assert.equal(
+            emulatorPathRefused("emulator-secret://groq", false),
+            false,
+        )
+    })
+
+    it("serves a real secret path in production", () => {
+        // The guard must not shadow the normal path, or every key in production breaks.
+        assert.equal(
+            emulatorPathRefused(
+                "projects/p/secrets/deepscrape-byok-groq/versions/latest",
+                true,
+            ),
+            false,
         )
     })
 })

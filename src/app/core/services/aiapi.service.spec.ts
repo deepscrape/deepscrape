@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 
-import { AiAPIService } from './aiapi.service';
-import { getTestProviders } from 'src/app/testing';
+import { AiAPIService, withCacheBreakpoint } from './aiapi.service';
+import { getTestProviders, HttpTestingController } from 'src/app/testing';
 import { vendorForModel } from '../functions';
 
 describe('AiserviceService', () => {
@@ -39,6 +39,72 @@ describe('AiserviceService', () => {
     for (const [vendor, path] of Object.entries(endpoints)) {
       expect(path).toBe(`/api/${vendor}/chat/completions`);
     }
+  });
+
+  /**
+   * A rejected key must survive the HTTP boundary.
+   *
+   * The endpoint answers 200 with an empty list and a reason, so dropping the reason leaves a
+   * user with a short dropdown and no explanation -- the exact state that reads as "this product
+   * is broken". This pins the relay, not the wording.
+   */
+  it('relays the reason a catalogue came back empty', () => {
+    const http = TestBed.inject(HttpTestingController);
+    let unavailable: unknown;
+
+    service.fetchModels('groq').subscribe(catalogue => {
+      unavailable = catalogue.unavailable;
+      expect(catalogue.models).toEqual([]);
+    });
+
+    const req = http.expectOne('/api/models/groq');
+    req.flush({ models: [], facts: {}, unavailable: 401 });
+    http.verify();
+
+    expect(unavailable).toBe(401);
+  });
+});
+
+/**
+ * The Claude caching contract.
+ *
+ * A breakpoint is the only thing that makes a repeated prefix cheaper, and its absence is silent:
+ * the request still succeeds and simply bills full price on every tool round. So the SHAPE is
+ * pinned here rather than trusted, because no gate can observe a bill.
+ */
+describe('withCacheBreakpoint', () => {
+  it('marks the last block of the last turn and leaves the rest untouched', () => {
+    const marked = withCacheBreakpoint([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+      { role: 'user', content: 'again' },
+    ]);
+
+    expect(marked[2].content).toEqual([
+      { type: 'text', text: 'again', cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(marked[0]).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('marks the text block of an image turn, which is last by contract', () => {
+    const marked = withCacheBreakpoint([{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'url', url: 'https://example.test/a.png' } },
+        { type: 'text', text: 'what is this' },
+      ],
+    }]);
+
+    expect(marked[0].content).toEqual([
+      { type: 'image', source: { type: 'url', url: 'https://example.test/a.png' } },
+      { type: 'text', text: 'what is this', cache_control: { type: 'ephemeral' } },
+    ]);
+  });
+
+  it('sends an empty turn unmarked rather than inventing a block', () => {
+    expect(withCacheBreakpoint([])).toEqual([]);
+    expect(withCacheBreakpoint([{ role: 'user', content: '' }])[0].content)
+      .toEqual([{ type: 'text', text: '', cache_control: { type: 'ephemeral' } }]);
   });
 });
 

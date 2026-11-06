@@ -17,6 +17,45 @@ import { mergeMap } from 'rxjs/internal/operators/mergeMap';
 import { switchMap } from 'rxjs/internal/operators/switchMap';
 import { AuthService } from './auth.service';
 
+/**
+ * Mark the final content block of a conversation as an Anthropic cache breakpoint.
+ *
+ * Anthropic caches every block BEFORE a marker, so the last block is the only one needed: it
+ * covers the tool catalogue and system prompt sent alongside the messages plus every earlier
+ * turn, in one cache write. That matters because a conversation is re-sent in full on each tool
+ * round -- twelve rounds used to mean twelve full-price prompts, and a cache read costs 0.1x.
+ *
+ * A plain string has to become a one-block array, because a marker only attaches to a block.
+ * Below the model's minimum cacheable length the marker is ignored rather than rejected, so
+ * this is safe on a short turn; it simply does not cache.
+ * @param {Array} messages The provider-side conversation.
+ * @return {Array} The same conversation with a breakpoint on its last block.
+ */
+export const withCacheBreakpoint = (
+  messages: ReadonlyArray<{ role: string, content: unknown }>,
+): ReadonlyArray<{ role: string, content: unknown }> => {
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  const last = messages[messages.length - 1];
+  const blocks = typeof last.content === 'string' ?
+    [{ type: 'text', text: last.content }] :
+    Array.isArray(last.content) ? [...last.content] : [];
+
+  // Nothing to attach a marker to. Sending the turn unmarked is correct, just uncached.
+  if (blocks.length === 0) {
+    return messages;
+  }
+
+  blocks[blocks.length - 1] = {
+    ...(blocks[blocks.length - 1] as object),
+    cache_control: { type: 'ephemeral' },
+  };
+
+  return [...messages.slice(0, -1), { ...last, content: blocks }];
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -91,7 +130,7 @@ export class AiAPIService {
    * @return {Observable<ModelCatalogue>} The ids and facts, empty when unavailable.
    */
   fetchModels(vendor: OpenAiChatVendor | 'anthropic'): Observable<ModelCatalogue> {
-    return this.http.get<{ models?: unknown; facts?: unknown }>(`${API_MODELS}/${vendor}`, {
+    return this.http.get<{ models?: unknown; facts?: unknown; unavailable?: unknown }>(`${API_MODELS}/${vendor}`, {
       headers: new HttpHeaders({
         // The CALLER's token, in the header `isJwtAuth` reads. The provider key is the
         // BFF's to resolve with `keyFor`, exactly as on the chat path.
@@ -103,6 +142,9 @@ export class AiAPIService {
           ? body.models.filter((id): id is string => typeof id === 'string')
           : [],
         facts: this.readFacts(body?.facts),
+        // Relayed, not swallowed: `401` here is the provider rejecting the caller's own key, and
+        // the picker is the only place that can say so.
+        unavailable: body?.unavailable as ModelCatalogue['unavailable'],
       })),
       catchError(() => of({ models: [], facts: {} })),
     )
@@ -261,7 +303,7 @@ export class AiAPIService {
     })
   }
 
-  sendToClaudeAI(content: string | { role: string, content: unknown }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string, tools?: readonly AiToolSpec[]): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
+  sendToClaudeAI(content: string | { role: string, content: unknown }[], modelName: string = 'claude-3-5-sonnet-20241022', sys?: string, tools?: readonly AiToolSpec[], extra?: Record<string, unknown>): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
     // The provider is not a decision on this path -- the method IS Claude. The old
     // switch call returned these same two fields unchanged, and the fourth element
     // of its tuple was never read here.
@@ -290,17 +332,30 @@ export class AiAPIService {
       model, //  claude-3-5-sonnet-20240620
       "max_tokens": 4096,
       system,
-      "messages": messages,
+      // Marked here rather than in `buildHistory`, because the marker is a property of the
+      // REQUEST: every round re-sends a growing prefix, and only the vendor that charges for a
+      // repeated prefix has any use for it.
+      "messages": withCacheBreakpoint(messages),
       // Omitted rather than sent empty, for the reason `askClaudeOnce` gives: an
       // empty array is rejected, and re-offering tools on the answering round
       // would invite another call instead of an answer.
       ...(tools && tools.length > 0 ? { tools: anthropicTools(tools) } : {}),
-      stream: true
+      stream: true,
+      // Vendor-specific extras (reasoning switches). Last so a caller could correct a default
+      // above, and empty for every vendor that documents none -- see `reasoningParams`.
+      ...(extra ?? {}),
     }
 
 
     let previousText = '';
-    let usage: { "prompt_tokens": number, "completion_tokens": number } = { prompt_tokens: 0, completion_tokens: 0 }
+    // Anthropic splits one round's numbers across two events: `message_start` carries the input
+    // side, `message_delta` the output side. The input side is captured here and folded in when
+    // the round ends, so the round is measured exactly once.
+    let promptTokens = 0;
+    let cacheReadTokens = 0;
+    // Anthropic reports cache reads under its own name. It is carried through so the caller can
+    // show what the cache saved instead of presenting a full-price prompt that was not one.
+    let usage: { "prompt_tokens": number, "completion_tokens": number, "cache_read_input_tokens": number } = { prompt_tokens: 0, completion_tokens: 0, cache_read_input_tokens: 0 }
 
     return this.http.post(apiEndpoint, body, {
       headers,
@@ -368,7 +423,9 @@ export class AiAPIService {
       })
 
     ).pipe(
-      scan((acc: any, chunk: claudeAiApiStreamData) => {
+      // Typed loosely on purpose: with no seed, `scan` emits the FIRST event unreduced, so the
+      // emitted shape is the parsed event as well as the result object this reducer returns.
+      scan<any, any>((acc: any, chunk: claudeAiApiStreamData) => {
 
         // Tool traffic is passed through UNTOUCHED rather than interpreted: the
         // accumulators in `ai-tools.fun.ts` own assembly, and a `partial_json`
@@ -389,18 +446,34 @@ export class AiAPIService {
           // console.log(`chunk type: `, chunk.type, ' role: ' + chunk?.message?.role, 'chunk text: ', chunk.delta?.text, 'chunk usage', chunk?.usage)
           // const newText = typeof acc?.content === 'string' ? acc?.content + chunk.delta?.text : chunk.delta?.text
           return { content: chunk.delta?.text, role: chunk?.message?.role, usage: chunk?.usage }
+        } else if (chunk.type === 'message_start') {
+          // Captured, NOT emitted. The caller SUMS usage across emissions and across rounds, so
+          // reporting the input side here would re-count the same prompt on every following
+          // `content_block_*` event -- four or five times per turn. One measurement per round,
+          // on the event that ends it.
+          //
+          // This branch keys on the CHUNK. It keyed on `acc?.type` before, which could never be
+          // true: `message_start` is emitted raw by `scan` and every branch here replaces the
+          // accumulator with a result object that has no `type`. That is why `prompt_tokens`
+          // stayed 0 on every Claude turn.
+          const reported = chunk?.message?.usage
+          promptTokens = reported?.input_tokens || 0
+          cacheReadTokens = reported?.cache_read_input_tokens || 0
+          return { content: '', role: chunk?.message?.role, usage: null }
         } else if (chunk.type === 'message_delta') {
+          usage.prompt_tokens = promptTokens
           usage.completion_tokens = chunk?.usage?.output_tokens
+          usage.cache_read_input_tokens = cacheReadTokens
           return {
             content: chunk.delta?.text, role: chunk?.usage, usage
           }
-        } else if (acc?.type === 'message_start') {
-          usage.prompt_tokens = acc?.message?.usage?.input_tokens || 0
-          usage.completion_tokens = acc?.message?.usage?.output_tokens || 0
-          return { content: '', role: acc?.message?.role, usage }
-        } else if (acc?.type === 'message_start') {
-          return acc
         }
+
+        // `ping` carries no text, and `message_stop` arrives as the literal "{}" from the mapper
+        // above, so neither has a usable `type`. Nothing is emitted for them -- and `usage` is
+        // withheld here because `message_stop` follows `message_delta`, so repeating the filled
+        // object would have the caller sum the same round twice.
+        return { content: '', role: null, usage: null }
 
       }),
       map((response: { content: string, role: string, usage: any | null }) => ({
@@ -424,7 +497,7 @@ export class AiAPIService {
     // return this.subjectClaudeAI.asObservable()
   }
 
-  sendToOpenAI(content: string | { role: string, content: unknown }[], modelName: string = 'gpt-4o-mini', sys?: string, tools?: readonly AiToolSpec[], vendor?: OpenAiChatVendor): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
+  sendToOpenAI(content: string | { role: string, content: unknown }[], modelName: string = 'gpt-4o-mini', sys?: string, tools?: readonly AiToolSpec[], vendor?: OpenAiChatVendor, extra?: Record<string, unknown>): Observable<{ content: string, role: any, usage: any | null, event?: unknown, toolCalls?: unknown }> {
 
     // Every OpenAI-compatible vendor speaks the same wire protocol, so the vendor is the
     // whole decision: it picks the endpoint and the key, and nothing else. Taken from the
@@ -466,6 +539,9 @@ export class AiAPIService {
       },
       "stop": null,
       "top_p": 1,
+      // Vendor-specific extras (reasoning switches). Last so a caller could correct a default
+      // above, and empty for every vendor that documents none -- see `reasoningParams`.
+      ...(extra ?? {}),
     }
 
     let previousText = '';

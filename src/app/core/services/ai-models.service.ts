@@ -4,10 +4,13 @@ import { forkJoin } from 'rxjs/internal/observable/forkJoin';
 import { of } from 'rxjs/internal/observable/of';
 import { catchError } from 'rxjs/internal/operators/catchError';
 import { map } from 'rxjs/internal/operators/map';
-import { AIModel, AiVendorId, ModelFacts } from '../types';
+import { TranslateService } from '@ngx-translate/core';
+import { AIModel, AiVendorId, ModelCatalogue, ModelFacts } from '../types';
 import { buildModelOptions, setAIModel } from '../functions';
+import { SnackBarType } from '../components/snackbar/snackbar.component';
 import { AiAPIService } from './aiapi.service';
 import { AiKeysService } from './ai-keys.service';
+import { SnackbarService } from './snackbar.service';
 
 /**
  * The models every picker offers, in one place.
@@ -33,6 +36,8 @@ export class AiModelsService {
   private readonly ai = inject(AiAPIService);
   private readonly aiKeys = inject(AiKeysService);
   private readonly platformId = inject(PLATFORM_ID);
+  private readonly snackbar = inject(SnackbarService);
+  private readonly translate = inject(TranslateService);
 
   private readonly modelsState = signal<AIModel[]>([]);
   private readonly unlistedState = signal<AiVendorId[]>([]);
@@ -129,8 +134,42 @@ export class AiModelsService {
 
         this.factsState.set(facts);
         this.apply(fallback, live, facts);
+        this.warnRejectedKeys(pairs);
       });
     });
+  }
+
+  /**
+   * Tell the user which vendors refused their key.
+   *
+   * The catalogue answers 200 with an empty list for every failure, by design, so a rejected key
+   * arrived as a shorter dropdown and nothing else -- the exact state where a user concludes the
+   * product is broken. `401`/`403` is the one reason they can ACT on, so it is the only one that
+   * earns a snackbar; "no-key" and a vendor outage already have a place in the picker's own
+   * notice, and a warning for something the user cannot fix is noise.
+   *
+   * `load()` runs once per page life, so this fires at most once per vendor without needing a
+   * dedupe map.
+   * @param {ReadonlyArray<readonly [string, ModelCatalogue]>} pairs The catalogues, per vendor.
+   * @return {void}
+   */
+  private warnRejectedKeys(
+    pairs: ReadonlyArray<readonly [string, ModelCatalogue]>,
+  ): void {
+    const rejected = pairs
+      .filter(([, catalogue]) => catalogue.unavailable === 401 || catalogue.unavailable === 403)
+      .map(([vendor]) => vendor);
+
+    if (rejected.length === 0) {
+      return;
+    }
+
+    this.snackbar.showSnackbar(
+      this.translate.instant('AI_KEYS.KEY_REJECTED', { vendors: rejected.join(', ') }),
+      SnackBarType.warning,
+      '',
+      8000,
+    );
   }
 
   /**

@@ -15,6 +15,7 @@ import {
   isAiVendorId,
   isPaidPlan,
   isPlausibleApiKey,
+  normaliseApiKey,
   resolveAiKeySource,
 } from "./user-ai-settings.domain"
 
@@ -159,6 +160,33 @@ describe("isPlausibleApiKey", () => {
   it("does not try to guess a vendor's format", () => {
     // A format regex that rejects a valid new key has no workaround for the user.
     assert.equal(isPlausibleApiKey("not-a-known-prefix-but-long-enough"), true)
+  })
+})
+
+describe("normaliseApiKey", () => {
+  it("takes the credential out of a pasted env line", () => {
+    // The reported defect: this string cleared the length floor and was stored,
+    // so every call carried `Bearer GROQ_API_KEY=gsk_...` and the vendor said 401.
+    assert.equal(normaliseApiKey("GROQ_API_KEY=gsk_abc123"), "gsk_abc123")
+    assert.equal(normaliseApiKey("export GROQ_API_KEY=gsk_abc123"), "gsk_abc123")
+    assert.equal(normaliseApiKey("GROQ_API_KEY=\"gsk_abc123\""), "gsk_abc123")
+  })
+
+  it("drops the whitespace and quotes a paste brings with it", () => {
+    assert.equal(normaliseApiKey("  \"gsk_abc123\"\n"), "gsk_abc123")
+  })
+
+  it("leaves a bare key exactly as it was", () => {
+    assert.equal(normaliseApiKey("gsk_abc123"), "gsk_abc123")
+    // No `=` at all, so nothing is stripped even though it looks like a name.
+    assert.equal(normaliseApiKey("not-a-known-prefix-but-long-enough"),
+      "not-a-known-prefix-but-long-enough")
+  })
+
+  it("returns an empty string for anything that is not a string", () => {
+    assert.equal(normaliseApiKey(null), "")
+    assert.equal(normaliseApiKey(12345), "")
+    assert.equal(normaliseApiKey({}), "")
   })
 })
 

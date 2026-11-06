@@ -65,6 +65,44 @@ export const keyFor = async (
     return userKey ?? platformKey
 }
 
+/**
+ * A vendor key, or a 402 when there is none to use.
+ *
+ * `keyFor` throws for a free caller with no key of their own, and BOTH callers awaited it
+ * OUTSIDE their try block -- so that throw escaped the handler, nothing was written, and
+ * `toResponse` in the BFF turned it into a 500 reading "Handler produced no response". A
+ * missing key was therefore indistinguishable from a dead provider, which is exactly the
+ * report that reached this file.
+ *
+ * 402 rather than 401 is deliberate: the chat maps 402 to "add credits or your own key",
+ * while a 401 is the shape an expired session takes and can trip sign-out handling.
+ * @param {*} req The bridged request.
+ * @param {*} res The bridged response, written to only when there is no key.
+ * @param {*} vendorId The vendor whose key is wanted.
+ * @param {string} platformKey The platform fallback, possibly empty.
+ * @return {Promise<string | null>} The key, or null once 402 has been answered.
+ */
+const resolveVendorKey = async (
+    req: Request,
+    res: Response,
+    vendorId: ProviderKeyId,
+    platformKey: string,
+): Promise<string | null> => {
+    try {
+        const key = await keyFor(req, vendorId, platformKey)
+        if (key) {
+            return key
+        }
+    } catch (error) {
+        console.error(`Key resolution threw for ${vendorId}:`, error)
+    }
+
+    // Reaching here means the caller has no usable key AND the platform has none configured.
+    // That is a setup problem they can act on, not a provider failure.
+    res.status(402).json({ error: `no-key-for-${vendorId}` })
+    return null
+}
+
 const toSingleParam = (value: string | string[] | undefined): string =>
     Array.isArray(value) ? (value[0] || "") : (value || "")
 
@@ -240,7 +278,10 @@ export const jinaAICrawl = async (req: Request, res: Response) => {
 
 export const anthropicAICore = async (req: Request, res: Response) => {
     const apiUrl = "https://api.anthropic.com/v1/messages"
-    const apiKey = await keyFor(req, "anthropic", env.ANTHROPIC_API_KEY)
+    const apiKey = await resolveVendorKey(req, res, "anthropic", env.ANTHROPIC_API_KEY)
+    if (!apiKey) {
+        return
+    }
     // console.log(apiKey,)
     try {
         const fetchOptions: RequestInit = {
@@ -482,7 +523,10 @@ export const chatCompletionsCore = (vendor: OpenAiVendor) => {
     const { chat, key } = VENDOR_WIRE[vendor]
 
     return async (req: Request, res: Response): Promise<void> => {
-        const apiKey = await keyFor(req, vendor, key)
+        const apiKey = await resolveVendorKey(req, res, vendor, key)
+        if (!apiKey) {
+            return
+        }
         try {
             const apiResponse = await fetch(chat, {
                 method: "POST",
@@ -494,7 +538,16 @@ export const chatCompletionsCore = (vendor: OpenAiVendor) => {
             })
 
             if (!apiResponse.ok) {
-                throw new Error(`API error: ${apiResponse.statusText}`)
+                // The vendor ANSWERED -- it just said no. Relaying its own status and its own body
+                // is what turns "Failed to connect to groq API", which reads as our network being
+                // down, into the vendor's "model_not_found" (or 401) that names the real problem.
+                // Capped, because an error page can be megabytes and this body goes to a browser.
+                const detail = (await apiResponse.text()).slice(0, 2000)
+                res
+                    .status(apiResponse.status)
+                    .type("application/json")
+                    .send(detail || JSON.stringify({error: apiResponse.statusText}))
+                return
             }
 
             if (!apiResponse.body) {
@@ -503,8 +556,10 @@ export const chatCompletionsCore = (vendor: OpenAiVendor) => {
 
             relayChatResponse(apiResponse, res)
         } catch (error) {
+            // Only a genuine FETCH failure reaches here now -- DNS, egress, timeout. An upstream
+            // that answered with an error status was relayed above, not flattened into this line.
             console.error("Error:", error)
-            res.status(500).json({ error: `Failed to connect to ${vendor} API` })
+            res.status(502).json({ error: `Failed to reach ${vendor} API` })
         }
     }
 }

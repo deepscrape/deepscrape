@@ -104,6 +104,21 @@ describe('AppUserLayoutComponent', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it('recognises the chat screen on the org-scoped url as well as the bare one', () => {
+    // `appPageRoutes` is mounted in BOTH trees, so the chat answers on `/chatai` and on
+    // `/{orgId}/chatai`. The prefix test this replaces was true only for the bare form: on every
+    // org-scoped url the platform sidebar rendered beside the chat's own rail, two indexes for one
+    // screen, and the wide inset squeezed the conversation.
+    const isChat = (url: string) => (component as any).isChatUrl(url);
+
+    expect(isChat('/chatai')).toBeTrue();
+    expect(isChat('/globex/chatai')).toBeTrue();
+    expect(isChat('/globex/chatai?org=globex#top')).toBeTrue();
+    // Not a prefix match: a different page whose name merely starts the same way.
+    expect(isChat('/globex/chatrail')).toBeFalse();
+    expect(isChat('/globex/dashboard')).toBeFalse();
+  });
+
   it('ngOnDestroy should unsubscribe known subscriptions', () => {
     const logoutSubscription = jasmine.createSpyObj('Subscription', ['unsubscribe']);
     const orgLoadSubscription = jasmine.createSpyObj('Subscription', ['unsubscribe']);

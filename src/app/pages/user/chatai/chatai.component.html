@@ -5,10 +5,11 @@
   Four decisions worth keeping, because each replaces something that read as a
   mistake rather than a style:
 
-  1. The model selector is a TOP BAR, not the row above the composer. It sat
-     between the transcript and the input, where it read as a field belonging to
-     the message being typed. It opens DOWNWARD now that it is at the top; the old
-     `position="top"` existed only because a menu at the bottom of the page clips.
+  1. Everything that shapes the request lives in the composer: the model, the mode,
+     the effort and the tools sit on one row under the input, in the order the
+     request is built, so "what will this turn do" has exactly one place to look.
+     The bar above the transcript keeps only the way back into the index, the
+     open conversation's name, and the notices below.
   2. User and assistant bubbles carry different corner radii (`rounded-br-md` /
      `rounded-bl-md`), which is how both sides stay distinguishable without a name
      label on every row.
@@ -25,110 +26,290 @@
   Every sentence is a `CHAT.*` key. The original restyle added none; the scroll pill, the two run
   statuses and the tools panel each added one, at the price of five locale files apiece.
 -->
-<div class="mx-auto flex min-h-0 w-full max-w-3xl grow flex-col p-4 2xl:max-w-4xl">
+<!--
+  A definite height, which is the whole reason the composer sits at the bottom.
 
-  <div class="mb-4 flex items-center justify-end gap-2">
-    <!-- Stored conversations, newest first. Hidden when there are none: the same rule the New
-         chat button follows, so the bar never offers a control that opens to nothing.
-         Titles are user text, so they are interpolated (escaped) and already capped in
-         `sessionTitle`; the delete button carries its own accessible name because the glyph
-         alone names nothing. -->
-    @if (history().length) {
-      <details class="group relative">
-        <summary
-          class="flex cursor-pointer list-none items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-gray5 transition-colors hover:bg-slate-100 [&::-webkit-details-marker]:hidden dark:text-gray3 dark:hover:bg-gray6">
-          {{ 'CHAT.SESSIONS' | translate }}
-          <span
-            class="rounded-full bg-cyan-700/10 px-1.5 text-[11px] text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300">{{ history().length }}</span>
-        </summary>
-        <ul
-          class="absolute right-0 z-20 mt-1 flex max-h-72 w-80 flex-col gap-0.5 overflow-y-auto rounded-xl border border-gray2 bg-white p-1.5 shadow-lg dark:border-gray5 dark:bg-gray6">
-          @for (session of history(); track session.id) {
-            <li class="flex items-center gap-1">
-              @if (renamingId() === session.id) {
-                <input
-                  type="text"
-                  [ngModel]="renameDraft()"
-                  (ngModelChange)="renameDraft.set($event)"
-                  [ngModelOptions]="{ standalone: true }"
-                  (keydown.enter)="commitRename(session.id)"
-                  (keydown.escape)="cancelRename()"
-                  (blur)="commitRename(session.id)"
-                  [attr.aria-label]="'CHAT.RENAME' | translate"
-                  class="min-w-0 grow rounded-lg border border-gray2 bg-white px-2 py-1 text-xs text-gray6 outline-none focus:border-cyan-600 dark:border-gray5 dark:bg-gray5 dark:text-gray2" />
-              } @else {
-                <button
-                  type="button"
-                  [class]="session.id === activeId()
-                    ? 'min-w-0 grow truncate rounded-lg px-2 py-1 text-left text-xs font-medium text-cyan-800 transition-colors hover:bg-slate-100 dark:text-cyan-300 dark:hover:bg-gray5'
-                    : 'min-w-0 grow truncate rounded-lg px-2 py-1 text-left text-xs text-gray6 transition-colors hover:bg-slate-100 dark:text-gray2 dark:hover:bg-gray5'"
-                  [attr.aria-current]="session.id === activeId() ? 'true' : null"
-                  (click)="openSession(session.id)">{{ session.title }}</button>
-              }
-              <!-- When it last moved. The list spans days and a row with no date cannot be
-                   oriented in; `at` was already stored and never shown. -->
-              <span class="shrink-0 text-[11px] text-gray5 dark:text-gray3">{{ session.at | date: 'shortDate' }}</span>
-              <!-- A button rather than a double-click on the title: a keyboard user cannot
-                   double-click, so an invisible gesture would be the only way in. -->
-              <button
-                type="button"
-                class="grid size-8 shrink-0 place-items-center rounded-lg text-xs text-gray5 transition-colors hover:bg-slate-100 hover:text-gray6 dark:text-gray3 dark:hover:bg-gray5 dark:hover:text-gray2"
-                [attr.aria-label]="('CHAT.RENAME' | translate) + ': ' + session.title"
-                (click)="startRename(session)">
-                <span aria-hidden="true">&#9998;</span>
-              </button>
-              <button
-                type="button"
-                class="grid size-8 shrink-0 place-items-center rounded-lg text-xs text-gray5 transition-colors hover:bg-rose-500/10 hover:text-rose-700 dark:text-gray3 dark:hover:text-rose-300"
-                [attr.aria-label]="('CHAT.DELETE_SESSION' | translate) + ': ' + session.title"
-                (click)="deleteSession(session.id)">
-                <span aria-hidden="true">&times;</span>
-              </button>
-            </li>
-          }
-        </ul>
-      </details>
-    }
+  Every child below is `min-h-0` + `flex-1`, and none of that does anything while the root is
+  content-sized: the transcript grew to its content, `overflow-y-auto` never had a box to scroll,
+  and the composer was pushed below the fold on any conversation longer than the screen. The page
+  scrolled instead of the transcript.
 
-    <!-- What this assistant can actually do for THIS caller, read from `availableTools(paid)` --
-         the array the request already offers the model -- so the panel and the offer list cannot
-         disagree. `<details>` rather than a popover: it is keyboard-operable and announces its own
-         expanded state, which a hand-rolled menu has to re-earn. Names only; a tool name is an
-         identifier and stays untranslated, the same rule the transcript chip follows. -->
-    <details class="group relative">
-      <summary
-        class="flex cursor-pointer list-none items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-gray5 transition-colors hover:bg-slate-100 [&::-webkit-details-marker]:hidden dark:text-gray3 dark:hover:bg-gray6">
-        {{ 'CHAT.TOOLS' | translate }}
-        <span
-          class="rounded-full bg-cyan-700/10 px-1.5 text-[11px] text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300">{{ offered().length }}</span>
-      </summary>
-      <ul
-        class="absolute right-0 z-20 mt-1 flex max-h-64 w-64 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-gray2 bg-white p-2 shadow-lg dark:border-gray5 dark:bg-gray6">
-        @for (tool of offered(); track tool.name) {
-          <li
-            class="rounded-full bg-cyan-700/10 px-2 py-0.5 text-[11px] font-medium text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300">
-            <code>{{ tool.name }}</code>
-          </li>
-        }
-      </ul>
-    </details>
+  `100dvh` rather than `100vh` because a phone's URL bar collapses: `100vh` keeps the taller
+  measure, so the last line of the composer hides behind the browser chrome until the user scrolls.
+  The 5rem is the fixed `h-20` header the layout offsets the page by (`mt-20`); subtracting it is
+  what makes this the height of the visible area rather than of the window.
+-->
+<div class="flex h-[calc(100dvh-5rem)] min-h-0 w-full overflow-hidden">
 
-    <!-- Offered only when there is something to clear, so it never reads as a control that
-         does nothing. It is added BEFORE the picker rather than switching the row to
-         `justify-between`, which would have moved the picker left on every empty transcript. -->
-    @if (messages().length) {
+  <!--
+    The conversation rail.
+
+    A sibling of the app's own nav rather than a second global sidebar: which conversations exist
+    is PAGE state, and a global rail that emptied on every other route would be a lie about where
+    it lives. Inline at `lg` and an overlay below it, because a rail that stays inline on a phone
+    squeezes the conversation instead of covering it. Width rather than a transform drives the
+    collapse, so the transcript slides over rather than jumping a fixed step.
+  -->
+  <aside
+    [class]="railOpen()
+      ? 'fixed inset-y-0 left-0 z-40 flex w-64 max-w-[85vw] shrink-0 flex-col top-20 border-r border-gray2 bg-gray-50 transition-all duration-300 ease-out lg:static lg:z-auto dark:border-gray5 dark:bg-gray-900'
+      : 'fixed inset-y-0 left-0 z-40 flex w-64 max-w-[85vw] shrink-0 -translate-x-full top-20 flex-col overflow-hidden border-r border-gray2 bg-gray-50 transition-all duration-300 ease-out lg:static lg:z-auto lg:w-0 lg:translate-x-0 lg:border-r-0 dark:border-gray5 dark:bg-gray-900'"
+    [attr.aria-hidden]="railOpen() ? null : 'true'"
+    [attr.inert]="railOpen() ? null : ''">
+
+    <!-- Header: the way out, what this panel is, and the way to fold it. Two round controls, and
+         they answer different questions: Back returns to whatever page sent the user here, Home
+         goes to the dashboard, and only Home is guaranteed to work when the user arrived from a
+         bookmark or a shared link and has no history to go back through. -->
+    <div class="flex items-center gap-1 px-2 pb-1 pt-3">
       <button
         type="button"
-        class="rounded-lg px-2 py-1.5 text-xs font-medium text-gray5 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:text-gray3 dark:hover:bg-gray6"
-        [disabled]="streaming()"
-        (click)="newChat()">{{ 'CHAT.NEW_CHAT' | translate }}</button>
+        appRipple
+        rippleColor="dark"
+        class="grid size-9 shrink-0 place-items-center rounded-full border border-gray2 bg-white text-gray5 shadow-sm transition duration-200 hover:border-cyan-600/40 hover:text-cyan-800 hover:shadow-md active:scale-95 dark:border-gray5 dark:bg-gray6 dark:text-gray3 dark:hover:text-cyan-300"
+        [attr.aria-label]="'CHAT.BACK' | translate"
+        [attr.title]="'CHAT.BACK' | translate"
+        (click)="back()">
+        <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">arrow_back</mat-icon>
+      </button>
+      <button
+        type="button"
+        appRipple
+        rippleColor="dark"
+        class="grid size-9 shrink-0 place-items-center rounded-full text-gray5 transition-colors hover:bg-gray-300/50 hover:text-cyan-800 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-cyan-300"
+        [attr.aria-label]="'HOME.DASHBOARD' | translate"
+        [attr.title]="'HOME.DASHBOARD' | translate"
+        (click)="home()">
+        <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">space_dashboard</mat-icon>
+      </button>
+      <p class="min-w-0 grow truncate px-1 text-sm font-semibold text-gray6 dark:text-gray2">
+        {{ 'CHAT.SESSIONS' | translate }}
+      </p>
+      <button
+        type="button"
+        appRipple
+        rippleColor="dark"
+        class="grid size-9 shrink-0 place-items-center rounded-full text-gray5 transition-colors hover:bg-gray-300/50 hover:text-gray6 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2"
+        [attr.aria-label]="'CHAT.HIDE_SESSIONS' | translate"
+        (click)="toggleRail()">
+        <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">left_panel_close</mat-icon>
+      </button>
+    </div>
+
+    <!-- The one action this panel exists for, full width with its plus. A 36px icon read as a
+         secondary control, and starting a conversation is the primary one here. -->
+    <div class="px-2 pb-2 pt-1">
+      <button
+        type="button"
+        appRipple
+        rippleColor="light"
+        class="flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-cyan-700 px-3 text-sm font-semibold text-white shadow-md shadow-cyan-900/20 transition duration-200 hover:shadow-lg hover:shadow-cyan-900/30 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 motion-reduce:transition-none dark:shadow-black/40"
+        (click)="newChat()">
+        <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">add</mat-icon>
+        {{ 'CHAT.NEW_CHAT' | translate }}
+      </button>
+    </div>
+
+    <!-- Search sits between the action and the list it filters. A field rather than a menu entry:
+         it has one job, and a control behind a menu is never found on a 256px rail. -->
+    <div class="px-2 pb-2">
+      <div class="relative">
+        <mat-icon
+          class="pointer-events-none absolute left-2 top-1/2 !h-4 !w-4 -translate-y-1/2 !text-[16px] !leading-4 text-gray5 dark:text-gray3"
+          aria-hidden="true">search</mat-icon>
+        <input
+          type="search"
+          [ngModel]="query()"
+          (ngModelChange)="query.set($event)"
+          [ngModelOptions]="{ standalone: true }"
+          [attr.aria-label]="'CHAT.SEARCH' | translate"
+          [attr.placeholder]="'CHAT.SEARCH' | translate"
+          class="w-full rounded-lg border border-gray2 bg-white py-1.5 pl-8 pr-2 text-xs text-gray6 outline-none transition-colors placeholder:text-gray5 focus:border-cyan-600 dark:border-gray5 dark:bg-gray5 dark:text-gray2 dark:focus:border-cyan-400" />
+      </div>
+    </div>
+
+    <!-- The repo's own scrollbar, so the index scrolls like every other list on the platform. -->
+    <nav
+      (scroll)="onRailScroll($event)"
+      class="scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+      [attr.aria-label]="'CHAT.SESSIONS' | translate">
+      @if (!history().length) {
+        <p class="px-2 py-3 text-xs leading-relaxed text-gray5 dark:text-gray3">
+          {{ 'CHAT.NO_SESSIONS' | translate }}
+        </p>
+      } @else if (searching() && !pinnedSessions().length && !recentSessions().length) {
+        <!-- A search that matched nothing is a different message from an account with no
+             conversations, and only one of the two is worth suggesting a different search for. -->
+        <p class="px-2 py-3 text-xs leading-relaxed text-gray5 dark:text-gray3">
+          {{ 'CHAT.NO_MATCHES' | translate }}
+        </p>
+      }
+
+      <!-- A row, drawn once and stamped under both headings. Pinned and recent differ only by the
+           label above them, so a second copy of this markup would be a second place to fix. -->
+      <ng-template #sessionRow let-session>
+        <li class="flex items-center gap-0.5">
+          @if (renamingId() === session.id) {
+            <input
+              type="text"
+              [ngModel]="renameDraft()"
+              (ngModelChange)="renameDraft.set($event)"
+              [ngModelOptions]="{ standalone: true }"
+              (keydown.enter)="commitRename(session.id)"
+              (keydown.escape)="cancelRename()"
+              (blur)="commitRename(session.id)"
+              [attr.aria-label]="'CHAT.RENAME' | translate"
+              class="min-w-0 grow rounded-lg border border-cyan-600 bg-white px-2 py-1.5 text-xs text-gray6 outline-none dark:border-cyan-400 dark:bg-gray5 dark:text-gray2" />
+          } @else {
+            <!-- Two lines: the question, then when it last moved. A row with no date cannot be
+                 oriented in once a list spans days. -->
+            <button
+              type="button"
+              appRipple
+              rippleColor="dark"
+              [class]="session.id === activeId()
+                ? 'min-w-0 grow rounded-lg bg-cyan-700/10 px-2.5 py-2 text-left transition-colors hover:bg-cyan-700/15 dark:bg-cyan-400/10 dark:hover:bg-cyan-400/15'
+                : 'min-w-0 grow rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-gray-300/50 dark:hover:bg-gray5/30'"
+              [attr.aria-current]="session.id === activeId() ? 'true' : null"
+              [attr.title]="session.title"
+              (click)="openSession(session.id)">
+              <span
+                [class]="session.id === activeId()
+                  ? 'block truncate text-[13px] font-semibold text-cyan-800 dark:text-cyan-300'
+                  : 'block truncate text-[13px] font-medium text-gray6 dark:text-gray2'">{{ session.title }}</span>
+              <span class="mt-0.5 flex items-center gap-1 text-[11px] text-gray5 dark:text-gray3">
+                <!-- The line that says a conversation is working right now. It replaces the date
+                     rather than joining it: a row that just changed is more useful than when it
+                     last did, and the spinner is the same claim made visible. -->
+                @if (streaming() && session.id === activeId()) {
+                  <mat-spinner [diameter]="10"></mat-spinner>
+                  <span class="truncate">{{ 'CHAT.SESSION_RUNNING' | translate }}</span>
+                } @else {
+                  {{ session.at | date: 'shortDate' }}
+                }
+              </span>
+            </button>
+          }
+
+          <!-- The live mark, beside the row's own controls rather than inside the meta line: it
+               answers "which conversation is working" at a glance. Decorative only -- the word
+               in the meta line is what a screen reader gets. -->
+          @if (streaming() && session.id === activeId()) {
+            <span
+              class="size-1.5 shrink-0 animate-pulse rounded-full bg-cyan-600 dark:bg-cyan-400"
+              aria-hidden="true"></span>
+          }
+
+          <!-- Pin, before the two controls that change the row: it re-orders the list rather
+               than the conversation, and the tone is what says whether it is on. Always visible
+               for the same reason the edit button is -- on touch there is no hover to reveal it. -->
+          <button
+            type="button"
+            [class]="session.pinned
+              ? 'grid size-8 shrink-0 place-items-center rounded-lg text-cyan-700 transition-colors hover:bg-gray-300/50 dark:text-cyan-300 dark:hover:bg-gray5/40'
+              : 'grid size-8 shrink-0 place-items-center rounded-lg text-gray5 transition-colors hover:bg-gray-300/50 hover:text-gray6 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2'"
+            [attr.aria-pressed]="session.pinned ? 'true' : 'false'"
+            [attr.aria-label]="(session.pinned ? 'CHAT.UNPIN' : 'CHAT.PIN') | translate"
+            (click)="togglePin(session.id)">
+            <mat-icon class="!h-4 !w-4 !text-[16px] !leading-4" aria-hidden="true">push_pin</mat-icon>
+          </button>
+          <!-- A button rather than a double-click on the title: a keyboard user cannot
+               double-click, so an invisible gesture would be the only way in. Always visible
+               rather than revealed on hover: a control nobody can see is a control nobody
+               knows exists, and on touch there is no hover to reveal it. -->
+          <button
+            type="button"
+            class="grid size-8 shrink-0 place-items-center rounded-lg text-gray5 transition hover:bg-gray-300/50 hover:text-gray6 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2"
+            [attr.aria-label]="('CHAT.RENAME' | translate) + ': ' + session.title"
+            (click)="startRename(session)">
+            <mat-icon class="!h-4 !w-4 !text-[16px] !leading-4" aria-hidden="true">edit</mat-icon>
+          </button>
+          <button
+            type="button"
+            class="grid size-8 shrink-0 place-items-center rounded-lg text-gray5 transition hover:bg-rose-500/10 hover:text-rose-700 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-rose-300"
+            [attr.aria-label]="('CHAT.DELETE_SESSION' | translate) + ': ' + session.title"
+            (click)="deleteSession(session.id)">
+            <mat-icon class="!h-4 !w-4 !text-[16px] !leading-4" aria-hidden="true">delete_outline</mat-icon>
+          </button>
+        </li>
+      </ng-template>
+
+      @if (pinnedSessions().length) {
+        <p class="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray5 dark:text-gray3">
+          {{ 'CHAT.PINNED' | translate }}
+        </p>
+        <ul class="flex flex-col gap-0.5">
+          @for (session of pinnedSessions(); track session.id) {
+            <ng-container
+              *ngTemplateOutlet="sessionRow; context: { $implicit: session }"></ng-container>
+          }
+        </ul>
+      }
+
+      @if (recentSessions().length) {
+        <p class="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray5 dark:text-gray3">
+          {{ 'CHAT.RECENT' | translate }}
+        </p>
+        <ul class="flex flex-col gap-0.5">
+          @for (session of recentSessions(); track session.id) {
+            <ng-container
+              *ngTemplateOutlet="sessionRow; context: { $implicit: session }"></ng-container>
+          }
+        </ul>
+      }
+
+      <!-- Reached the end of what is rendered: grow the window. No button, because there is
+           nothing to fetch -- every conversation is already in memory. -->
+      @if (railSessions().length < history().length) {
+        <div class="flex justify-center py-2" aria-hidden="true">
+          <mat-spinner [diameter]="14"></mat-spinner>
+        </div>
+      }
+    </nav>
+  </aside>
+
+  <!-- Dismisses the overlay on a phone. Hidden at `lg`, where the rail is inline and there is
+       nothing to cover. -->
+  @if (railOpen()) {
+    <button
+      type="button"
+      class="fixed inset-0 z-30 cursor-default bg-gray7/40 backdrop-blur-[1px] lg:hidden"
+      [attr.aria-label]="'CHAT.HIDE_SESSIONS' | translate"
+      (click)="toggleRail()"></button>
+  }
+
+  <!-- The column widens in STEPS rather than one jump, now that this route owns the whole screen:
+       768px on a laptop, 896 from `xl`, 1024 past `3xl`. Past ~1000px a prose line gets long, so the
+       bubbles stay capped at 80% of it and what mostly grows is the composer's toolbar -- four menus
+       plus attach and send were the tightest thing in here, not the text. -->
+  <div class="mx-auto flex min-h-0 w-full max-w-3xl grow flex-col overflow-hidden p-3 sm:p-4 xl:max-w-4xl 3xl:max-w-5xl">
+
+  <div class="mb-2 flex items-center gap-2">
+
+    <!-- The way back into the index, for when the rail is collapsed. -->
+    @if (!railOpen()) {
+      <button
+        type="button"
+        class="grid size-9 place-items-center rounded-xl text-gray5 transition-colors hover:bg-slate-100 hover:text-gray6 dark:text-gray3 dark:hover:bg-gray6 dark:hover:text-gray2"
+        [attr.aria-label]="'CHAT.SHOW_SESSIONS' | translate"
+        (click)="toggleRail()">
+        <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5">left_panel_open</mat-icon>
+      </button>
     }
-    <app-dropdown
-      [options]="models()"
-      [control]="modelAI | formControl"
-      [padding]="'p-2'"
-      [position]="'bottom'"
-      dropDownName="CHAT.MODEL_LABEL"></app-dropdown>
+
+    <!-- Which conversation this is, for the one layout where nothing else says so: on a phone the
+         rail starts closed, so the header is the only place the open conversation is named. -->
+    @if (activeTitle()) {
+      <p class="min-w-0 truncate text-xs font-medium text-gray5 dark:text-gray3">
+        {{ activeTitle() }}
+      </p>
+    }
+
+    <!-- Conversations are in the rail; tools are in the composer. This bar keeps only the way
+         back into the index, the vendors that returned no catalogue, and the notices below. -->
+
+    <!-- Nothing else belongs in this bar: the model, the mode, the effort and the tools all live
+         in the composer, where the request is actually composed. -->
   </div>
 
   <!-- Vendors whose key is stored but whose catalogue came back empty. Named rather than
@@ -154,31 +335,73 @@
   <div
     #scroller
     (scroll)="onScroll($event)"
-    class="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-gray2 bg-slate-50/30 p-4 dark:border-gray5 dark:bg-gray7/80"
+    class="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-gray2 bg-slate-50/40 p-4 dark:border-gray5/70 dark:bg-gray6/50"
     role="log"
     aria-live="polite"
     aria-relevant="additions text"
     [attr.aria-busy]="streaming()">
 
     @if (messages().length === 0) {
-      <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+      <div class="flex h-full flex-col items-center justify-center gap-4 px-6 py-10 text-center">
         <span
-          class="flex size-11 items-center justify-center rounded-2xl bg-cyan-700/10 text-sm font-semibold text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300"
+          class="grid size-14 place-items-center rounded-2xl bg-gradient-to-br from-cyan-600 to-cyan-700 text-lg font-semibold text-white shadow-lg shadow-cyan-700/25"
           aria-hidden="true">DS</span>
-        <p class="max-w-md text-sm text-gray5 dark:text-gray3">
-          {{ 'CHAT.EMPTY_STATE' | translate }}
-        </p>
+        <div class="max-w-sm space-y-1.5">
+          <p class="text-lg font-semibold text-gray6 dark:text-gray2">
+            {{ 'CHAT.EMPTY_TITLE' | translate }}
+          </p>
+          <p class="text-sm leading-relaxed text-gray5 dark:text-gray3">
+            {{ 'CHAT.EMPTY_STATE' | translate }}
+          </p>
+        </div>
       </div>
     }
 
     <ul class="flex flex-col gap-4">
       @for (message of messages(); track message.id) {
-        <li class="flex items-end gap-2" [class.flex-row-reverse]="message.role === 'user'">
+        <!-- Rises into place as it is appended. Angular reuses the node for a tracked id, so this
+             plays once per message rather than on every streamed delta. -->
+        <li class="motion-preset-slide-up flex items-end gap-2" [class.flex-row-reverse]="message.role === 'user'">
           @if (message.role === 'user') {
-            <p
-              class="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-cyan-700 px-4 py-2 text-white shadow-sm">
-              {{ message.content }}
-            </p>
+            <div class="flex max-w-[80%] flex-col items-end gap-1.5">
+              <!-- The images this turn carried. Shown rather than hidden because the bubbles are
+                   the only record that the model saw a picture at all, and because an object that
+                   has aged out has to SAY so: a silent gap reads as a lost upload, and the amber
+                   tone is the same one every other "this did not survive" notice uses. -->
+              @if (message.media?.length) {
+                <ul class="flex flex-wrap justify-end gap-1.5">
+                  @for (item of message.media; track item.key) {
+                    <li
+                      [class]="expiredMedia().has(message.id)
+                        ? 'flex max-w-[13rem] items-center gap-1 rounded-lg bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-300'
+                        : 'flex max-w-[13rem] items-center gap-1 rounded-lg bg-cyan-700/10 px-2 py-0.5 text-[11px] font-medium text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300'">
+                      <mat-icon class="!h-3.5 !w-3.5 shrink-0 !text-[14px] !leading-none">image</mat-icon>
+                      <span class="truncate">{{ item.name }}</span>
+                      @if (expiredMedia().has(message.id)) {
+                        <span class="shrink-0">{{ 'CHAT.ATTACH_EXPIRED' | translate }}</span>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+              <p
+                class="whitespace-pre-wrap rounded-2xl rounded-br-md bg-cyan-700 px-4 py-2.5 text-white shadow-[0_10px_24px_-16px_rgba(8,145,178,0.55)]">
+                {{ message.content }}
+              </p>
+              <!-- Edit belongs to the LAST question only: editing an older one means discarding
+                   everything after it, and the transcript cannot show what that would cost. -->
+              @if ($last && !streaming()) {
+                <button
+                  type="button"
+                  class="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-gray5 transition-colors hover:bg-slate-100 hover:text-cyan-800 dark:text-gray3 dark:hover:bg-gray5 dark:hover:text-cyan-300"
+                  [attr.aria-label]="'CHAT.EDIT_PROMPT' | translate"
+                  [attr.title]="'CHAT.EDIT_PROMPT' | translate"
+                  (click)="editTurn()">
+                  <mat-icon class="!h-3.5 !w-3.5 !text-[14px] !leading-none" aria-hidden="true">edit</mat-icon>
+                  {{ 'CHAT.EDIT_PROMPT' | translate }}
+                </button>
+              }
+            </div>
           } @else {
             <!-- Decorative: the alignment already says which side this is, so the
                  monogram is hidden from assistive tech rather than read aloud. -->
@@ -186,18 +409,56 @@
               class="flex size-7 shrink-0 items-center justify-center rounded-full bg-gray2 text-[10px] font-semibold text-gray5 dark:bg-gray5 dark:text-gray2"
               aria-hidden="true">DS</span>
             <div
-              class="max-w-[80%] rounded-2xl rounded-bl-md border border-gray2 bg-white px-4 py-2 shadow-sm dark:border-gray5 dark:bg-gray6">
+              class="min-w-0 max-w-[80%] rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-[0_10px_28px_-20px_rgba(18,24,27,0.4)] dark:bg-gray6 dark:shadow-[0_10px_28px_-20px_rgba(0,0,0,0.7)]">
               @if (message.content) {
-                <markdown
-                  class="block text-base text-gray6 dark:text-gray2"
-                  clipboard
-                  emoji
-                  [clipboardButtonComponent]="clipboardButton"
-                  [data]="message.content"></markdown>
+                <!--
+                `prose`, not a bare block. The model answers in markdown, and Tailwind's preflight
+                strips every heading, list, quote, table and code block back to one unstyled line --
+                so the stream arrived as a wall of text with no structure at all. Every other
+                markdown surface in the app (crawl results, LLM scrape) wraps `<markdown>` this way,
+                which is why they read correctly and this did not.
+
+                The heading scale is pinned per element because the theme's DEFAULT typography sets
+                h1 to 2.5rem: a page title, not a heading inside an answer bubble. Sizes step down
+                by one so any level still fits a 80%-wide column on a phone.
+
+                Inline code keeps the global `.prose code` colour from styles.scss rather than
+                restating it here -- three prose surfaces that each pick their own colour is how the
+                same answer starts looking different on three screens.
+                -->
+                <div
+                  class="prose max-w-none break-words
+                         prose-headings:mb-1 prose-headings:mt-3 prose-headings:font-semibold prose-headings:tracking-tight
+                         prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-h4:text-[15px] prose-h5:text-sm prose-h6:text-sm
+                         prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1
+                         prose-a:text-cyan-700 prose-a:no-underline hover:prose-a:underline
+                         prose-blockquote:border-l-2 prose-blockquote:border-cyan-600/50 prose-blockquote:pl-3 prose-blockquote:font-normal prose-blockquote:not-italic prose-blockquote:text-gray5
+                         prose-pre:my-3 prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:border prose-pre:border-gray2 prose-pre:bg-gray1 prose-pre:p-3 prose-pre:text-[13px] prose-pre:leading-relaxed
+                         prose-code:rounded prose-code:bg-gray1 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.9em]
+                         prose-table:my-3 prose-table:w-full prose-table:text-sm prose-th:py-1 prose-th:text-left prose-td:py-1
+                         prose-img:rounded-xl prose-hr:my-4
+                         dark:prose-invert
+                         dark:prose-pre:border-gray5 dark:prose-pre:bg-gray7
+                         dark:prose-code:bg-gray5/60 dark:prose-a:text-cyan-300 dark:prose-blockquote:text-gray3">
+                  <markdown
+                    clipboard
+                    emoji
+                    [clipboardButtonComponent]="clipboardButton"
+                    [data]="message.content"></markdown>
+                </div>
               } @else {
                 <mat-spinner [diameter]="18"></mat-spinner>
               }
 
+              <!-- A live answer has to LOOK live. While the tokens arrive the last one and the end
+                   of the turn are the same picture, so a slow vendor and a stall look identical.
+                   Decorative: `aria-busy` on the log already tells assistive tech the turn is
+                   running, and a second announcement per delta would be noise. -->
+              @if (streaming() && $last && message.content) {
+                <span
+                  class="mt-2 block h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-700 dark:bg-cyan-400"
+                  aria-hidden="true"></span>
+              }
               <!-- What the answer was built from. The tool name is an identifier and stays
                    untranslated (the same rule the model id and the running-tool chip follow);
                    the number beside it is how much that route returned. Without this the
@@ -235,14 +496,39 @@
                    offers -- so there is one definition of "resend this turn", not two. -->
               @if ($last && message.content && !streaming()) {
                 <div class="mt-2 flex items-center gap-1 border-t border-gray2 pt-2 dark:border-gray5">
+                  <!-- ICON buttons, not words and not a ✓ glyph. A tick character is a symbol from
+                       a font, so it renders differently in every locale's fallback face and says
+                       nothing to a screen reader; `check` is the same Material set as the rest of
+                       the page. `size-8` is also the first hit area in this row a thumb can find --
+                       the text buttons were ~24px tall. -->
                   <button
                     type="button"
-                    class="rounded-lg px-2 py-1 text-[11px] font-medium text-gray5 transition-colors hover:bg-slate-100 dark:text-gray3 dark:hover:bg-gray5"
-                    (click)="copyAnswer(message.id, message.content)">{{ copiedId() === message.id ? '✓' : ('CHAT.COPY_ANSWER' | translate) }}</button>
+                    appRipple
+                    rippleColor="dark"
+                    class="grid size-8 place-items-center rounded-lg text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-cyan-800 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-cyan-300"
+                    [attr.aria-label]="'CHAT.COPY_ANSWER' | translate"
+                    [attr.title]="'CHAT.COPY_ANSWER' | translate"
+                    (click)="copyAnswer(message.id, message.content)">
+                    <mat-icon class="!h-4 !w-4 !text-[16px] !leading-4">{{ copiedId() === message.id ? 'check' : 'content_copy' }}</mat-icon>
+                  </button>
                   <button
                     type="button"
-                    class="rounded-lg px-2 py-1 text-[11px] font-medium text-gray5 transition-colors hover:bg-slate-100 dark:text-gray3 dark:hover:bg-gray5"
-                    (click)="retry()">{{ 'CHAT.REGENERATE' | translate }}</button>
+                    appRipple
+                    rippleColor="dark"
+                    class="grid size-8 place-items-center rounded-lg text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-cyan-800 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-cyan-300"
+                    [attr.aria-label]="'CHAT.REGENERATE' | translate"
+                    [attr.title]="'CHAT.REGENERATE' | translate"
+                    (click)="retry()">
+                    <mat-icon class="!h-4 !w-4 !text-[16px] !leading-4">refresh</mat-icon>
+                  </button>
+                  <!-- What the turn cost, in the only unit the vendor reports. SHOWN, not priced: a
+                       price needs a per-model rate table this client does not own, and an invented
+                       rate is worse than no rate. Absent on a turn that never reached a vendor. -->
+                  @if (message.usage; as usage) {
+                    <span class="ml-auto shrink-0 pl-2 text-[11px] text-gray5 dark:text-gray3">
+                      {{ 'CHAT.USAGE' | translate: { input: usage.input, output: usage.output, cached: usage.cached } }}
+                    </span>
+                  }
                 </div>
               }
             </div>
@@ -263,6 +549,7 @@
             @case ('payment') { {{ 'CHAT.ERROR_PAYMENT' | translate }} }
             @case ('rate') { {{ 'CHAT.ERROR_RATE' | translate }} }
             @case ('network') { {{ 'CHAT.ERROR_NETWORK' | translate }} }
+            @case ('upstream') { {{ 'CHAT.ERROR_UPSTREAM' | translate }} }
             @default { {{ 'CHAT.ERROR' | translate }} }
           }
         </p>
@@ -335,13 +622,17 @@
       <div class="flex items-center gap-2 self-start">
         <button
           type="button"
-          class="rounded-full bg-cyan-700 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-cyan-800"
+          appRipple
+          rippleColor="light"
+          class="rounded-full bg-cyan-700 px-4 py-1.5 text-sm font-medium text-white shadow-md shadow-cyan-900/20 transition duration-200 hover:shadow-lg hover:shadow-cyan-900/30 active:scale-[0.98] motion-reduce:transition-none"
           (click)="confirmPending()">
           {{ 'CHAT.APPROVE_RUN' | translate }}
         </button>
         <button
           type="button"
-          class="rounded-full border border-gray2 px-4 py-1.5 text-sm font-medium text-gray-700 dark:border-gray5 dark:text-gray-200"
+          appRipple
+          rippleColor="dark"
+          class="rounded-full border border-gray2 px-4 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-slate-50 dark:border-gray5 dark:text-gray-200 dark:hover:bg-gray5"
           (click)="cancelPending()">
           {{ 'CHAT.APPROVE_CANCEL' | translate }}
         </button>
@@ -349,33 +640,346 @@
     </div>
   }
 
+  <!--
+    The composer.
+
+    Everything that decides the request lives here, on one row, in the order the request is
+    built: what is attached, what the assistant may DO (mode), who answers (model), how hard it
+    thinks (effort), and which tools it may call. Those four used to be split between a top bar
+    and a button beside Send, so "what will this turn do" had two places to look and neither was
+    the input.
+
+    Icon buttons at 36px because the row holds five controls and text labels do not survive a
+    phone. The value of each control is shown beside its icon from `sm` up, so the row reads as
+    "Agent · gpt-4o · default · 14 tools" on a desktop and as icons on a phone.
+  -->
   <form
-    class="mt-4 flex items-end gap-2 rounded-2xl border border-gray2 bg-white p-2 transition focus-within:border-cyan-600 focus-within:ring-2 focus-within:ring-cyan-300/60 dark:border-gray5 dark:bg-gray6"
-    (ngSubmit)="send()">    <textarea
+    [class]="dragging()
+      ? 'mt-3 shrink-0 rounded-[1.75rem] border border-cyan-600 bg-white p-2 shadow-[0_14px_38px_-16px_rgba(8,145,178,0.45)] ring-4 ring-cyan-300/40 transition duration-200 dark:border-cyan-400 dark:bg-gray6 dark:shadow-[0_14px_38px_-16px_rgba(0,0,0,0.75)]'
+      : 'mt-3 shrink-0 rounded-[1.75rem] border border-gray2 bg-white p-2 shadow-[0_10px_30px_-14px_rgba(18,24,27,0.28)] transition duration-200 focus-within:border-cyan-600 focus-within:shadow-[0_16px_42px_-18px_rgba(18,24,27,0.36)] focus-within:ring-4 focus-within:ring-cyan-300/25 dark:border-gray5 dark:bg-gray6 dark:shadow-[0_10px_30px_-14px_rgba(0,0,0,0.7)] dark:focus-within:shadow-[0_16px_42px_-18px_rgba(0,0,0,0.85)]'"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave()"
+    (drop)="onDrop($event)"
+    (ngSubmit)="send()">
+
+    <!-- Attachments sit ABOVE the input: they belong to this message, and a chip is the only
+         place their name and truncation can be stated before the characters are spent. -->
+    @if (attachments().length) {
+      <ul class="mb-1.5 flex flex-wrap gap-1.5 px-1">
+        @for (file of attachments(); track $index) {
+          <li
+            class="flex max-w-[16rem] items-center gap-1 rounded-full bg-cyan-700/10 py-0.5 pl-2 pr-0.5 text-[11px] font-medium text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300">
+            <mat-icon class="!h-3.5 !w-3.5 !text-[14px] !leading-[14px]" aria-hidden="true">description</mat-icon>
+            <span class="truncate">{{ file.name }}</span>
+            <!-- Says the body was cut rather than reporting a size that is not what was sent. -->
+            @if (file.truncated) {
+              <span class="shrink-0 text-gray5 dark:text-gray3">…</span>
+            }
+            <button
+              type="button"
+              class="grid size-5 shrink-0 place-items-center rounded-full transition hover:bg-cyan-700/20 dark:hover:bg-cyan-400/20"
+              [attr.aria-label]="('CHAT.REMOVE_ATTACH' | translate) + ': ' + file.name"
+              (click)="removeAttachment($index)">
+              <mat-icon class="!h-3 !w-3 !text-[12px] !leading-3" aria-hidden="true">close</mat-icon>
+            </button>
+          </li>
+        }
+      </ul>
+    }
+
+    <!-- Outside the chip list on purpose: this is the message for a pick that produced NO chip,
+         which is exactly the case the chip list cannot show. -->
+    @if (attachError()) {
+      <p class="mb-1.5 px-1 text-[11px] text-amber-700 dark:text-amber-300">{{ attachError() | translate }}</p>
+    }
+
+    <textarea
+      #draftBox
       name="draft"
-      rows="2"
+      rows="1"
       [attr.aria-label]="'CHAT.PLACEHOLDER' | translate"
       [placeholder]="'CHAT.PLACEHOLDER' | translate"
       [ngModel]="draft()"
       (ngModelChange)="draft.set($event)"
+      (input)="resizeDraft($event)"
+      (paste)="onPaste($event)"
       (keydown)="onKeydown($event)"
-      class="min-h-11 grow resize-none border-0 bg-transparent px-2 py-2 text-gray6 outline-none placeholder:text-gray5 dark:text-white dark:placeholder:text-gray3"></textarea>
-    <!-- Stop REPLACES send rather than sitting beside it: the composer already refuses a
-         second prompt while a reply is in flight, so a send button here would be dead. -->
-    @if (streaming()) {
-      <button
-        type="button"
-        class="shrink-0 rounded-xl border border-gray2 px-4 py-2 font-medium text-gray6 transition hover:bg-gray-50 dark:border-gray5 dark:text-gray2 dark:hover:bg-gray-800"
-        (click)="stop()">
-        {{ 'CHAT.STOP' | translate }}
-      </button>
-    } @else {
-      <button
-        type="submit"
-        [disabled]="!draft().trim()"
-        class="shrink-0 rounded-xl bg-cyan-700 px-4 py-2 font-medium text-white transition hover:bg-cyan-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
-        {{ 'CHAT.SEND' | translate }}
-      </button>
-    }
+      class="block max-h-64 min-h-12 w-full resize-none border-0 bg-transparent px-3 py-2 leading-relaxed text-gray6 outline-none placeholder:text-gray5 dark:text-white dark:placeholder:text-gray3"></textarea>
+
+    <div class="mt-0.5 flex items-center gap-0 sm:gap-0.5">
+
+      <!-- 1. What goes into the message, beyond what is typed. -->
+      <details data-menu class="group/plus relative">
+        <summary
+          appRipple
+          rippleColor="dark"
+          class="grid size-10 cursor-pointer list-none place-items-center rounded-xl text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-cyan-800 [&::-webkit-details-marker]:hidden dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-cyan-300"
+          [attr.aria-label]="'CHAT.ADD' | translate">
+          <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">add</mat-icon>
+        </summary>
+        <div
+          class="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-2xl bg-white p-1.5 shadow-[0_18px_40px_-20px_rgba(18,24,27,0.4)] dark:bg-gray6 dark:shadow-[0_18px_40px_-20px_rgba(0,0,0,0.75)]">
+          <button
+            type="button"
+            class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-gray6 transition-colors duration-200 hover:bg-gray-300/50 dark:text-gray2 dark:hover:bg-gray5/40"
+            (click)="pickFiles(); closeMenu($event)">
+            <mat-icon class="!h-[18px] !w-[18px] !text-[18px] !leading-[18px] text-gray5 dark:text-gray3" aria-hidden="true">attach_file</mat-icon>
+            {{ 'CHAT.ATTACH' | translate }}
+          </button>
+          <!-- Opens the tool picker rather than linking somewhere. A menu item that pointed at a
+               page we do not have would read as a feature that is broken, and the thing it would
+               point at already exists two inches to the right. -->
+          <button
+            type="button"
+            class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-gray6 transition-colors duration-200 hover:bg-gray-300/50 dark:text-gray2 dark:hover:bg-gray5/40"
+            (click)="closeMenu($event); toolsMenu.open = true">
+            <mat-icon class="!h-[18px] !w-[18px] !text-[18px] !leading-[18px] text-gray5 dark:text-gray3" aria-hidden="true">extension</mat-icon>
+            {{ 'CHAT.PLUGINS' | translate }}
+          </button>
+        </div>
+      </details>
+
+      <!-- 2. What this turn may do. A mode may only ever NARROW the tools, never widen them. -->
+      <details data-menu class="group/mode relative">
+        <summary
+          appRipple
+          rippleColor="dark"
+          class="flex h-10 cursor-pointer list-none items-center gap-1.5 rounded-xl px-2.5 text-sm font-medium text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-gray6 [&::-webkit-details-marker]:hidden dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2"
+          [attr.aria-label]="('CHAT.MODE' | translate) + ': ' + (modeKey() | translate)">
+          <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">{{ modeIcon() }}</mat-icon>
+          <span class="hidden sm:inline">{{ modeKey() | translate }}</span>
+        </summary>
+        <ul
+          class="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-2xl bg-white p-1.5 shadow-[0_18px_40px_-20px_rgba(18,24,27,0.4)] dark:bg-gray6 dark:shadow-[0_18px_40px_-20px_rgba(0,0,0,0.75)]">
+          @for (option of modes; track option) {
+            <li>
+              <button
+                type="button"
+                [class]="option === mode()
+                  ? 'flex w-full items-start gap-2.5 rounded-lg bg-cyan-700/10 px-2.5 py-2 text-left transition-colors duration-200 hover:bg-cyan-700/15 dark:bg-cyan-400/10 dark:hover:bg-cyan-400/15'
+                  : 'flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors duration-200 hover:bg-gray-300/50 dark:hover:bg-gray5/40'"
+                [attr.aria-pressed]="option === mode() ? 'true' : 'false'"
+                (click)="mode.set(option); closeMenu($event)">
+                <mat-icon
+                  class="mt-0.5 !h-[18px] !w-[18px] !text-[18px] !leading-[18px]"
+                  [class]="option === mode() ? 'text-cyan-800 dark:text-cyan-300' : 'text-gray5 dark:text-gray3'"
+                  aria-hidden="true">{{ modeIcon(option) }}</mat-icon>
+                <span class="min-w-0 grow">
+                  <span
+                    [class]="option === mode()
+                      ? 'block text-[13px] font-semibold text-cyan-800 dark:text-cyan-300'
+                      : 'block text-[13px] font-medium text-gray6 dark:text-gray2'">{{ modeKey(option) | translate }}</span>
+                  <span class="mt-0.5 block text-[11px] font-normal leading-snug text-gray5 dark:text-gray3">{{ modeHint(option) | translate }}</span>
+                </span>
+                @if (option === mode()) {
+                  <mat-icon class="mt-0.5 !h-4 !w-4 !text-[16px] !leading-4 text-cyan-800 dark:text-cyan-300" aria-hidden="true">check</mat-icon>
+                }
+              </button>
+            </li>
+          }
+        </ul>
+      </details>
+
+      <!-- 3. Who answers. A menu rather than the house `app-dropdown`: that picker paints a
+              floating label ABOVE its trigger, which in a 40px toolbar row lands on the textarea.
+              Same source (`models()`), same control (`modelAI`), so the two cannot disagree. -->
+      <details data-menu class="group/model relative">
+        <summary
+          appRipple
+          rippleColor="dark"
+          class="flex h-10 max-w-[11rem] cursor-pointer list-none items-center gap-1.5 rounded-xl px-2.5 text-sm font-medium text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-gray6 [&::-webkit-details-marker]:hidden dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2"
+          [attr.aria-label]="('CHAT.MODEL_LABEL' | translate) + ': ' + (modelAI.value.name | translate)">
+          <mat-icon class="!h-5 !w-5 shrink-0 !text-[20px] !leading-5" aria-hidden="true">memory</mat-icon>
+          <span class="hidden truncate sm:inline">{{ modelAI.value.name | translate }}</span>
+          <mat-icon class="hidden shrink-0 !h-4 !w-4 !text-[16px] !leading-4 sm:inline" aria-hidden="true">expand_less</mat-icon>
+        </summary>
+        <div
+          class="absolute bottom-full left-0 z-30 mb-2 w-72 overflow-hidden rounded-2xl bg-white pb-1.5 shadow-[0_18px_40px_-20px_rgba(18,24,27,0.4)] dark:bg-gray6 dark:shadow-[0_18px_40px_-20px_rgba(0,0,0,0.75)]">
+          <!-- One tab per vendor, scrolling sideways: a 18rem panel cannot show nine vendors AND a
+               list at once, and a vendor with no model in it is not a tab because the strip is
+               derived from what the catalogue actually returned. Codes stay raw, like model ids.
+               The active tab is FILLED rather than tinted: at 11px a 10% wash left the selection
+               indistinguishable from a hover, which is the one thing a tab strip must never do. -->
+          <div
+            class="scrollbar flex gap-1.5 overflow-x-auto border-b border-gray2/80 px-2 py-2 dark:border-gray5/80"
+            role="group"
+            [attr.aria-label]="'CHAT.MODEL_LABEL' | translate">
+            @for (code of vendorTabs(); track code) {
+              <button
+                type="button"
+                [class]="code === vendorTab()
+                  ? 'shrink-0 rounded-full bg-cyan-700 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-white shadow-sm shadow-cyan-900/25 transition-colors duration-200 dark:bg-cyan-600'
+                  : 'shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-gray6 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2'"
+                [attr.aria-pressed]="code === vendorTab() ? 'true' : 'false'"
+                (click)="vendorChoice.set(code)">
+                {{ code }}
+              </button>
+            }
+          </div>
+          <ul class="scrollbar max-h-64 overflow-y-auto px-1.5 pb-0.5 pt-1">
+            @for (model of vendorModels(); track model.name) {
+              <li>
+                <button
+                  type="button"
+                  [class]="model.name === modelAI.value.name
+                    ? 'flex w-full items-center gap-2 rounded-lg bg-cyan-700/10 px-2.5 py-2 text-left text-[13px] font-semibold text-cyan-800 transition-colors duration-200 hover:bg-cyan-700/15 dark:bg-cyan-400/10 dark:text-cyan-300 dark:hover:bg-cyan-400/15'
+                    : 'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-gray6 transition-colors duration-200 hover:bg-gray-300/50 dark:text-gray2 dark:hover:bg-gray5/40'"
+                  [attr.aria-pressed]="model.name === modelAI.value.name ? 'true' : 'false'"
+                  (click)="chooseModel(model); closeMenu($event)">
+                  <span class="grow truncate">{{ model.name | translate }}</span>
+                  @if (model.name === modelAI.value.name) {
+                    <mat-icon class="!h-4 !w-4 shrink-0 !text-[16px] !leading-4" aria-hidden="true">check</mat-icon>
+                  }
+                </button>
+              </li>
+            } @empty {
+              <!-- Reached only while NOTHING has loaded: `pickerTab` drops a tab whose vendor
+                   returned no models, so the list cannot be empty under a selected tab. -->
+              <li class="px-2.5 py-2 text-[13px] text-gray5 dark:text-gray3">{{ 'CHAT.MODELS_LOADING' | translate }}</li>
+            }
+          </ul>
+        </div>
+      </details>
+
+      <!-- 4. How hard it thinks, where the vendor has the field at all. -->
+      <details data-menu class="group/effort relative">
+        <summary
+          appRipple
+          rippleColor="dark"
+          class="flex h-10 cursor-pointer list-none items-center gap-1.5 rounded-xl px-2.5 text-sm font-medium text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-gray6 [&::-webkit-details-marker]:hidden dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2"
+          [attr.aria-label]="('CHAT.EFFORT' | translate) + ': ' + (effortKey() | translate)">
+          <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">psychology</mat-icon>
+          <span class="hidden sm:inline">{{ effortKey() | translate }}</span>
+        </summary>
+        <ul
+          class="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-2xl bg-white p-1.5 shadow-[0_18px_40px_-20px_rgba(18,24,27,0.4)] dark:bg-gray6 dark:shadow-[0_18px_40px_-20px_rgba(0,0,0,0.75)]">
+          @for (option of efforts; track option) {
+            <li>
+              <button
+                type="button"
+                [class]="option === effort()
+                  ? 'flex w-full items-center gap-2 rounded-lg bg-cyan-700/10 px-2.5 py-2 text-left text-[13px] font-semibold text-cyan-800 transition-colors duration-200 hover:bg-cyan-700/15 dark:bg-cyan-400/10 dark:text-cyan-300 dark:hover:bg-cyan-400/15'
+                  : 'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-gray6 transition-colors duration-200 hover:bg-gray-300/50 dark:text-gray2 dark:hover:bg-gray5/40'"
+                [attr.aria-pressed]="option === effort() ? 'true' : 'false'"
+                (click)="effort.set(option); closeMenu($event)">
+                <span class="grow">{{ effortKey(option) | translate }}</span>
+                @if (option === effort()) {
+                  <mat-icon class="!h-4 !w-4 !text-[16px] !leading-4" aria-hidden="true">check</mat-icon>
+                }
+              </button>
+            </li>
+          }
+          <!-- Said plainly rather than left to be discovered: only two vendors document the field,
+               and a control that silently does nothing on the other eight is a lie. -->
+          <li class="mt-1.5 border-t border-gray2/80 px-2.5 pb-0.5 pt-2 text-[11px] leading-snug text-gray5 dark:border-gray5/80 dark:text-gray3">
+            {{ 'CHAT.EFFORT_HINT' | translate }}
+          </li>
+        </ul>
+      </details>
+
+      <!-- 5. How the answer comes back. Drawn ONLY where the vendor takes `response_format`: the
+              switch changes the request, so showing it on a vendor that would refuse the field is
+              worse than not showing it at all. A toggle rather than a one-item menu, because it has
+              exactly two states and the composer already carries four menus. -->
+      @if (jsonOffer()) {
+        <button
+          type="button"
+          appRipple
+          rippleColor="dark"
+          [class]="jsonOn()
+            ? 'flex h-10 items-center gap-1.5 rounded-xl bg-cyan-700/10 px-2.5 text-sm font-semibold text-cyan-800 transition-colors duration-200 hover:bg-cyan-700/15 dark:bg-cyan-400/10 dark:text-cyan-300 dark:hover:bg-cyan-400/15'
+            : 'flex h-10 items-center gap-1.5 rounded-xl px-2.5 text-sm font-medium text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-gray6 dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2'"
+          [attr.aria-pressed]="jsonOn() ? 'true' : 'false'"
+          [attr.aria-label]="'CHAT.FORMAT_JSON' | translate"
+          [attr.title]="'CHAT.FORMAT_JSON_HINT' | translate"
+          (click)="json.set(!json())">
+          <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">data_object</mat-icon>
+          <span class="hidden sm:inline">{{ 'CHAT.FORMAT_JSON' | translate }}</span>
+        </button>
+      }
+
+      <!-- 6. Which tools this session may use. CHECKBOXES rather than a read-only list: the panel
+              used to say what was available while the request offered the whole list anyway. -->
+      <details #toolsMenu data-menu class="group/tools relative">
+        <summary
+          appRipple
+          rippleColor="dark"
+          class="flex h-10 cursor-pointer list-none items-center gap-1.5 rounded-xl px-2.5 text-sm font-medium text-gray5 transition-colors duration-200 hover:bg-gray-300/50 hover:text-gray6 [&::-webkit-details-marker]:hidden dark:text-gray3 dark:hover:bg-gray5/40 dark:hover:text-gray2"
+          [attr.aria-label]="('CHAT.TOOLS' | translate) + ': ' + sessionTools().length">
+          <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">build</mat-icon>
+          <span
+            class="rounded-full bg-cyan-700/10 px-1.5 text-[11px] text-cyan-800 dark:bg-cyan-400/10 dark:text-cyan-300">{{ sessionTools().length }}</span>
+        </summary>
+        <div
+          class="scrollbar absolute bottom-full left-0 z-30 mb-2 max-h-72 w-64 overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_18px_40px_-20px_rgba(18,24,27,0.4)] dark:bg-gray6 dark:shadow-[0_18px_40px_-20px_rgba(0,0,0,0.75)]">
+          @if (mode() === 'ask') {
+            <p class="px-1 py-1 text-[11px] leading-snug text-gray5 dark:text-gray3">
+              {{ 'CHAT.TOOLS_NONE_ASK' | translate }}
+            </p>
+          } @else {
+            @if (mode() === 'plan') {
+              <p class="mb-1 px-1 text-[11px] leading-snug text-gray5 dark:text-gray3">
+                {{ 'CHAT.TOOLS_PLAN_HINT' | translate }}
+              </p>
+            }
+            @for (tool of offered(); track tool.name) {
+              <label
+                class="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[13px] text-gray6 transition-colors duration-200 hover:bg-gray-300/50 dark:text-gray2 dark:hover:bg-gray5/40">
+                <input
+                  type="checkbox"
+                  class="size-4 shrink-0 accent-cyan-700 disabled:opacity-40"
+                  [checked]="isToolOn(tool.name)"
+                  [disabled]="mode() === 'plan' && tool.requiresConfirm === true"
+                  (change)="toggleTool(tool.name, $any($event.target).checked)" />
+                <code class="truncate">{{ tool.name }}</code>
+                <!-- Named, not just greyed: a row a user cannot tick has to say why. -->
+                @if (mode() === 'plan' && tool.requiresConfirm === true) {
+                  <span class="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-gray5 dark:text-gray3">{{ 'CHAT.WRITE_TOOL' | translate }}</span>
+                }
+              </label>
+            }
+          }
+        </div>
+      </details>
+
+      <span class="grow"></span>
+
+      <!-- Stop REPLACES send rather than sitting beside it: the composer already refuses a
+           second prompt while a reply is in flight, so a send button here would be dead. -->
+      @if (streaming()) {
+        <button
+          type="button"
+          appRipple
+          rippleColor="dark"
+          class="grid size-10 shrink-0 place-items-center rounded-full border border-gray2 text-gray6 transition duration-200 hover:border-cyan-600/40 hover:bg-gray-50 hover:text-cyan-800 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 motion-reduce:transition-none dark:border-gray5 dark:text-gray2 dark:hover:bg-gray5 dark:hover:text-cyan-300"
+          [attr.aria-label]="'CHAT.STOP' | translate"
+          (click)="stop()">
+          <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">stop</mat-icon>
+        </button>
+      } @else {
+        <!-- A shadow that deepens on hover plus a press scale, rather than a flat fill that only
+             changes colour: the button is the one control on this page the eye is meant to find
+             last, and cyan-700 alone made it the quietest thing in the composer. `rippleColor`
+             is `light` because a white ripple is the only one visible on cyan. -->
+        <button
+          type="submit"
+          appRipple
+          rippleColor="light"
+          [disabled]="!draft().trim() && !attachments().length"
+          class="grid size-10 shrink-0 place-items-center rounded-full bg-cyan-700 text-white shadow-md shadow-cyan-900/20 transition duration-200 hover:shadow-lg hover:shadow-cyan-900/30 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:bg-cyan-700 motion-reduce:transition-none motion-reduce:active:scale-100"
+          [attr.aria-label]="'CHAT.SEND' | translate">
+          <mat-icon class="!h-5 !w-5 !text-[20px] !leading-5" aria-hidden="true">arrow_upward</mat-icon>
+        </button>
+      }
+    </div>
+
+    <input
+      #fileInput
+      type="file"
+      multiple
+      class="hidden"
+      [attr.aria-label]="'CHAT.ATTACH' | translate"
+      (change)="onFiles($event)" />
   </form>
+  </div>
 </div>

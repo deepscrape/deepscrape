@@ -1,5 +1,5 @@
 import { AsyncPipe, isPlatformBrowser, NgClass, NgOptimizedImage } from '@angular/common';
-import { ChangeDetectionStrategy, Component, HostBinding, inject, Inject, PLATFORM_ID, OnDestroy, signal } from '@angular/core'
+import { ChangeDetectionStrategy, Component, HostBinding, inject, Inject, PLATFORM_ID, OnDestroy, computed, signal } from '@angular/core'
 import { Auth, User, UserInfo } from '@angular/fire/auth'
 import { doc, Firestore, getDoc } from '@angular/fire/firestore'
 import { MatIcon } from '@angular/material/icon'
@@ -17,7 +17,7 @@ import { ImageSrcsetDirective } from 'src/app/core/directives/image.srcset.direc
 import { Outsideclick } from 'src/app/core/directives/outsideclick.directive'
 import { RippleDirective } from 'src/app/core/directives/ripple.directive'
 import { ProviderPipe } from 'src/app/core/pipes'
-import { AuthService, AuthzService, CartService, FirestoreService, OrganizationInvitation, OrganizationService, OrganizationSummary, ScreenResizeService, ScrollService, ThemeService } from 'src/app/core/services'
+import { AuthService, AuthzService, CartService, ChatRailService, FirestoreService, OrganizationInvitation, OrganizationService, OrganizationSummary, ScreenResizeService, ScrollService, ThemeService } from 'src/app/core/services'
 import { Users } from 'src/app/core/types'
 import { LangPickerComponent } from 'src/app/shared/lang-picker/lang-picker.component';
 import { NotificationBellComponent } from 'src/app/shared/notification-bell/notification-bell.component';
@@ -92,6 +92,40 @@ export class AppUserLayoutComponent implements OnDestroy {
 
   closeAsideBar = signal(false)
 
+  /**
+   * Whether the current route draws its own menu.
+   *
+   * `/chatai` owns a full-height rail of conversations, so the platform sidebar beside it is a
+   * SECOND index for the same screen -- and the wide `lg:px-20` inset that exists to frame content
+   * next to that sidebar would squeeze the chat column. Read from the URL rather than stored: it is
+   * a property of the route, not a preference, and a reload must land in the same shape.
+   */
+  chatScreen = signal(false)
+
+  /** The wrapper is a row only while a sidebar is actually beside the outlet. */
+  protected readonly shellRow = computed(() =>
+    !this.closeAsideBar() && !this.viewSmallDevices() && !this.chatScreen())
+
+  /** The inset that frames content next to the platform sidebar, and only there. */
+  protected readonly shellInset = computed(() => this.chatScreen()
+    ? ''
+    : 'gap-2 rounded-lg px-4 py-2 pt-0 lg:max-h-full lg:px-20 3xl:px-32')
+
+  /**
+   * Whether a URL is the chat screen.
+   *
+   * A SEGMENT test, not `startsWith('/chatai')`. `appPageRoutes` is mounted in TWO trees, so the
+   * page answers on `/chatai` (legacy) and `/{orgId}/chatai` (canonical). The prefix test was only
+   * ever true for the bare form: on the org-scoped URL the platform sidebar rendered BESIDE the
+   * chat's own rail -- two indexes for one screen -- and the wide `lg:px-20` inset squeezed the
+   * conversation it was written to stop squeezing.
+   * @param {string} url The router URL, with or without a query string or fragment.
+   * @return {boolean} True when the chat page is active.
+   */
+  private isChatUrl(url: string): boolean {
+    return url.split(/[?#]/)[0].split('/').includes('chatai')
+  }
+
   loading = signal(false)
   userLoading = signal(false)
   logoutSubscription: Subscription
@@ -116,15 +150,26 @@ export class AppUserLayoutComponent implements OnDestroy {
     private authService: AuthService,
     private cartService: CartService,
     private scrollService: ScrollService,
+    private chatRail: ChatRailService,
   ) {
+
+    // Read SYNCHRONOUSLY, before any event: the layout is created during route activation, and the
+    // navigation that created it may already have emitted both start and end. Waiting for the next
+    // event would render the platform sidebar once on the chat route and remove it after paint --
+    // on the server that means the sidebar is in the serialised HTML.
+    this.chatScreen.set(this.isChatUrl(String(this.router.url)))
 
     this.routerEventSubscription = this.router.events.subscribe((event: any) => {
       if (event instanceof NavigationStart) {
         this.compIsLoading.set(true)
+        this.chatScreen.set(this.isChatUrl(String(event.url)))
       }
 
       if (event instanceof NavigationEnd) {
         this.compIsLoading.set(false)
+        // Set here as well as on start: a redirect changes `urlAfterRedirects`, and the first load
+        // arrives as an end event only.
+        this.chatScreen.set(this.isChatUrl(String(event.urlAfterRedirects)))
         // Update the animation state when navigation ends
         const outlet = this.contexts.getContext('primary')?.outlet;
         if (outlet && outlet.activatedRouteData && outlet.activatedRouteData['animation']) {
@@ -291,13 +336,29 @@ export class AppUserLayoutComponent implements OnDestroy {
   }
 
   addAsideBar(value: boolean) {
-
     if (value === this.closeAsideBar()) // The value was same as this component
       this.closeAsideBar.set(!value)
 
     else this.closeAsideBar.set(value)
 
     this.handleScrollbar()
+  }
+
+  /**
+   * What the header's menu button opens.
+   *
+   * On the chat route the page's own rail IS the menu, and the platform sidebar is not rendered
+   * there -- so a button bound to that sidebar would be dead on the one route where a menu matters
+   * most. Everywhere else this is the same call the button always made.
+   * @return {void}
+   */
+  toggleMenu(): void {
+    if (this.chatScreen()) {
+      this.chatRail.toggle()
+      return
+    }
+
+    this.addAsideBar(false)
   }
 
   onCloseAsideBar(event: boolean) {

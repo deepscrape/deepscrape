@@ -6,7 +6,7 @@
       <button
         appRipple
         rippleColor="dark"
-        (click)="addAsideBar(false)"
+        (click)="toggleMenu()"
         type="button"
         class="inline-flex items-center rounded-full p-3 text-sm text-gray-500 hover:bg-gray-300/[.2] focus:outline-none focus:ring-2 focus:ring-gray-200 dark:text-gray-300 dark:hover:bg-gray-700/[.2] dark:focus:ring-gray-600 lg:hidden">
         <span class="sr-only">{{ 'SHELL.OPEN_SIDEBAR' | translate }}</span>
@@ -396,29 +396,35 @@
 <!-- Inner Section
   -->
 <div
-  [ngClass]="{ 'flex flex-row': !closeAsideBar() && !viewSmallDevices() }"
-  class="relative mt-20 h-full w-full min-w-0 flex-grow gap-2 overflow-x-clip rounded-lg px-4 py-2 pt-0 lg:max-h-full lg:px-20 3xl:px-32">
-  <app-sidebar
-    class="shrink-0"
-    [barClosed]="closeAsideBar()"
-    [resizeScreen]="viewSmallDevices()"
-    (backDropPressed)="onCloseAsideBar($event)"></app-sidebar>
+  [ngClass]="[shellRow() ? 'flex flex-row' : '', shellInset()]"
+  class="relative mt-20 h-full w-full min-w-0 flex-grow overflow-x-clip">
+  <!-- Absent on the chat route, which draws its own rail of conversations; see `chatScreen`. -->
+  @if (!chatScreen()) {
+    <app-sidebar
+      class="shrink-0"
+      [barClosed]="closeAsideBar()"
+      [resizeScreen]="viewSmallDevices()"
+      (backDropPressed)="onCloseAsideBar($event)"></app-sidebar>
+  }
   <div class="min-w-0 flex-1 overflow-x-clip">
     <router-outlet
       [@routeAnimation]="currentRouteAnimation()"
       #outlet="outlet"></router-outlet>
   </div>
 </div>
-@if (!compIsLoading()) {
-  <app-footer [color]="footerColor()"></app-footer>
-
-  <!-- <div  class="hidden">{{footerColor}}</div> -->
-} @else {
+@if (compIsLoading()) {
   <span class="flex w-full items-center justify-center">
     <mat-spinner
       [diameter]="40"
       class="stroke-sky-700 dark:stroke-sky-400"></mat-spinner>
   </span>
+} @else if (!chatScreen()) {
+  <!-- Not on the chat route: that page owns the whole viewport and ends in its own rail, so a
+       full-width marketing footer under it would sit below a scroll container that never scrolls
+       the page. -->
+  <app-footer [color]="footerColor()"></app-footer>
+
+  <!-- <div  class="hidden">{{footerColor}}</div> -->
 }
 <!-- </div>
 [ngClass]="!closeAsideBar ? 'show' : 'hidden'"

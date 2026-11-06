@@ -1,7 +1,9 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostBinding, effect, inject, signal, viewChild } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { DatePipe, Location, NgTemplateOutlet } from '@angular/common';
+import { Router } from '@angular/router';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormsModule, Validators } from '@angular/forms';
+import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { TranslateModule } from '@ngx-translate/core';
 import { MarkdownModule } from 'ngx-markdown';
@@ -15,10 +17,13 @@ import { catchError } from 'rxjs/internal/operators/catchError';
 import { switchMap } from 'rxjs/internal/operators/switchMap';
 import { map } from 'rxjs/internal/operators/map';
 import { ClipboardbuttonComponent } from 'src/app/core/components/clipboardbutton/clipboardbutton.component';
-import { DropdownComponent } from 'src/app/core/components/dropdown/dropdown.component';
+// The app's own ripple, the one 60 other components already press. Material's `MatRipple` is a
+// second, differently-shaped ripple on the same product, so the chat uses this one or none.
+import { RippleDirective } from 'src/app/core/directives';
 import { AiToolCall, AiToolSpec, ToolCallResolution, ToolCallResult, accumulateAnthropic, accumulateOpenAi, anthropicToolTurns, availableTools, finishToolCalls, jobRequest, newToolCallAccumulator, openaiToolTurns, resolveToolCall, sessionOwning } from 'src/app/core/functions';
-import { FormControlPipe } from 'src/app/core/pipes';
-import { AiAPIService, AiFetchService, AiModelsService, AuthService, BucketStorageService, CrawlAPIService, CrawlStoreService, DeploymentService, SearchService, WebrainToolsService } from 'src/app/core/services';
+import { AiAPIService, AiFetchService, AiModelsService, AuthService, AuthzService, BucketStorageService, ChatRailService, CrawlAPIService, CrawlStoreService, DeploymentService, SearchService, WebrainToolsService } from 'src/app/core/services';
+// Same helper every sidebar, nav and tab link uses to build an org-scoped url.
+import { orgScopedUrl } from 'src/app/core/guards/host-routing.policy';
 // Not in the services barrel: every existing consumer imports it direct, so this follows them.
 import { BrowserSessionService } from 'src/app/core/services/browser-session.service';
 // Not in the barrel either -- the barrel exports `./billing.service`, not this one.
@@ -64,6 +69,76 @@ export interface ExecutedCall extends ToolCallResult {
     readonly status: ToolRunStatus;
 }
 
+/**
+ * Tokens one turn spent, normalised across vendors.
+ *
+ * Three numbers and no price: a price needs a per-model rate table this client does not own, and
+ * inventing one would be the same lie as showing a deadline we cannot keep. Tokens are what the
+ * vendor actually reports.
+ */
+export interface TokenUsage {
+    readonly input: number;
+    readonly output: number;
+    /** Of `input`, how many were served from the vendor's prompt cache. */
+    readonly cached: number;
+}
+
+/**
+ * The usage object a streamed chunk carried, in one shape.
+ *
+ * Four spellings, because four vendors disagree: `prompt_tokens`/`completion_tokens` from the
+ * OpenAI family, `input_tokens`/`output_tokens` from Claude's own message, and the cache count as
+ * `prompt_tokens_details.cached_tokens` (OpenAI, Groq, Kimi, OpenRouter), `prompt_cache_hit_tokens`
+ * (DeepSeek, which does not use the nested field at all), or `cache_read_input_tokens` (Anthropic,
+ * carried through by `sendToClaudeAI` under its own name). Only READS count: an Anthropic cache
+ * WRITE is billed at 1.25x and is not a saving, so `cache_creation_input_tokens` is deliberately
+ * absent.
+ *
+ * Null rather than zeros when nothing is countable: a turn with no usage must render nothing, not
+ * "0 in / 0 out".
+ * @param {unknown} raw The `usage` a chunk carried, or nothing.
+ * @return {TokenUsage | null} The counts, or null when the payload holds none.
+ */
+export function tokenUsage(raw: unknown): TokenUsage | null {
+    const usage = raw as Record<string, unknown> | null | undefined;
+    if (!usage || typeof usage !== 'object') {
+        return null;
+    }
+
+    const count = (value: unknown): number =>
+        typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+    const input = count(usage['prompt_tokens']) || count(usage['input_tokens']);
+    const output = count(usage['completion_tokens']) || count(usage['output_tokens']);
+
+    if (!input && !output) {
+        return null;
+    }
+
+    const details = usage['prompt_tokens_details'] as Record<string, unknown> | undefined;
+
+    return {
+        input,
+        output,
+        cached: count(details?.['cached_tokens']) ||
+            count(usage['prompt_cache_hit_tokens']) ||
+            count(usage['cache_read_input_tokens']),
+    };
+}
+
+/**
+ * An image a turn carried, as storage filed it.
+ *
+ * Three fields and no URL. A presigned link is a five-minute bearer credential
+ * (`PRESIGN_TTL_SECONDS`), so storing one would store a secret that both expires and fails; the
+ * key is the durable fact and the link is minted per request by `replayImages`.
+ */
+export interface ChatMedia {
+    readonly key: string;
+    readonly mime: string;
+    readonly name: string;
+}
+
 export interface ChatMessage {
     /**
      * Stable identity.
@@ -84,6 +159,22 @@ export interface ChatMessage {
      * tool result can never be replayed to the model as though the user had said it.
      */
     readonly tools?: readonly ToolRun[];
+    /**
+     * What the turn cost, as the vendor reported it.
+     *
+     * Absent on a turn that never reached a vendor, and on every transcript written before this
+     * field existed -- which is why the template treats it as optional rather than defaulting it.
+     */
+    readonly usage?: TokenUsage;
+    /**
+     * The images this turn carried, by the object they were filed under.
+     *
+     * KEYS, not bytes: `localStorage` spends the same ~5 MB budget the whole transcript lives in,
+     * so one stored image would evict the conversation it belongs to. A key is enough to mint a
+     * fresh link when the turn is replayed, and a key that no longer resolves is a chip that says
+     * the picture is gone rather than a request that fails.
+     */
+    readonly media?: readonly ChatMedia[];
 }
 
 /**
@@ -93,7 +184,7 @@ export interface ChatMessage {
  * wait), and the old single boolean told the user none of them. The BFF already has a
  * payment-required interceptor for the same reason.
  */
-export type ChatFailureKind = 'auth' | 'payment' | 'rate' | 'network' | 'server';
+export type ChatFailureKind = 'auth' | 'payment' | 'rate' | 'network' | 'server' | 'upstream';
 
 export interface ChatFailure {
     readonly kind: ChatFailureKind;
@@ -116,7 +207,11 @@ export interface ChatRequest {
      * the two collapse, and it is spelled out here rather than inferred.
      */
     vendor: AiVendorId;
-    messages: Array<{ role: string; content: string }>;
+    /**
+     * The turns to send. `content` is `unknown` because a user turn carrying an image is a list of
+     * content PARTS rather than a string, and the two dialects build different parts.
+     */
+    messages: Array<{ role: string; content: unknown }>;
 }
 
 /**
@@ -133,12 +228,39 @@ export interface ChatRequest {
  * Exported and pure so the spec can pin it without standing up the component.
  */
 export function buildHistory(
-    messages: readonly Pick<ChatMessage, 'role' | 'content'>[],
+    // `id` is optional because it is only needed to LOOK UP an image; a caller holding two fields
+    // should not have to invent one to ask for a transcript.
+    messages: readonly (Pick<ChatMessage, 'role' | 'content'> & { readonly id?: string })[],
     prompt: string,
-): Array<{ role: string; content: string }> {
-    return [...messages, { role: 'user' as const, content: prompt }]
+    provider: 'claude' | 'openai' = 'openai',
+    images: (id: string) => readonly RequestMedia[] = () => [],
+): Array<{ role: string; content: unknown }> {
+    const turns = [...messages, { id: '', role: 'user' as const, content: prompt }];
+
+    return turns
         .filter(message => message.content.trim().length > 0)
-        .map(({ role, content }) => ({ role, content }));
+        .map(({ id, role, content }) => {
+            // The resolver is what makes a follow-up work: without it an image reached the vendor
+            // once and every later turn asked about a picture the model could no longer see.
+            const attached = id ? images(id) : [];
+
+            return {
+                role,
+                content: attached.length ? filesInContent(provider, content, attached) : content,
+            };
+        });
+}
+
+/**
+ * Which wire dialect a model code speaks.
+ *
+ * Two callers need this now (the request builder and the history builder), and a second copy of
+ * `modelCode === 'claude'` is how the two would drift into disagreeing about the parts shape.
+ * @param {string} modelCode The model id the picker chose.
+ * @return {'claude'|'openai'} The dialect.
+ */
+export function providerFor(modelCode: string): 'claude' | 'openai' {
+    return modelCode === 'claude' ? 'claude' : 'openai';
 }
 
 /**
@@ -153,10 +275,10 @@ export function buildHistory(
  */
 export function buildRequest(
     modelCode: string,
-    messages: Array<{ role: string; content: string }>,
+    messages: Array<{ role: string; content: unknown }>,
     system: string,
 ): ChatRequest {
-    if (modelCode === 'claude') {
+    if (providerFor(modelCode) === 'claude') {
         return { provider: 'claude', vendor: 'anthropic', messages };
     }
 
@@ -193,18 +315,344 @@ export function isAtBottom(
 }
 
 /**
+ * What this turn is allowed to do.
+ *
+ * `agent` is the old behaviour and stays the default, so nothing changes for a caller who never
+ * opens the menu. The other two are narrower, never wider, and that direction is the whole point:
+ * a choice in a toolbar may only take capability away.
+ */
+export type ChatMode = 'ask' | 'plan' | 'agent';
+
+/** How much reasoning the model may spend. `off` is only meaningful where a vendor has the field. */
+export type ThinkEffort = 'default' | 'off' | 'low' | 'medium' | 'high';
+
+/**
+ * The tools a mode may offer.
+ *
+ * `requiresConfirm` IS the write boundary -- every route that changes account state sets it -- so
+ * Plan is "everything that only reads" without a second list of tool names to keep in step. A
+ * second list would drift the first time a tool was added to one and not the other.
+ * @param {readonly AiToolSpec[]} tools What the caller's tier allows.
+ * @param {ChatMode} mode The mode picked in the composer.
+ * @return {readonly AiToolSpec[]} The subset this mode may offer the model.
+ */
+export function toolsForMode(
+    tools: readonly AiToolSpec[],
+    mode: ChatMode,
+): readonly AiToolSpec[] {
+    if (mode === 'ask') {
+        return [];
+    }
+
+    return mode === 'plan' ? tools.filter(tool => tool.requiresConfirm !== true) : tools;
+}
+
+/**
+ * Which vendor tab the model picker holds.
+ *
+ * Derived on every read rather than stored, because a stored choice can outlive the catalogue it
+ * pointed at: tapping a tab whose catalogue came back empty left the list permanently empty and
+ * the panel claiming to be loading forever. A vendor with no models is not a tab, so a stale
+ * choice falls back to the selected model's vendor and then to the first one.
+ * @param {readonly string[]} tabs The vendors the catalogue returned, in catalogue order.
+ * @param {string} choice The vendor the user last tapped, if any.
+ * @param {string} selected The vendor of the model currently selected.
+ * @return {string} A vendor present in `tabs` whenever `tabs` is not empty.
+ */
+export function pickerTab(
+    tabs: readonly string[],
+    choice: string,
+    selected: string,
+): string {
+    if (choice && tabs.includes(choice)) {
+        return choice;
+    }
+
+    return tabs.includes(selected) ? selected : tabs[0] ?? selected;
+}
+
+/**
+ * The body fields that turn reasoning on or off, for the vendors that document them.
+ *
+ * Two vendors, because the field is vendor-specific and a parameter a vendor does not know is a
+ * 400 rather than a nudge. DeepSeek is the one that matters: it reasons by DEFAULT, and a request
+ * carrying `tools` must then replay `reasoning_content` on every later round -- which this client
+ * does not carry, so `off` is what keeps a tool round from failing. OpenAI's reasoning models take
+ * `reasoning_effort`; every other model rejects it outright, hence the name gate rather than
+ * sending it and hoping.
+ *
+ * shortcut: DeepSeek and OpenAI reasoning models only; the other vendors ignore this control.
+ * Upgrade to a per-vendor capability table when one of them documents an equivalent.
+ * @param {AiVendorId} vendor Which company answers the request.
+ * @param {string} model The model id, for the one gate that depends on it.
+ * @param {ThinkEffort} effort The value picked in the composer.
+ * @return {Record<string, unknown>} Fields to spread into the request body.
+ */
+export function reasoningParams(
+    vendor: AiVendorId,
+    model: string,
+    effort: ThinkEffort,
+): Record<string, unknown> {
+    // Anthropic's thinking is off unless explicitly enabled, so there is nothing to ask it for.
+    if (effort === 'default' || vendor === 'anthropic') {
+        return {};
+    }
+
+    if (vendor === 'deepseek') {
+        return effort === 'off' ? { thinking: { type: 'disabled' } } : {};
+    }
+
+    // Gemini's OpenAI-compatible endpoint maps `reasoning_effort` onto its thinking levels, and
+    // documents that it cannot be turned OFF on 2.5 Pro or the 3 family -- so `off` sends nothing
+    // rather than a value that would be rejected. Omitting the field is the documented default.
+    if (vendor === 'gemini') {
+        return effort === 'off' ? {} : { reasoning_effort: effort };
+    }
+
+    return /^(o\d|gpt-5)/i.test(model) && effort !== 'off'
+        ? { reasoning_effort: effort }
+        : {};
+}
+
+/**
+ * Vendors whose documentation says `response_format` is accepted.
+ *
+ * Two, deliberately. A vendor that does not take the field answers 400, so offering the switch
+ * everywhere would turn a formatting preference into a failed turn on somebody else's key. Adding
+ * one is a single entry here once that vendor's own guide says so -- which is the same standard
+ * `27-ai-file-and-tool-capabilities.md` §2 holds every other vendor claim to.
+ *
+ * Anthropic is absent because it has no `response_format` at all: JSON there is a prompt, not a
+ * parameter. OpenRouter and a caller's own endpoint are absent because support depends on the model
+ * behind them, which this client cannot see.
+ */
+export const JSON_VENDORS: readonly AiVendorId[] = ['openai', 'deepseek'];
+
+/**
+ * The request fields that ask for a JSON answer, when the vendor can be asked.
+ *
+ * `json_object` guarantees the SHAPE and never the content: a model can still answer a question
+ * that has nothing to do with JSON. And it guarantees nothing at all about the prose around it if
+ * the prompt does not echo the requirement, which is what `JSON_NOTE` is for.
+ * @param {boolean} json Whether the user asked for it.
+ * @param {AiVendorId} vendor The vendor the request goes to.
+ * @return {Record<string, unknown>} The fields, or {} when this vendor has none.
+ */
+export function formatParams(json: boolean, vendor: AiVendorId): Record<string, unknown> {
+    return json && JSON_VENDORS.includes(vendor) ? { response_format: { type: 'json_object' } } : {};
+}
+
+/**
+ * The extra system instruction a JSON turn carries.
+ *
+ * Both vendors require the word "json" in the prompt itself or they refuse the field, and DeepSeek's
+ * guide adds that an example steers the shape. It rides on the SYSTEM prompt rather than on the
+ * user's question so the transcript still shows what the user actually typed.
+ *
+ * Known limit: on a shape the model cannot produce, DeepSeek replaces the non-JSON text with spaces
+ * and still reports `stop`, so the turn can arrive empty. That is the same blank answer as any other
+ * and is handled by the existing "no answer" path rather than by a special case here.
+ */
+export const JSON_NOTE =
+    'Reply with one valid JSON object and no surrounding prose. If the question has no natural ' +
+    'JSON shape, wrap the answer in a single "answer" key.';
+
+/** A file the user attached, already read. */
+export interface ChatAttachment {
+    readonly name: string;
+    readonly text: string;
+    /** True when the body was cut, so the chip can say so instead of lying about the size. */
+    readonly truncated: boolean;
+    /** The MIME type, for an image or a document. Absent on a text attachment. */
+    readonly mime?: string;
+    /** Where the bytes were filed, so the object outlives this tab. */
+    readonly key?: string;
+    /** The bytes as a `data:` URL, kept only in memory and only for this page's lifetime. */
+    readonly dataUrl?: string;
+}
+
+/** Longest file body kept, in characters. Four of these is about a long article each. */
+export const ATTACH_MAX_CHARS = 12000;
+
+/** Files one message may carry. Beyond this the prompt stops being a question. */
+export const ATTACH_MAX_FILES = 4;
+
+/**
+ * The most bytes one attached file may carry, decoded.
+ *
+ * 1 MiB, not the vendor limits in `27-ai-file-and-tool-capabilities.md`: the binding constraint is
+ * the BFF's 8 MiB request body, and base64 spends 4/3 of it while the rest of the conversation
+ * shares the remainder. One cap for images and documents rather than two, because `ATTACH_MAX_FILES`
+ * of either is what that body budget was sized for.
+ */
+export const MEDIA_MAX_BYTES = 1024 * 1024;
+
+/** The image types both vendors we can address accept. Anything else is refused, not guessed at. */
+export const IMAGE_TYPES: readonly string[] = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+/**
+ * The one document type a vendor we address can read, and only Claude can.
+ *
+ * A PDF is not an image with a different name on the wire: it is a `document` block, it needs
+ * `media_type` beside the bytes, and every other vendor has no part that means it. A page is also
+ * billed twice over by Anthropic -- text extracted AND rendered as an image -- so this is the one
+ * attachment whose cost the user cannot guess from its size.
+ */
+export const PDF_TYPE = 'application/pdf';
+
+/**
+ * One attachment on its way to a vendor -- an image or a PDF.
+ *
+ * Two carriers, because there are two situations. A turn being sent NOW still holds its bytes, so
+ * it travels inline as a `data:` URL and costs no round trip. A turn being REPLAYED after a reload
+ * holds only a storage key, and the vendor fetches the URL itself -- which is why the replayed form
+ * has to be a presigned https link and never a `blob:` one, since a blob URL exists only in this
+ * document and a vendor's server cannot reach it.
+ *
+ * Anthropic says the same thing from the other side: an inline attachment is re-sent on every turn
+ * of a conversation and "significantly increase[s] request size and latency". A PDF makes that worse
+ * than an image, because every page is parsed before the first token is produced.
+ */
+export interface RequestMedia {
+    readonly mime: string;
+    /**
+     * The file's own name, when the page still knows it.
+     *
+     * Carried so a RESUMED turn can be re-labelled: a retry rebuilds the composer's chips from
+     * what the turn held, and a chip with no name would be persisted back as the media type.
+     */
+    readonly name?: string;
+    /** The bytes, for the turn being sent now. */
+    readonly dataUrl?: string;
+    /** A presigned https URL, for a turn being replayed. */
+    readonly url?: string;
+}
+
+/**
+ * A user turn's content once media is attached.
+ *
+ * Three shapes, because the dialects disagree and a wrong shape is a 400 rather than a fallback:
+ * Claude takes `{type:'image'|'document', source:{type:'base64'}}` for bytes and
+ * `source:{type:'url'}` for a link, everyone else takes an `image_url` whose url may be either.
+ * Media comes BEFORE the text in both, which is Anthropic's own guidance for images and for PDFs
+ * ("Place PDFs before text in your requests") and costs nothing to follow.
+ *
+ * A PDF is DROPPED for every provider but Claude. No other vendor has a part that means "document",
+ * and sending one as `image_url` would be a request that half-works -- the refusal the attach step
+ * already gives the user is the honest half of this rule.
+ *
+ * Takes the resolved carriers rather than the attachments: this is pure, and minting a link is not.
+ * @param {'claude'|'openai'} provider The wire dialect.
+ * @param {string} text The user's question.
+ * @param {readonly RequestMedia[]} media The attachments, in the order they were added.
+ * @return {unknown} A string when there is no usable media, otherwise the content parts.
+ */
+export function filesInContent(
+    provider: 'claude' | 'openai',
+    text: string,
+    media: readonly RequestMedia[],
+): unknown {
+    const carrier = (one: RequestMedia): string => one.dataUrl ?? one.url ?? '';
+
+    // Media with neither carrier is DROPPED rather than sent as an empty block: both dialects
+    // reject a part that names no source, and a turn whose object has expired must lose its
+    // picture, not its answer. Same rule for a document on a vendor that cannot read one.
+    const usable = media.filter(one =>
+        carrier(one) !== '' && (provider === 'claude' || one.mime !== PDF_TYPE));
+
+    if (!usable.length) {
+        return text;
+    }
+
+    const parts = usable.map(one => {
+        const source = carrier(one);
+        // The ONLY difference between the two blocks is the type name, which is why this is one
+        // branch rather than two builders.
+        const kind = one.mime === PDF_TYPE ? 'document' : 'image';
+
+        if (provider !== 'claude') {
+            return { type: 'image_url', image_url: { url: source } };
+        }
+
+        // The `data:` prefix is part of the URL, not of this field: Claude wants the bare base64
+        // and the media type beside it. A replayed attachment is a link instead, and Anthropic
+        // fetches it -- which is the only form a PDF has once the page has been reloaded.
+        return source.startsWith('data:')
+            ? {
+                type: kind,
+                source: {
+                    type: 'base64',
+                    media_type: one.mime,
+                    data: source.slice(source.indexOf(',') + 1),
+                },
+            }
+            : { type: kind, source: { type: 'url', url: source } };
+    });
+
+    return [...parts, { type: 'text', text }];
+}
+
+/**
+ * The prompt the model receives once the attachments are folded in.
+ *
+ * Tag-delimited rather than fenced: a file that contains ``` would close a fence and turn the
+ * rest of the prompt into prose. The tag also gives the model a name to cite.
+ * @param {string} prompt What the user typed.
+ * @param {readonly ChatAttachment[]} files The attached files, in the order they were added.
+ * @return {string} The text to send as the user turn.
+ */
+export function attachmentPrompt(
+    prompt: string,
+    files: readonly ChatAttachment[],
+): string {
+    // Text only: an image travels as message content, not as a prompt tag, so a file with no body
+    // contributes nothing here rather than an empty tag the model would read as an empty file.
+    const bodies = files.filter(file => file.text);
+
+    if (!bodies.length) {
+        return prompt;
+    }
+
+    const body = bodies
+        .map(file => `<file name="${file.name}">\n${file.text}\n</file>`)
+        .join('\n\n');
+
+    return `${body}\n\n${prompt}`;
+}
+
+/**
+ * A file as a `data:` URL.
+ *
+ * The browser does the encoding: `readAsDataURL` is the platform's own base64 and it also names the
+ * media type, so there is no second implementation here to disagree with the one in the storage
+ * service.
+ * @param {File} file The picked file.
+ * @return {Promise<string>} The data URL.
+ */
+const readDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+
+/**
  * AI chat. Streams against `AiAPIService`, which already accepts a message array and
  * reports deltas — no new service, no new dependency.
  */
 @Component({
     selector: 'app-chatai',
-    imports: [DatePipe, FormsModule, MatProgressSpinner, MarkdownModule, TranslateModule, DropdownComponent, FormControlPipe],
+    imports: [DatePipe, FormsModule, MatIcon, MatProgressSpinner, MarkdownModule, NgTemplateOutlet, RippleDirective, TranslateModule],
     templateUrl: './chatai.component.html',
     changeDetection: ChangeDetectionStrategy.OnPush,
+    host: {
+        class: 'grow flex flex-col min-h-0',
+        '(document:click)': 'onDocumentClick($event)',
+        '(document:keydown.escape)': 'onEscape()',
+    },
 })
 export class ChataiComponent {
-    @HostBinding('class') classes = 'grow flex flex-col min-h-0';
-
     /** ngx-markdown's clipboard directive wants the component type, not an instance. */
     readonly clipboardButton = ClipboardbuttonComponent;
 
@@ -227,6 +675,51 @@ export class ChataiComponent {
         { name: 'claude-haiku-5-5', code: 'claude' },
         { nonNullable: true, validators: [Validators.required] },
     );
+
+    /**
+     * The vendor whose models the picker is showing.
+     *
+     * Empty means "follow the selected model", which is what makes the menu open on the right tab
+     * without an effect: a tapped tab overrides it, and the model stays the source of truth until
+     * somebody taps one.
+     */
+    protected readonly vendorChoice = signal('');
+
+    /** The strip's selected tab, resolved against what the catalogue actually returned. */
+    protected readonly vendorTab = computed(() =>
+        pickerTab(this.vendorTabs(), this.vendorChoice(), this.modelAI.value.code));
+
+    /**
+     * Every vendor the catalogue returned, in catalogue order and without duplicates.
+     *
+     * Derived from the LIST rather than a vendor enum: the catalogue is the caller's own keys, so a
+     * vendor with no key is not a tab, and one added tomorrow appears with no edit here.
+     */
+    protected readonly vendorTabs = computed(() => {
+        const codes: string[] = [];
+
+        for (const model of this.models()) {
+            if (!codes.includes(model.code)) {
+                codes.push(model.code);
+            }
+        }
+
+        return codes;
+    });
+
+    /** What the list under the strip shows: one vendor's models. */
+    protected readonly vendorModels = computed(() =>
+        this.models().filter(model => model.code === this.vendorTab()));
+
+    /**
+     * Use a model, and hold the strip on the vendor it came from.
+     * @param {AIModel} model The model the user picked.
+     * @return {void}
+     */
+    chooseModel(model: AIModel): void {
+        this.vendorChoice.set(model.code);
+        this.modelAI.setValue(model);
+    }
 
     private readonly ai = inject(AiAPIService);
     private readonly tools = inject(WebrainToolsService);
@@ -254,6 +747,26 @@ export class ChataiComponent {
      */
     private readonly local = inject(LocalStorage);
     private readonly scroller = viewChild<ElementRef<HTMLElement>>('scroller');
+    /** Where the back control goes: the platform's own history, not a route this page picks. */
+    private readonly location = inject(Location);
+    /**
+     * The way out to the dashboard, which `back()` cannot guarantee.
+     *
+     * This route hides the platform sidebar, so without this the ONLY exit is browser history --
+     * and a user who arrived from a bookmark or a shared link has no history to go back through.
+     */
+    private readonly router = inject(Router);
+    /** Which org to return to: the dashboard is the org root, not a bare `/dashboard`. */
+    private readonly authz = inject(AuthzService);
+    /** The message box itself, so a sent question can collapse back to one row. */
+    private readonly draftBox = viewChild<ElementRef<HTMLTextAreaElement>>('draftBox');
+    /**
+     * The rail's visibility, shared with the shell's header button.
+     *
+     * The SAME signal the layout writes, not a copy: on this route the platform sidebar is not
+     * rendered, so the header's menu button has nowhere else to point.
+     */
+    private readonly chatRail = inject(ChatRailService);
 
     readonly messages = signal<ChatMessage[]>([]);
     readonly draft = signal('');
@@ -375,6 +888,18 @@ export class ChataiComponent {
     private readonly system = DEFAULT_SYSTEM_PROMPT;
 
     /**
+     * The system prompt this turn sends.
+     *
+     * The JSON instruction rides on the END of it rather than opening a second system turn, because
+     * both vendors need the word "json" somewhere in the prompt for `response_format` to be honoured
+     * at all -- sending the field alone is what turns a shape request into an error.
+     * @return {string} The prompt for this turn.
+     */
+    private systemText(): string {
+        return this.jsonOn() ? `${this.system} ${JSON_NOTE}` : this.system;
+    }
+
+    /**
      * Whether the caller's access mode is a paid one.
      *
      * A field rather than a read at the call site because the offer list is built while
@@ -396,8 +921,177 @@ export class ChataiComponent {
      */
     protected readonly offered = signal<readonly AiToolSpec[]>(availableTools());
 
+    /**
+     * What this turn is allowed to do.
+     *
+     * `agent` because that is what the page did before the control existed: a default that took
+     * capability away would silently change every existing conversation, and a mode is only
+     * trustworthy if choosing one is the only way to narrow it.
+     */
+    readonly mode = signal<ChatMode>('agent');
+
+    /** How much reasoning to ask for. `default` sends no field at all, which is the old request. */
+    readonly effort = signal<ThinkEffort>('default');
+
+    /**
+     * Whether the answer must be a JSON object.
+     *
+     * A preference, not a promise: it constrains the SHAPE of the reply and says nothing about its
+     * content, and it is honoured only where the vendor takes `response_format`.
+     */
+    readonly json = signal(false);
+
+    /** The vendor the picked model will be sent to, resolved exactly the way `buildRequest` does. */
+    protected readonly requestVendor = computed<AiVendorId>(() =>
+        providerFor(this.modelAI.value.code) === 'claude'
+            ? 'anthropic'
+            : vendorForModelCode(this.modelAI.value.code) ?? 'openai');
+
+    /**
+     * Whether the picked model can honour a JSON request, which is what decides whether the switch
+     * is drawn at all. The WIRE is guarded again in `formatParams`, because the model can be
+     * changed after the switch was already turned on.
+     */
+    protected readonly jsonOffer = computed(() => JSON_VENDORS.includes(this.requestVendor()));
+
+    /** The turn that is actually asking for JSON: the user wanted it AND this model can. */
+    protected readonly jsonOn = computed(() => this.json() && this.jsonOffer());
+
+    /**
+     * Tools the user unchecked, by name.
+     *
+     * A set of what is OFF rather than what is ON, so a tool added to `AI_TOOLS` tomorrow is
+     * available without this list knowing about it. The other way round, every new tool would be
+     * silently withheld until someone edited a default.
+     */
+    private readonly offTools = signal<ReadonlySet<string>>(new Set<string>());
+
+    /** Files folded into the next message. Emptied by the send that consumes them. */
+    readonly attachments = signal<readonly ChatAttachment[]>([]);
+
+    /**
+     * Why the last pick attached nothing, as a translate key, or ''.
+     *
+     * `onFiles` used to skip a binary silently, so "I dropped a PNG and nothing happened" was the
+     * only feedback the user got. One line says what the picker can and cannot read.
+     */
+    readonly attachError = signal('');
+
+    /**
+     * True while a file is being dragged over the composer.
+     *
+     * A drop that lands anywhere else is the browser's own navigation -- it replaces the app with
+     * the file -- so the composer has to say, before the drop, that it is the target. State rather
+     * than a CSS `:hover`, because `dragleave` fires when a child is entered and the highlight has
+     * to survive that.
+     */
+    readonly dragging = signal(false);
+
+    /**
+     * The images each turn was sent with, by message id.
+     *
+     * The BYTES, for turns sent in this page, because they are already in memory and replaying
+     * them costs no round trip. A turn restored from storage is NOT in here: it holds a key, and
+     * `replayImages` mints a link for it at request time, because a link is a five-minute
+     * credential and storing one would store a secret that expires.
+     */
+    private readonly turnMedia = new Map<string, readonly RequestMedia[]>();
+
+    /**
+     * Turns whose filed image could not be turned into a link.
+     *
+     * A chip rather than an error. The platform keeps objects for a retention window and a
+     * customer's own bucket may be emptied sooner, so a picture really can be gone. The transcript
+     * then says so instead of asking the model about an image it cannot see -- and the request
+     * still goes, which is the important half.
+     */
+    readonly expiredMedia = signal<ReadonlySet<string>>(new Set<string>());
+
+    /** Whether the conversation rail is showing. Open by default: it is the page's only index. */
+    readonly railOpen = this.chatRail.open;
+
+    /** How many conversations the rail has rendered. Grows as it is scrolled toward the end. */
+    private readonly railShown = signal(RAIL_PAGE);
+
+    /**
+     * The conversations the rail draws, ungrouped.
+     *
+     * Kept for the one question the GROUPS cannot answer: whether everything is rendered yet. Two
+     * lists cannot be compared against the total; this slice can. Growing on scroll is the "load
+     * more" the menu used to need a button for.
+     */
+    readonly railSessions = computed(() => this.history().slice(0, this.railShown()));
+
+    /**
+     * What the rail's search box holds.
+     *
+     * Rail-local and never stored: a filter is a way of LOOKING at the list, not a property of a
+     * conversation, so it does not belong in localStorage and must not survive a reload.
+     */
+    readonly query = signal('');
+
+    /** The conversations the search keeps. Every one of them while the box is empty. */
+    private readonly matched = computed(() => {
+        const needle = this.query();
+        return this.history().filter(session => sessionMatches(session, needle));
+    });
+
+    /** Whether a search is narrowing the list, which is what the empty state has to say. */
+    protected readonly searching = computed(() => this.query().trim().length > 0);
+
+    /** Pinned conversations, newest first. Drawn under their own heading, above the rest. */
+    readonly pinnedSessions = computed(() =>
+        this.matched().filter(session => session.pinned === true));
+
+    /**
+     * Everything else, windowed.
+     *
+     * The window is shared rather than per-group: `railShown` is one counter, so scrolling grows
+     * BOTH lists by one page and the rail can never show more rows than it has ever rendered.
+     */
+    readonly recentSessions = computed(() => this.matched()
+        .filter(session => session.pinned !== true)
+        .slice(0, this.railShown()));
+
+    /**
+     * The open conversation's title.
+     *
+     * Empty for a conversation that has not been stored yet, which is what hides the header line:
+     * a fresh chat has no name to show, and inventing one would name it before the user's question
+     * does.
+     */
+    protected readonly activeTitle = computed(() =>
+        this.history().find(session => session.id === this.activeId())?.title ?? '');
+
+    /**
+     * The tools this turn may offer the model.
+     *
+     * The mode narrows the tier's list and the user's own unchecked names narrow it again, in that
+     * order: a mode may not widen what the tier allows, which is why `toolsForMode` filters rather
+     * than builds. `stream()` offers exactly this array, so the panel cannot claim a capability the
+     * request withholds.
+     */
+    protected readonly sessionTools = computed(() =>
+        toolsForMode(this.offered(), this.mode())
+            .filter(tool => !this.offTools().has(tool.name)),
+    );
+
+    /** The hidden file input the plus menu opens. */
+    private readonly fileInput = viewChild<ElementRef<HTMLInputElement>>('fileInput');
+
+    /** This component's own element, so menu-closing stays scoped to the composer. */
+    private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+
     constructor() {
         this.aiModels.load();
+
+        // A desktop opens on the index, a phone on the conversation: below `lg` the rail is an
+        // overlay, so showing it first would cover the thing the user came for. Read ONCE -- this
+        // is a default, not a preference, and re-reading it on resize would reopen a rail the user
+        // had just closed. `window` is absent during prerender, where the open default is harmless.
+        if (typeof window !== 'undefined') {
+            this.railOpen.set(window.innerWidth >= 1024);
+        }
 
         // Named for the account rather than `billing`, which this class already uses for the
         // spend cap. Same source as every other tier decision on the client.
@@ -477,6 +1171,361 @@ export class ChataiComponent {
         }
     }
 
+    toggleRail(): void {
+        this.chatRail.toggle();
+    }
+
+    /**
+     * Leave the chat, back the way the user came.
+     *
+     * The browser's own history rather than a hard-coded destination: this rail is the route's only
+     * menu, so the one control that leaves it must return to whatever page sent the user here --
+     * which a fixed link cannot know. Going back past the chat to a page outside the app is the
+     * browser's decision and is left to it.
+     * @return {void}
+     */
+    back(): void {
+        this.location.back();
+    }
+
+    /**
+     * Leave the chat for the app home, whatever sent the user here.
+     *
+     * `orgScopedUrl` rather than a literal `/dashboard`: the org root IS the dashboard, and a bare
+     * `/dashboard` is read by the `:orgId` route as an org literally named "dashboard". With no
+     * active org the helper returns the bare url, which the legacy tree still resolves.
+     * @return {void}
+     */
+    home(): void {
+        void this.router.navigateByUrl(orgScopedUrl('/dashboard', this.authz.activeOrgId));
+    }
+
+    /**
+     * Render the next page of conversations once the rail is scrolled to its end.
+     *
+     * Not a fetch: every conversation is already in memory, and calling this "loading" would be a
+     * lie told by a spinner. What it saves is DOM, and the button it replaces.
+     * @param {Event} event The rail's scroll event.
+     * @return {void}
+     */
+    onRailScroll(event: Event): void {
+        const element = event.target as HTMLElement | null;
+
+        if (!element || this.railShown() >= this.history().length) {
+            return;
+        }
+
+        if (element.scrollTop + element.clientHeight < element.scrollHeight - RAIL_TOLERANCE_PX) {
+            return;
+        }
+
+        this.railShown.update(shown => shown + RAIL_PAGE);
+    }
+
+    pickFiles(): void {
+        this.fileInput()?.nativeElement.click();
+    }
+
+    /**
+     * Read the picked files and attach them.
+     *
+     * Three routes, because three kinds of file exist and only one of them a chat turn cannot
+     * carry: an image or a PDF is filed as BYTES and travels as message content, everything else
+     * is read as text and folded into the prompt. The input's value is cleared so picking the same
+     * file twice still fires `change`.
+     * @param {Event} event The input's change event.
+     * @return {Promise<void>} Resolves once every file has been read.
+     */
+    async onFiles(event: Event): Promise<void> {
+        const input = event.target as HTMLInputElement | null;
+        const picked = Array.from(input?.files ?? []);
+
+        if (input) {
+            input.value = '';
+        }
+
+        await this.ingest(picked);
+    }
+
+    /**
+     * Read a set of files into attachment chips.
+     *
+     * Shared by the picker, a drop and a paste: the three are the same file arriving by a different
+     * route, and only the picker has a value that has to be cleared for the next `change`.
+     * @param {File[]} picked The files to read.
+     * @return {Promise<void>} Resolves once every file has been read.
+     */
+    private async ingest(picked: File[]): Promise<void> {
+        const room = Math.max(ATTACH_MAX_FILES - this.attachments().length, 0);
+        const added: ChatAttachment[] = [];
+        let refused = room < picked.length;
+
+        this.attachError.set('');
+
+        for (const file of picked.slice(0, room)) {
+            const pdf = file.type === PDF_TYPE;
+
+            // Only Claude reads a document, and no other vendor has a part that means one. Refused
+            // HERE rather than dropped when the request is built, because a chip that disappears
+            // from the user's own turn is the silent failure this method exists to stop.
+            if (pdf && providerFor(this.modelAI.value.code) !== 'claude') {
+                refused = true;
+                continue;
+            }
+
+            if (pdf || file.type.startsWith('image/')) {
+                const one = await this.mediaAttachment(file);
+
+                if (!one) {
+                    refused = true;
+                    continue;
+                }
+
+                added.push(one);
+                continue;
+            }
+
+            let body = '';
+
+            try {
+                body = await file.text();
+            } catch {
+                // Unreadable (a directory, a locked file) is reported rather than swallowed: a
+                // file that produces no chip and no message reads as a broken picker.
+                refused = true;
+                continue;
+            }
+
+            // A binary file decodes to replacement characters, and twelve thousand of them is a
+            // prompt that costs money and says nothing. Refused, and SAID SO -- this used to
+            // `continue` silently, so dropping an image looked like nothing happening at all.
+            if ((body.slice(0, 2000).match(/\uFFFD/g)?.length ?? 0) > 100) {
+                refused = true;
+                continue;
+            }
+
+            added.push({
+                // The name reaches a prompt tag, so the characters that could close it are dropped.
+                name: file.name.replace(/["<>\r\n]/g, '').slice(0, 80) || 'file',
+                text: body.slice(0, ATTACH_MAX_CHARS),
+                truncated: body.length > ATTACH_MAX_CHARS,
+            });
+        }
+
+        if (added.length) {
+            this.attachments.update(list => [...list, ...added]);
+        }
+
+        if (refused) {
+            this.attachError.set('CHAT.ATTACH_UNSUPPORTED');
+        }
+    }
+
+    /**
+     * Claim a drag that is carrying files, so the browser does not navigate to it.
+     *
+     * The default action of a drop on a page is to open the file, which would replace the whole
+     * app with a PNG; cancelling it here is what makes the composer a drop target at all. Only a
+     * file drag is claimed -- dragging selected text into the box still has to paste as text.
+     * @param {DragEvent} event The drag event over the composer.
+     * @return {void}
+     */
+    onDragOver(event: DragEvent): void {
+        if (!event.dataTransfer?.types.includes('Files')) {
+            return;
+        }
+
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        this.dragging.set(true);
+    }
+
+    /**
+     * Drop the highlight when the pointer leaves the composer.
+     *
+     * Fires on every child too, and a child is most of the composer's area, so the flag is cleared
+     * without inspecting `relatedTarget`: a stale highlight that lies about being a target is worse
+     * than one that flickers while the pointer crosses the textarea.
+     * @return {void}
+     */
+    onDragLeave(): void {
+        this.dragging.set(false);
+    }
+
+    /**
+     * Take the files that were dropped on the composer.
+     *
+     * The highlight is cleared FIRST: `ingest` awaits a read per file, and a box that keeps its
+     * ring while the chips appear reads as still waiting for a drop.
+     * @param {DragEvent} event The drop event.
+     * @return {void}
+     */
+    onDrop(event: DragEvent): void {
+        event.preventDefault();
+        this.dragging.set(false);
+        void this.ingest(Array.from(event.dataTransfer?.files ?? []));
+    }
+
+    /**
+     * Take a file pasted into the composer -- a screenshot, usually.
+     *
+     * Only files are claimed. A paste that carries text AND a file is left to the browser, because
+     * `preventDefault` here would delete the text the user was about to send.
+     * @param {ClipboardEvent} event The paste event.
+     * @return {void}
+     */
+    onPaste(event: ClipboardEvent): void {
+        const files = Array.from(event.clipboardData?.files ?? []);
+
+        if (!files.length) {
+            return;
+        }
+
+        event.preventDefault();
+        void this.ingest(files);
+    }
+
+    /**
+     * Read and file one attachment -- an image or a PDF -- or null when it cannot be sent.
+     *
+     * The `data:` URL is what the request carries, not a presigned link: a link is minted for five
+     * minutes, and a tool loop can outlive that, which would fail the vendor's fetch mid-turn
+     * instead of at the boundary. The bytes are ALSO filed, so the object survives this tab and can
+     * back a stored conversation later -- a failed upload does not block the send, because the
+     * answer is what the user asked for.
+     * @param {File} file The picked image or PDF.
+     * @return {Promise<ChatAttachment | null>} The attachment, or null when it is too big or not a
+     * type a vendor we address can read.
+     */
+    private async mediaAttachment(file: File): Promise<ChatAttachment | null> {
+        const readable = IMAGE_TYPES.includes(file.type) || file.type === PDF_TYPE;
+
+        if (!readable || file.size > MEDIA_MAX_BYTES) {
+            return null;
+        }
+
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const name = file.name.replace(/["<>\r\n]/g, '').slice(0, 80) || 'file';
+        const dataUrl = await readDataUrl(file);
+
+        const key = await firstValueFrom(this.storage.saveBytes(bytes, name, file.type))
+            .then(reply => reply.key)
+            .catch(() => '');
+
+        return {
+            name,
+            text: '',
+            truncated: false,
+            mime: file.type,
+            key,
+            dataUrl,
+        };
+    }
+
+    removeAttachment(index: number): void {
+        this.attachments.update(list => list.filter((_, at) => at !== index));
+    }
+
+    /** Whether a tool is still offered. An unchecked name is refused by `sessionTools`. */
+    isToolOn(name: string): boolean {
+        return !this.offTools().has(name);
+    }
+
+    toggleTool(name: string, on: boolean): void {
+        this.offTools.update(current => {
+            const next = new Set(current);
+
+            if (on) {
+                next.delete(name);
+            } else {
+                next.add(name);
+            }
+
+            return next;
+        });
+    }
+
+    /** The modes the composer offers, narrowest first. */
+    protected readonly modes: readonly ChatMode[] = ['ask', 'plan', 'agent'];
+
+    /** The effort values the composer offers, weakest first. */
+    protected readonly efforts: readonly ThinkEffort[] = ['default', 'off', 'low', 'medium', 'high'];
+
+    /** A mode's icon. Material ligature names, the same set the rest of the app draws from. */
+    protected modeIcon(mode: ChatMode = this.mode()): string {
+        if (mode === 'ask') {
+            return 'chat_bubble_outline';
+        }
+
+        return mode === 'plan' ? 'account_tree' : 'smart_toy';
+    }
+
+    protected modeKey(mode: ChatMode = this.mode()): string {
+        return `CHAT.MODE_${mode.toUpperCase()}`;
+    }
+
+    protected modeHint(mode: ChatMode = this.mode()): string {
+        return `CHAT.MODE_${mode.toUpperCase()}_HINT`;
+    }
+
+    protected effortKey(effort: ThinkEffort = this.effort()): string {
+        return `CHAT.EFFORT_${effort.toUpperCase()}`;
+    }
+
+    /**
+     * Close the `<details>` a menu item lives in.
+     *
+     * `<details>` stays open after an item inside it is clicked, which would leave the menu
+     * covering the composer it was opened from. Walking up to the nearest one is the version that
+     * needs no template ref per menu.
+     * @param {Event} event The click, from which the enclosing menu is found.
+     * @return {void}
+     */
+    closeMenu(event: Event): void {
+        let node = event.target as HTMLElement | null;
+
+        while (node) {
+            if (node instanceof HTMLDetailsElement) {
+                node.open = false;
+                return;
+            }
+
+            node = node.parentElement;
+        }
+    }
+
+    /**
+     * Close any composer menu the click landed outside of.
+     *
+     * `<details>` keeps no open set, so without this a second menu opens ON TOP of the first and
+     * both stay up. Scoped to this component's own `details[data-menu]` and not the document: a
+     * `<details>` anywhere else on the page keeps its native behaviour.
+     * @param {Event} event The click, whose target decides which menus survive.
+     * @return {void}
+     */
+    onDocumentClick(event: Event): void {
+        const target = event.target as Node | null;
+
+        for (const menu of this.menus()) {
+            if (target && !menu.contains(target)) {
+                menu.open = false;
+            }
+        }
+    }
+
+    /** Escape closes every composer menu, which is what every menu on the platform does. */
+    onEscape(): void {
+        for (const menu of this.menus()) {
+            menu.open = false;
+        }
+    }
+
+    private menus(): HTMLDetailsElement[] {
+        return Array.from(
+            this.host.nativeElement.querySelectorAll<HTMLDetailsElement>('details[data-menu]'),
+        );
+    }
+
     /**
      * Copy one answer in full.
      *
@@ -506,12 +1555,51 @@ export class ChataiComponent {
 
     send(): void {
         const prompt = this.draft().trim();
-        if (!prompt || this.streaming()) {
+
+        // An attachment with nothing typed is still a message: "what is in this file?" is the
+        // obvious question, and refusing it would leave an enabled Send button that did nothing.
+        if ((!prompt && !this.attachments().length) || this.streaming()) {
             return;
         }
 
         this.draft.set('');
+        // Clearing the value does not clear the HEIGHT: the box was measured against the text that
+        // has just been sent, so it would sit tall and empty until the next keystroke.
+        this.draftBox()?.nativeElement.style.removeProperty('height');
         this.submit(prompt);
+    }
+
+    /**
+     * Grow the message box with what is typed, up to the CSS cap.
+     *
+     * `rows="1"` and a `max-h` on their own do nothing: a textarea keeps one row and scrolls its
+     * content, so a long question was hidden inside a one-line box. The height is cleared before it
+     * is measured, because `scrollHeight` reports the content only once the previous height is not
+     * clamping it. `max-h-64` still wins over the inline height, so nothing here needs to clamp.
+     * @param {Event} event The textarea's input event.
+     * @return {void}
+     */
+    resizeDraft(event: Event): void {
+        const field = event.target as HTMLTextAreaElement | null;
+
+        if (!field) {
+            return;
+        }
+
+        this.grow(field);
+    }
+
+    /**
+     * Size a textarea to its content.
+     *
+     * Cleared first because `scrollHeight` reports the content only once the previous height is not
+     * clamping it. Two callers -- typing, and an edited turn landing in the box -- and one rule.
+     * @param {HTMLTextAreaElement} field The box to measure.
+     * @return {void}
+     */
+    private grow(field: HTMLTextAreaElement): void {
+        field.style.height = 'auto';
+        field.style.height = `${field.scrollHeight}px`;
     }
 
     /**
@@ -533,34 +1621,117 @@ export class ChataiComponent {
      *
      * One action rather than two, because "retry" after a failure and "regenerate" after an
      * answer the user did not want are the same operation on the transcript: drop everything
-     * from the last user turn onward and submit it again. The button is labelled by whichever
-     * state the user is actually in.
+     * from the last user turn onward and submit it again -- WITH the attachments that turn
+     * carried, which is the difference between regenerating an answer and asking a question the
+     * model cannot see the picture for. The button is labelled by whichever state the user is in.
      */
     retry(): void {
         if (this.streaming()) {
             return;
         }
 
-        const list = this.messages();
+        const found = this.lastUserTurn();
 
-        // A loop rather than `findLastIndex`/`at`, which need a newer `lib` than this project
-        // pins. The transcript is short and this runs once per click.
-        let start = -1;
-        for (let index = list.length - 1; index >= 0; index--) {
-            if (list[index].role === 'user') {
-                start = index;
-                break;
-            }
-        }
-
-        if (start < 0) {
+        if (!found) {
             return;
         }
 
-        const prompt = list[start].content;
+        this.messages.set(this.messages().slice(0, found.index));
+        // The turn's OWN attachments, put back where `submit` reads them from. Without this a
+        // regenerated image or PDF turn was resent as text and the model was asked about a picture
+        // it could no longer see -- the defect this method used to carry a comment about.
+        this.attachments.set(this.chipsFor(found.turn));
+        this.submit(found.turn.content);
+    }
 
-        this.messages.set(list.slice(0, start));
-        this.submit(prompt);
+    /**
+     * The last thing the user asked, and where it sits.
+     *
+     * One definition for the two actions that act on it -- regenerate and edit -- so the two can
+     * never disagree about which turn they mean. A loop rather than `findLastIndex`/`at`, which need
+     * a newer `lib` than this project pins; the transcript is short and this runs once per click.
+     * @return {{index: number, turn: ChatMessage} | null} The turn, or null when there is none.
+     */
+    private lastUserTurn(): { index: number; turn: ChatMessage } | null {
+        const list = this.messages();
+
+        for (let index = list.length - 1; index >= 0; index--) {
+            if (list[index].role === 'user') {
+                return { index, turn: list[index] };
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Put the last question back in the box, with its attachments, and drop the answer.
+     *
+     * Edits rather than resends: the turn is REMOVED and its text and media are handed to the
+     * composer, so one wrong word costs one word instead of a retyped question and a re-attached
+     * file. `retry` is the same operation that skips the editing step.
+     * @return {void}
+     */
+    editTurn(): void {
+        if (this.streaming()) {
+            return;
+        }
+
+        const found = this.lastUserTurn();
+
+        if (!found) {
+            return;
+        }
+
+        this.draft.set(found.turn.content);
+        this.attachments.set(this.chipsFor(found.turn));
+        this.messages.set(this.messages().slice(0, found.index));
+        this.failure.set(null);
+        this.persistTranscript();
+
+        // Deferred: the binding writes the value on the next change-detection pass, and measuring
+        // before it lands would size the box against the text it is replacing.
+        setTimeout(() => {
+            const box = this.draftBox()?.nativeElement;
+
+            if (box) {
+                box.focus();
+                this.grow(box);
+            }
+        });
+    }
+
+    /**
+     * The composer chips that reproduce what one turn carried.
+     *
+     * Bytes first, because a turn sent in THIS page still holds them and replaying costs no round
+     * trip; a turn restored from storage holds only storage keys, and `replayMedia` mints a link for
+     * those at request time. The in-memory entry is dropped afterwards, since the turn it belonged
+     * to is about to be replaced by a new id.
+     * @param {ChatMessage} turn The user turn being resent.
+     * @return {ChatAttachment[]} Chips ready for `submit`.
+     */
+    private chipsFor(turn: ChatMessage): ChatAttachment[] {
+        const bytes = this.turnMedia.get(turn.id) ?? [];
+
+        if (bytes.length) {
+            this.turnMedia.delete(turn.id);
+            return bytes.map(one => ({
+                name: one.name ?? one.mime,
+                text: '',
+                truncated: false,
+                mime: one.mime,
+                dataUrl: one.dataUrl,
+            }));
+        }
+
+        return (turn.media ?? []).map(one => ({
+            name: one.name,
+            text: '',
+            truncated: false,
+            mime: one.mime,
+            key: one.key,
+        }));
     }
 
     /**
@@ -809,6 +1980,24 @@ export class ChataiComponent {
     }
 
     /**
+     * Pin a conversation to the rail's pinned group, or unpin it.
+     *
+     * A stored flag rather than a second list: the two headings are drawn from ONE array, so a
+     * conversation the user is looking for is never in the second place they have to think of. The
+     * cap is applied where the list is BUILT (`persistTranscript`), so toggling a pin rewrites the
+     * same rows and cannot grow it.
+     * @param {string} id The conversation.
+     * @return {void}
+     */
+    togglePin(id: string): void {
+        const sessions = this.history().map(session =>
+            session.id === id ? { ...session, pinned: !session.pinned } : session);
+
+        this.history.set(sessions);
+        this.writeSessions(this.activeId(), sessions);
+    }
+
+    /**
      * Begin editing a conversation's title.
      *
      * Rename exists because the title is derived from the first question, and the first question is
@@ -872,19 +2061,54 @@ export class ChataiComponent {
         this.stoppedAtLimit.set(false);
         this.toolFailed.set(false);
 
+        // Attachments are folded into the QUESTION rather than kept beside it, so the transcript
+        // shows exactly what the model was given and a retry resends it. Consumed here because
+        // this is the one path every turn takes -- leaving them attached would post them twice.
+        const attachments = this.attachments();
+        const question = attachmentPrompt(prompt, attachments);
+
+        if (attachments.length) {
+            this.attachments.set([]);
+        }
+
         // Snapshot history BEFORE the empty assistant placeholder is pushed, otherwise the
-        // streamed reply would be fed back to the model as its own prior turn.
-        const request = buildRequest(
-            this.modelAI.value.code,
-            buildHistory(this.messages(), prompt),
-            this.system,
-        );
+        // streamed reply would be fed back to the model as its own prior turn. Named `turns`
+        // because `history` is already the conversation RAIL, injected above.
+        const turns = this.messages();
+        const code = this.modelAI.value.code;
+        const provider = providerFor(code);
+        // The carriers this page still holds, images and PDFs alike: the form a request uses when
+        // there is no link to mint first.
+        const inMemory = attachments
+            .filter(file => file.dataUrl)
+            .map(file => ({ mime: file.mime ?? '', name: file.name, dataUrl: file.dataUrl as string }));
+
+        // What a reload can replay: the object key, not the bytes. Filed ON the turn so it
+        // survives the page, which is the whole difference between this and `turnMedia`.
+        const media: ChatMedia[] = attachments
+            .filter(file => file.key && file.mime)
+            .map(file => ({ key: file.key as string, mime: file.mime as string, name: file.name }));
+
+        const userId = newId();
 
         this.messages.update(list => [
             ...list,
-            { id: newId(), role: 'user', content: prompt, at: Date.now() },
+            {
+                id: userId,
+                role: 'user',
+                content: question,
+                at: Date.now(),
+                ...(media.length ? { media } : {}),
+            },
             { id: newId(), role: 'assistant', content: '', at: Date.now() },
         ]);
+
+        // Recorded AFTER the turn has an id, so the next turn's resolver finds it. `retry` hands it
+        // back to the composer before dropping the turn, which is what lets a regenerated image turn
+        // keep its picture.
+        if (inMemory.length) {
+            this.turnMedia.set(userId, inMemory);
+        }
         // The QUESTION is persisted here rather than at the end of the turn, so a reload
         // mid-answer keeps what the user typed. The empty placeholder goes in with it and
         // `toChatMessage` drops it on the way back out.
@@ -892,10 +2116,111 @@ export class ChataiComponent {
         this.streaming.set(true);
         this.failure.set(null);
 
-        // The array is the conversation the PROVIDER sees. It is extended in place once a
-        // tool round adds turns, so the answering round reads the calls and their results
-        // rather than being asked the original question again.
-        this.stream(request, request.messages, true);
+        // Minting a link for a restored turn is a round trip, so the question is on screen before
+        // it starts and the effect above has already begun following it.
+        void this.replayMedia(turns).then(replay => {
+            // A stop() while the links were being minted has already closed this turn. Starting
+            // the stream now would append an answer to a conversation the user ended -- and to a
+            // transcript `newChat` may have emptied.
+            if (!this.streaming()) {
+                return;
+            }
+
+            const request = buildRequest(
+                code,
+                // The resolver replays what EARLIER turns were sent with. Without it an image
+                // reached the vendor once and every follow-up asked about a picture the model
+                // could not see.
+                buildHistory(turns, question, provider, id => replay.get(id) ?? []),
+                this.systemText(),
+            );
+
+            if (inMemory.length) {
+                const last = request.messages[request.messages.length - 1];
+                request.messages[request.messages.length - 1] = {
+                    role: last.role,
+                    content: filesInContent(request.provider, question, inMemory),
+                };
+            }
+
+            // The array is the conversation the PROVIDER sees. It is extended in place once a
+            // tool round adds turns, so the answering round reads the calls and their results
+            // rather than being asked the original question again.
+            this.stream(request, request.messages, true);
+        });
+    }
+
+    /**
+     * The images earlier turns were sent with, as a request can carry them.
+     *
+     * A turn sent in this page still holds its bytes and replays for free. A turn restored from
+     * storage holds only the object KEY, and a vendor fetches a link itself -- so the link is
+     * minted here, per request, and never stored: a presigned URL lives five minutes
+     * (`PRESIGN_TTL_SECONDS`) and is a bearer credential.
+     *
+     * Capped at one message's worth of parts, newest first. Every ROUND re-sends the conversation
+     * and one turn can spend twelve of them, so replaying a whole gallery would multiply the
+     * vendor's fetch cost by the tool budget; `IMAGE_MAX_BYTES` is what each of these was already
+     * limited to when it was attached, which keeps the replayed set under 4 MiB.
+     * @param {readonly ChatMessage[]} turns The conversation about to be sent.
+     * @return {Promise<Map<string, readonly RequestMedia[]>>} Images by turn id. Never rejects.
+     */
+    private async replayMedia(
+        turns: readonly ChatMessage[],
+    ): Promise<Map<string, readonly RequestMedia[]>> {
+        const images = new Map<string, readonly RequestMedia[]>(this.turnMedia);
+        const expired = new Set(this.expiredMedia());
+        const pending: { id: string; media: ChatMedia }[] = [];
+
+        for (const turn of turns) {
+            if (turn.role !== 'user' || !turn.media?.length || images.has(turn.id)) {
+                continue;
+            }
+
+            for (const media of turn.media) {
+                pending.push({ id: turn.id, media });
+            }
+        }
+
+        // Grouped before resolving, so two images on ONE turn do not race each other into
+        // overwriting the turn's entry.
+        const groups = new Map<string, ChatMedia[]>();
+
+        for (const { id, media } of pending.slice(-ATTACH_MAX_FILES)) {
+            groups.set(id, [...(groups.get(id) ?? []), media]);
+        }
+
+        try {
+            await Promise.all(
+                Array.from(groups).map(async ([id, list]) => {
+                    const resolved = await Promise.all(
+                        list.map(async (media): Promise<RequestMedia | null> => {
+                            const url = await firstValueFrom(this.storage.presign(media.key))
+                                .then(reply => reply.url)
+                                .catch(() => '');
+
+                            return url ? { mime: media.mime, url } : null;
+                        }),
+                    );
+
+                    const usable = resolved.filter((one): one is RequestMedia => one !== null);
+
+                    if (usable.length) {
+                        images.set(id, usable);
+                        expired.delete(id);
+                    } else {
+                        expired.add(id);
+                    }
+                }),
+            );
+        } catch {
+            // Nothing here may fail the turn. A link that could not be minted is one image the
+            // model is not shown; the answer is what the user asked for.
+        }
+
+        this.expiredMedia.set(expired);
+
+        return images;
     }
 
     /**
@@ -919,7 +2244,9 @@ export class ChataiComponent {
         offerTools: boolean,
     ): void {
         const claude = request.provider === 'claude';
-        const offered = offerTools ? availableTools(this.paid) : undefined;
+        // The MODE's list rather than the tier's. `availableTools` is what the tier allows; offering
+        // that here would hand a Plan turn the write tools the composer just promised to hide.
+        const offered = offerTools ? this.sessionTools() : undefined;
         const accumulator = newToolCallAccumulator();
 
         // The vendor the model was picked from. The guard is for the TYPE rather than the
@@ -930,9 +2257,16 @@ export class ChataiComponent {
         // `jina` needs no clause: it is a scrape provider and is not in `AiVendorId`.
         const vendor = request.vendor === 'anthropic' ? undefined : request.vendor;
 
+        // Computed per round rather than carried on `ChatRequest`: it depends on a vendor whose
+        // spelling differs per model, and an empty object leaves the body exactly as it was.
+        const extra = {
+            ...reasoningParams(request.vendor, this.modelAI.value.name, this.effort()),
+            ...formatParams(this.jsonOn(), request.vendor),
+        };
+
         const source = claude
-            ? this.ai.sendToClaudeAI(messages, this.modelAI.value.name, this.system, offered)
-            : this.ai.sendToOpenAI(messages, this.modelAI.value.name, undefined, offered, vendor);
+            ? this.ai.sendToClaudeAI(messages, this.modelAI.value.name, this.system, offered, extra)
+            : this.ai.sendToOpenAI(messages, this.modelAI.value.name, undefined, offered, vendor, extra);
 
         // Held on the instance so `stop()` can drop it. `takeUntilDestroyed` stays: navigating
         // away must still cancel the round, and unsubscribing twice is a no-op.
@@ -952,6 +2286,14 @@ export class ChataiComponent {
                     }
 
                     this.appendToReply(chunk?.content ?? '');
+
+                    // Only the FINAL chunk carries it (`stream_options.include_usage`), so this
+                    // fires once per round. Accumulated across rounds because that is what the
+                    // turn actually billed: each tool round re-sends the conversation.
+                    const spent = tokenUsage(chunk?.usage);
+                    if (spent) {
+                        this.recordUsage(spent);
+                    }
                 },
                 error: (error: unknown) => this.fail(error),
                 complete: () => {
@@ -1140,6 +2482,21 @@ export class ChataiComponent {
 
         if (!resolution.ok) {
             return of({ call, content: refusalText(resolution), status: 'refused' });
+        }
+
+        // A SECOND trust boundary, not a UI filter. `sessionTools` decides what the model is
+        // OFFERED; a model can still name a tool it was never offered, and without this check that
+        // name would reach a route because it asked nicely. Answered as text so the round recovers,
+        // and named, so the model can say which mode would allow it.
+        if (this.mode() !== 'agent' && resolution.tool.requiresConfirm === true) {
+            return of({
+                call,
+                content:
+                    `The tool "${resolution.tool.name}" changes account state, and this ` +
+                    `conversation is in ${this.mode()} mode, which may only read. Do not ` +
+                    'retry it; tell the user it needs Agent mode.',
+                status: 'refused',
+            });
         }
 
         this.toolRunning.set(resolution.tool.name);
@@ -1580,6 +2937,40 @@ export class ChataiComponent {
         });
     }
 
+    /**
+     * Add one round's usage to the answer it produced.
+     *
+     * Accumulated rather than replaced: a turn can spend several rounds and each one re-sends the
+     * conversation, so the sum is what the user is actually paying for. A turn that fails before a
+     * round reports leaves the field absent, which is why the template renders nothing rather than
+     * zeros.
+     * @param {TokenUsage} spent What that round cost.
+     * @return {void}
+     */
+    private recordUsage(spent: TokenUsage): void {
+        this.messages.update(list => {
+            const last = list[list.length - 1];
+
+            if (!last || last.role !== 'assistant') {
+                return list;
+            }
+
+            const total = last.usage ?? { input: 0, output: 0, cached: 0 };
+
+            return [
+                ...list.slice(0, -1),
+                {
+                    ...last,
+                    usage: {
+                        input: total.input + spent.input,
+                        output: total.output + spent.output,
+                        cached: total.cached + spent.cached,
+                    },
+                },
+            ];
+        });
+    }
+
     private fail(error: unknown): void {
         console.error('AI chat stream failed:', error);
 
@@ -1652,6 +3043,9 @@ const TRANSCRIPT_MAX = 40;
 const SESSIONS_MAX = 20;
 /** Longest title kept or rendered, so one pasted paragraph cannot fill the menu. */
 const TITLE_MAX = 60;
+/** Conversations the rail renders per page, and how close to its end counts as "reached". */
+const RAIL_PAGE = 12;
+const RAIL_TOLERANCE_PX = 48;
 
 /**
  * One stored conversation.
@@ -1666,6 +3060,34 @@ export interface ChatSession {
     readonly title: string;
     readonly at: number;
     readonly messages: readonly ChatMessage[];
+    /**
+     * Pinned under the rail's `CHAT.PINNED` heading.
+     *
+     * Optional because it arrived after the format did: a conversation stored before this existed
+     * has no field, and absent must read as "not pinned" rather than as a migration.
+     */
+    readonly pinned?: boolean;
+}
+
+/**
+ * Whether a conversation answers a search.
+ *
+ * Title first, then the turns: a conversation is remembered by what was SAID in it as often as by
+ * the question that opened it, and the title is only that question's first line. Case-insensitive,
+ * and an empty needle matches everything so the caller needs no special case.
+ * @param {ChatSession} session The conversation.
+ * @param {string} query What the user typed.
+ * @return {boolean} True when the conversation belongs in the filtered list.
+ */
+export function sessionMatches(session: ChatSession, query: string): boolean {
+    const needle = query.trim().toLowerCase();
+
+    if (!needle) {
+        return true;
+    }
+
+    return session.title.toLowerCase().includes(needle) ||
+        session.messages.some(message => message.content.toLowerCase().includes(needle));
 }
 
 /**
@@ -1717,6 +3139,49 @@ const toToolRun = (run: StoredRun): ToolRun => ({
  * @param {unknown} value One entry of the stored array.
  * @return {ChatMessage | null} The turn, or null when it cannot be rendered.
  */
+/**
+ * Whether a stored value is a usage record the template can render.
+ *
+ * Validated rather than trusted, for the same reason as `isStoredRun`: this comes back out of
+ * `localStorage`, which any script on this origin can write. A missing or hand-edited record is
+ * DROPPED, so an old transcript simply shows no cost line instead of `NaN`.
+ * @param {unknown} value The stored field.
+ * @return {value is TokenUsage} True when all three counts are real numbers.
+ */
+const isStoredUsage = (value: unknown): value is TokenUsage => {
+    const usage = value as Partial<TokenUsage> | null | undefined;
+
+    return (
+        !!usage &&
+        typeof usage.input === 'number' &&
+        typeof usage.output === 'number' &&
+        typeof usage.cached === 'number'
+    );
+};
+
+/**
+ * Whether a stored value is an attachment reference a request can use.
+ *
+ * Validated rather than trusted, for the same reason as `isStoredUsage`: this comes back out of
+ * `localStorage`. The MIME type is checked against the two lists that reach a vendor content part,
+ * because a type no dialect accepts is a 400 rather than a fallback. A reference with no key is
+ * dropped too -- there is nothing to mint a link for.
+ * @param {unknown} value The stored field.
+ * @return {value is ChatMedia} True when the key and the type are usable.
+ */
+const isStoredMedia = (value: unknown): value is ChatMedia => {
+    const media = value as Partial<ChatMedia> | null | undefined;
+
+    return (
+        !!media &&
+        typeof media.key === 'string' &&
+        media.key.length > 0 &&
+        typeof media.name === 'string' &&
+        typeof media.mime === 'string' &&
+        (IMAGE_TYPES.includes(media.mime) || media.mime === PDF_TYPE)
+    );
+};
+
 export const toChatMessage = (value: unknown): ChatMessage | null => {
     if (!value || typeof value !== 'object') {
         return null;
@@ -1724,6 +3189,7 @@ export const toChatMessage = (value: unknown): ChatMessage | null => {
 
     const entry = value as Partial<ChatMessage>;
     const tools = Array.isArray(entry.tools) ? entry.tools.filter(isStoredRun).map(toToolRun) : [];
+    const media = Array.isArray(entry.media) ? entry.media.filter(isStoredMedia) : [];
 
     if (typeof entry.id !== 'string' || typeof entry.content !== 'string') {
         return null;
@@ -1741,7 +3207,15 @@ export const toChatMessage = (value: unknown): ChatMessage | null => {
         return null;
     }
 
-    return { id: entry.id, role: entry.role, content: entry.content, at: entry.at, tools };
+    return {
+        id: entry.id,
+        role: entry.role,
+        content: entry.content,
+        at: entry.at,
+        tools,
+        ...(media.length ? { media } : {}),
+        ...(isStoredUsage(entry.usage) ? { usage: entry.usage } : {}),
+    };
 };
 
 /**
@@ -1819,6 +3293,9 @@ export function toChatSession(value: unknown): ChatSession | null {
         title: entry.title.slice(0, TITLE_MAX),
         at: entry.at,
         messages,
+        // Only a literal `true` pins. Anything else in storage reads as unpinned, which is the
+        // safe direction: a corrupted value must not pin a conversation the user never pinned.
+        pinned: entry.pinned === true,
     };
 }
 
@@ -1954,6 +3431,13 @@ function kindForStatus(status: number): ChatFailureKind {
 
     if (status === 0) {
         return 'network';
+    }
+
+    // 502 is the BFF saying the PROVIDER did not answer -- not a bug in our route and not
+    // something the user's prompt caused. It gets its own sentence because the only useful
+    // advice is "try again or switch model", which the generic server copy does not give.
+    if (status === 502 || status === 503 || status === 504) {
+        return 'upstream';
     }
 
     return 'server';

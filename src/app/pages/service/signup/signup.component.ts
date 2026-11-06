@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, AfterViewInit, inject, DestroyRef, ViewChild, ElementRef, PLATFORM_ID, ChangeDetectionStrategy } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, inject, signal, DestroyRef, ViewChild, ElementRef, PLATFORM_ID, ChangeDetectionStrategy } from '@angular/core';
 import { AsyncPipe, NgClass, isPlatformBrowser } from '@angular/common';
 import { AbstractControl, FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
@@ -7,8 +7,8 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { Auth, GoogleAuthProvider, createUserWithEmailAndPassword, signInWithPopup, User, UserCredential, sendEmailVerification, verifyBeforeUpdateEmail, updateProfile, updatePhoneNumber, fetchSignInMethodsForEmail, linkWithCredential, GithubAuthProvider, OAuthProvider, RecaptchaVerifier, ActionCodeSettings } from '@angular/fire/auth';
 import { Firestore, doc, setDoc } from '@angular/fire/firestore';
 import { Users, Loading } from 'src/app/core/types';
-import { checkPasswordStrength, getErrorMessage } from 'src/app/core/functions';
-import { FirestoreService, SnackbarService, AuthService, ThemeService, WindowToken, AnalyticsService } from 'src/app/core/services';
+import { checkPasswordStrength, getErrorMessage, resendStampKey } from 'src/app/core/functions';
+import { FirestoreService, LocalStorage, SnackbarService, AuthService, ThemeService, WindowToken, AnalyticsService } from 'src/app/core/services';
 import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
 import { DEFAULT_PROFILE_URL } from 'src/app/core/variables';
 import { createPasswordStrengthValidator } from 'src/app/core/directives';
@@ -48,12 +48,18 @@ interface SignupForm {
     changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
+    /** Whether the password fields currently render as plain text. */
+    readonly showPassword = signal(false);
+    readonly showConfirmPassword = signal(false);
+
     @ViewChild('recaptchaContainer', { static: false }) recaptchaContainer!: ElementRef<HTMLDivElement>;
     /** Instance of Firebase RecaptchaVerifier for phone authentication. */
     public recaptchaVerifier!: RecaptchaVerifier;
     private window = inject(WindowToken)
     private platformId = inject<Object>(PLATFORM_ID)
     private analytics = inject(AnalyticsService)
+    /** Stamps the verification email so the verification screen knows one is already on its way. */
+    private store = inject(LocalStorage)
     signupForm: FormGroup
     emailCheckSubs: Subscription
     loading: Loading = {
@@ -108,6 +114,9 @@ export class SignupComponent implements OnInit, OnDestroy, AfterViewInit {
 
         console.log('📧 Sending email verification with actionCodeSettings:', actionCodeSettings);
         await sendEmailVerification(userCredential.user, actionCodeSettings)
+        // Only reached when the provider accepted it, so the verification screen opens with a
+        // cooldown running instead of firing a second email at the same address a second later.
+        this.store.setItem(resendStampKey(userCredential.user.uid), String(Date.now()))
 
         if (userCredential.user) {
             await updateProfile(userCredential.user, {

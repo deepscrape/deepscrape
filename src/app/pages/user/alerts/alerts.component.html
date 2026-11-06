@@ -45,7 +45,19 @@
     }
   </div>
 
-  @if (!filtered().length) {
+  @if (!center.hydrated()) {
+    <div class="space-y-2" aria-hidden="true">
+      @for (row of [1, 2, 3]; track row) {
+        <div class="flex items-center gap-3 rounded-xl border border-gray2/70 px-4 py-3 dark:border-white/10">
+          <div class="loading-key h-9 w-9 shrink-0 rounded-full"></div>
+          <div class="min-w-0 flex-1">
+            <div class="loading-key w-2/3"></div>
+            <div class="loading-key mt-2 w-1/3"></div>
+          </div>
+        </div>
+      }
+    </div>
+  } @else if (!filtered().length) {
     <p class="rounded-xl border border-gray2/70 px-4 py-14 text-center text-sm text-gray4 dark:border-white/10 dark:text-gray3">
       @if (filter() === 'unread') {
         You're all caught up.

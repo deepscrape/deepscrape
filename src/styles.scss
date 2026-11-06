@@ -184,6 +184,12 @@ html {
     //     @apply no-underline;
     // }
 
+    /* The card every surface is made of. Adopt it instead of hand-writing the recipe, so one edit
+       here repaints every adopter (UI audit §12). Hairline edge + soft shadow, not fill + weight. */
+    .app-card {
+        @apply rounded-2xl border border-gray2 bg-gray-50 p-5 shadow-sm dark:border-gray5 dark:bg-gray6/80;
+    }
+
     .loading-surface {
         @apply relative overflow-hidden rounded-xl border border-gray-300/60 bg-gray-200/80 dark:border-gray-600/40 dark:bg-gray-700/40;
     }
@@ -365,6 +371,30 @@ markdown > .toolbar {
 .cc-focus-ring:focus-visible {
     outline: 2px solid #0284c7;
     outline-offset: 2px;
+}
+
+/* Keyboard focus for everything that is not a form control.
+   `.cc-focus-ring` is opt-in, so any button or link that forgot it had no visible focus
+   at all — the billing range pills, the alert tabs, most landing links. Form controls are
+   excluded on purpose: `.cc-input:focus` already draws a box-shadow, and an outline on top
+   of it reads as a double ring. */
+a:focus-visible,
+button:focus-visible,
+[role="tab"]:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid #0ea5e9; /* primary-500: legible on both surfaces */
+    outline-offset: 2px;
+}
+
+/* Decorative motion, off for anyone who asked.
+   `animate-ping` and `animate-bounce` are radar dots and scroll hints — nothing they convey
+   is lost when they stop. Loading spinners are deliberately NOT in here: their motion is the
+   information. Hero caret and marquee already guard themselves in component styles. */
+@media (prefers-reduced-motion: reduce) {
+    .animate-ping,
+    .animate-bounce {
+        animation: none !important;
+    }
 }
 
 /* Light mode glass section backgrounds — subtle warm off-white */

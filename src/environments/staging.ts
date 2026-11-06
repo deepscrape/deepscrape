@@ -15,15 +15,6 @@ export const environment = {
   },
   "STRIPE_PUBLIC_KEY": "pk_test_51OELbJFBBAUAyJFBp3qyNV35TE56uUP9g1IkZ0KOuWnrNLC2ijFoIIkG71xqISwnFwiibjCOumO8itPsLLIyA1py00ABQ2TJ4H",
   "RECAPTCHA_KEY": "6LdpDvcpAAAAACHPpjMmhYp2ZoSO45-5VJUMI4-n",
-  "OPENAI_API_KEY": "",
-  "ANTHROPIC_API_KEY": "",
-  "JINAAI_API_KEY": "",
-  "GROQ_API_KEY": "",
-  "GOOGLE_API_KEY": "",
-  "API_ARACHNEFLY_URL": "https://arachnefly.fly.dev",
-  "API_ANTHROPIC": "https://api.anthropic.com",
-  "API_OPENAI": "https://api.openai.com",
-  "API_GROQ": "https://api.groq.com",
-  "API_JINAAI": "https://r.jina.ai",
+  "API_ARACHNEFLY_URL": "https://arachne.deepscrape.dev",
   "FIREBASE_VAPID_KEY": ""
 };

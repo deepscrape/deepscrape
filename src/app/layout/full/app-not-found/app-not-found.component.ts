@@ -12,7 +12,7 @@ import { TranslateModule } from '@ngx-translate/core';
 // of two InjectionTokens.
 import { WindowToken } from '../../../core/services/window.service';
 import { LocalStorage } from '../../../core/services/storage.service';
-import { themeStorageKey } from 'src/app/shared/theme-picker/theme-picker.component';
+import { isDarkTheme } from 'src/app/shared/theme-picker/theme-storage';
 import { LandingSubheaderComponent } from 'src/app/shared/landing-subheader/landing-subheader.component';
 
 @Component({
@@ -36,10 +36,7 @@ export class NotFoundComponent {
 
 
     isThemeDark(): boolean {
-        const stored = this.localStorage?.getItem(themeStorageKey);
-        if (stored === 'true') return true;
-        if (stored === 'false') return false;
-        return this.window?.matchMedia?.('(prefers-color-scheme: dark)')?.matches ?? false;
+        return isDarkTheme(this.localStorage, this.window)
     }
 
 }

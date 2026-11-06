@@ -87,7 +87,10 @@ export class NotificationBellComponent {
       this.alertsUnsubscribe = null;
       this.adminUnsubscribe?.();
       this.adminUnsubscribe = null;
-      if (!account) return;
+if (!account) {
+          this.center.markHydrated();
+          return;
+        }
 
       // ponytail: limit(10) caps this at ~10 reads per signed-in page load. Add a paged
       // "see all" route if the full alert history is ever needed.
@@ -97,8 +100,8 @@ export class NotificationBellComponent {
         limit(10),
       );
 
-      this.alertsUnsubscribe = onSnapshot(alerts, (snapshot) => {
-        for (const change of snapshot.docChanges()) {
+      this.alertsUnsubscribe = onSnapshot(alerts, (snapshot) => {          // First callback, empty or not, is the feed answering.
+          this.center.markHydrated();        for (const change of snapshot.docChanges()) {
           // Only genuinely new docs; `seen` guards against a re-emitted snapshot.
           if (change.type !== 'added' || this.seen.has(change.doc.id)) continue;
           this.seen.add(change.doc.id);

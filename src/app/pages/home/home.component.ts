@@ -3,7 +3,8 @@ import { RouterLink } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
 import { AsyncPipe, NgClass } from '@angular/common';
 import { DOCUMENT } from '@angular/common';
-import { themeStorageKey, ThemeToggleComponent } from 'src/app/shared/theme-picker/theme-picker.component';
+import { ThemeToggleComponent } from 'src/app/shared/theme-picker/theme-picker.component';
+import { isDarkTheme } from 'src/app/shared/theme-picker/theme-storage';
 import { AnimatedBgComponent } from 'src/app/shared/animated-bg/animated-bg.component';
 import { LangPickerComponent } from 'src/app/shared/lang-picker/lang-picker.component';
 import { FeaturesComponent, HeroComponent, LandingAgentComponent, LandingArchitectureComponent, LandingCodeDemoComponent, LandingPricingComponent, LandingSocialProofComponent, LandingUseCasesComponent, LandingFaqComponent } from 'src/app/layout/landpage';
@@ -72,10 +73,7 @@ export class HomeComponent implements OnInit {
   }
 
   isThemeDark(): boolean {
-    const stored = this.localStorage?.getItem(themeStorageKey);
-    if (stored === 'true') return true;
-    if (stored === 'false') return false;
-    return this.window?.matchMedia?.('(prefers-color-scheme: dark)')?.matches ?? false;
+    return isDarkTheme(this.localStorage, this.window)
   }
 
   ngOnInit() {

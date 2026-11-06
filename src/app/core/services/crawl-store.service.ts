@@ -30,57 +30,13 @@ export class CrawlStoreService {
     private firestore: Firestore,
     private loadingBar: LoadingBarService,
   ) {
-
-    // Load existing API keys from local storage or backend
-    // const storeOperations = this.SessionStorage.getItem('operations')
-    this.initializeOperations(null)
-
-    // set the firestore instance
+    // No eager fetch. This is a root service and every consumer (chatai, operations,
+    // app-crawl) only calls `storeCrawlOperation`; nothing reads `operations$`, so the
+    // constructor used to buy a callable invocation and a page of operations for
+    // nobody. /operations builds its own list.
     this.firestore = this.firestoreService.getInstanceDB('easyscrape')
   }
-  /**
-   * Initializes the crawl operations by updating the operation and total pages subjects.
-   * If stored operations are provided, they are parsed and set in the operation subject.
-   * Otherwise, operations are fetched from Firestore with pagination, and the results
-   * are used to update the operation, total pages, and in total subjects.
-   * Handles errors by logging them and resetting the subjects to default values.
-   *
-   * @param storeOperations - A JSON string of stored operations or null.
-   */
-  private initializeOperations(storeOperations: string | null) {
-    if (storeOperations) {
-      this.operationSubject.next(JSON.parse(storeOperations))
-      // this.totalPagesSubject.next(1)
-    } else {
-      this.operationSubject.next(undefined)
-      this.totalPagesSubject.next(1)
-      // Get Data from Firestore
-      this.operationsSub = this.getOperationsByPagination().pipe(
-      ).subscribe({
-        next: (results: any) => {
-          const { operations, inTotal, totalPages } = results
-          // include totalPages in the response
-          // Update the Operations in the BehaviorSubject
-          this.operationSubject.next(operations)
-          this.totalPagesSubject.next(totalPages)
-          this.inTotalSubject.next(inTotal)
-          // this.saveOperations(operations)
-        },
-        error: (error: any) => {
-          console.error('Error retrieving Crawl Operations:', error)
-          this.operationSubject.next(null)
-          this.totalPagesSubject.next(0)
-          this.inTotalSubject.next(0)
-        }
-      })
-    }
 
-
-  }
-
-  // refreshOperationsData() {
-
-  // }
 
 
   /**

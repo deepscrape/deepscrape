@@ -70,6 +70,12 @@
                   "type": "anyComponentStyle",
                   "maximumWarning": "12kB",
                   "maximumError": "20kB"
+                },
+                {
+                  "type": "bundle",
+                  "name": "styles",
+                  "maximumWarning": "520kB",
+                  "maximumError": "600kB"
                 }
               ],
               "outputHashing": "all",
@@ -99,6 +105,12 @@
                   "type": "anyComponentStyle",
                   "maximumWarning": "12kB",
                   "maximumError": "20kB"
+                },
+                {
+                  "type": "bundle",
+                  "name": "styles",
+                  "maximumWarning": "520kB",
+                  "maximumError": "600kB"
                 }
               ],
               "fileReplacements": [],

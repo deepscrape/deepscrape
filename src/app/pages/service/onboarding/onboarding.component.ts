@@ -334,6 +334,11 @@ export class OnboardingComponent implements OnInit {
         onboardedAt: serverTimestamp() as any,
       });
 
+      // The guards replay a cached auth snapshot that only recomputes when Firebase's
+      // auth state emits, so without this the write above is invisible until a reload
+      // and `authGuard` bounces the user straight back into this wizard.
+      this.authService.invalidateAuthSnapshot();
+
       // For paid plans: redirect to Stripe Checkout. On success/cancel Stripe
       // returns to /dashboard so the user is always onboarded regardless.
       if (shouldCheckout && isPlatformBrowser(this.platformId)) {

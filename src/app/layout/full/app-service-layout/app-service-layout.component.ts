@@ -12,7 +12,8 @@ import { ORIGINS } from 'src/app/core/guards/host-routing.policy';
 import { LocalStorage, ThemeService, WindowToken } from 'src/app/core/services';
 import { LangPickerComponent } from 'src/app/shared/lang-picker/lang-picker.component';
 import { NotificationBellComponent } from 'src/app/shared/notification-bell/notification-bell.component';
-import { themeStorageKey, ThemeToggleComponent } from 'src/app/shared/theme-picker/theme-picker.component';
+import { ThemeToggleComponent } from 'src/app/shared/theme-picker/theme-picker.component';
+import { isDarkTheme } from 'src/app/shared/theme-picker/theme-storage';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -45,11 +46,8 @@ export class AppServiceLayoutComponent {
     // return outlet && outlet.activatedRouteData && outlet.activatedRouteData['animation']
   }
 
-  themeIsDark() {
-    const stored = this.localStorage?.getItem(themeStorageKey);
-    if (stored === 'true') return true;
-    if (stored === 'false') return false;
-    return this.window?.matchMedia?.('(prefers-color-scheme: dark)')?.matches ?? false;
+  themeIsDark(): boolean {
+    return isDarkTheme(this.localStorage, this.window)
   }
 
 }

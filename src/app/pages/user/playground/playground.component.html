@@ -13,6 +13,33 @@
         -->
         <div
           class="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white/60 shadow-sm backdrop-blur dark:border-gray-700/60 dark:bg-gray6/70">
+          <!--
+            Pointer-only chevrons. The rail scrolls by drag, which is invisible on a phone:
+            the modes past the viewport had neither a scrollbar nor any cue that they
+            existed. `aria-hidden` and out of the tab order on purpose - every mode is
+            already a focusable button, so this is a redundant affordance rather than a
+            second control a screen reader has to announce.
+          -->
+          <button
+            type="button"
+            aria-hidden="true"
+            tabindex="-1"
+            (click)="scrollModes('left')"
+            [class.opacity-0]="!showLeftScroller()"
+            [class.pointer-events-none]="!showLeftScroller()"
+            class="absolute left-1 top-1/2 z-20 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow-md transition-opacity duration-200 dark:bg-gray-800/95">
+            <mat-icon class="text-gray-700 dark:text-gray-200">chevron_left</mat-icon>
+          </button>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabindex="-1"
+            (click)="scrollModes('right')"
+            [class.opacity-0]="!showRightScroller()"
+            [class.pointer-events-none]="!showRightScroller()"
+            class="absolute right-1 top-1/2 z-20 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow-md transition-opacity duration-200 dark:bg-gray-800/95">
+            <mat-icon class="text-gray-700 dark:text-gray-200">chevron_right</mat-icon>
+          </button>
           <div
             #modeScrollContainer
             class="overflow-x-hidden scrollbar-thin overscroll-contain touch-pan-x px-2 py-2"

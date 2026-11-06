@@ -815,21 +815,44 @@ export class SecurityTabComponent {
   }
 
   getDisplayBrowser(session: SessionDisplayInfo): string {
-    const explicit = (session.browser || '').trim()
-    if (explicit && explicit.toLowerCase() !== 'unknown') {
-      return explicit
-    }
-
-    return this.detectBrowserFromUserAgent(session.userAgent || '')
+    return this.browserLabel(session.browser, session.userAgent)
   }
 
   getDisplayOS(session: SessionDisplayInfo): string {
-    const explicit = (session.os || '').trim()
+    return this.osLabel(session.os, session.userAgent)
+  }
+
+  /**
+   * The stored label when it names something, else the user agent's answer.
+   *
+   * Takes the two primitives rather than the record: the session list and the
+   * activity timeline hold different shapes and each carried its own copy of this
+   * rule, so "unknown" could be handled one way in one panel and another way in the
+   * other. One definition, and `String()` stays here because the timeline's fields
+   * are not guaranteed to be strings.
+   */
+  private browserLabel(
+    browser: string | null | undefined,
+    userAgent: string | null | undefined,
+  ): string {
+    const explicit = String(browser ?? '').trim()
     if (explicit && explicit.toLowerCase() !== 'unknown') {
       return explicit
     }
 
-    return this.detectOsFromUserAgent(session.userAgent || '')
+    return this.detectBrowserFromUserAgent(String(userAgent ?? ''))
+  }
+
+  private osLabel(
+    os: string | null | undefined,
+    userAgent: string | null | undefined,
+  ): string {
+    const explicit = String(os ?? '').trim()
+    if (explicit && explicit.toLowerCase() !== 'unknown') {
+      return explicit
+    }
+
+    return this.detectOsFromUserAgent(String(userAgent ?? ''))
   }
 
   getSessionRiskLevel(session: SessionDisplayInfo): 'pending' | 'low' | 'medium' | 'high' {
@@ -965,21 +988,11 @@ export class SecurityTabComponent {
   }
 
   private getEventBrowser(event: loginHistoryEvent): string {
-    const explicit = String(event.browser || '').trim()
-    if (explicit && explicit.toLowerCase() !== 'unknown') {
-      return explicit
-    }
-
-    return this.detectBrowserFromUserAgent(event.userAgent || '')
+    return this.browserLabel(event.browser, event.userAgent)
   }
 
   private getEventOS(event: loginHistoryEvent): string {
-    const explicit = String(event.os || '').trim()
-    if (explicit && explicit.toLowerCase() !== 'unknown') {
-      return explicit
-    }
-
-    return this.detectOsFromUserAgent(event.userAgent || '')
+    return this.osLabel(event.os, event.userAgent)
   }
 
   initProviders() {

@@ -166,10 +166,18 @@
           @if (!phoneVerificationSent) {
             <div>
               <label for="password" class="block text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1.5">{{ 'LOGIN.PASSWORD_LABEL' | translate }}</label>
-              <input id="password" type="password" formControlName="password" required placeholder="{{ 'LOGIN.PASSWORD_PLACEHOLDER' | translate }}" autocomplete="current-password"
-                class="cc-input block w-full rounded-lg border border-slate-200 dark:border-gray-700 bg-slate-50/70 dark:bg-gray-800 px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-slate-400 shadow-sm transition-all duration-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500 outline-none hover:bg-slate-100 dark:hover:bg-gray-700/30 hover:border-indigo-400 dark:hover:border-indigo-400 hover:shadow-lg dark:hover:shadow-indigo-900/20"
-                [ngClass]="{'border-red-500 dark:border-red-400': loginForm.get('password')?.invalid && (loginForm.get('password')?.dirty || loginForm.get('password')?.touched), 'border-green-500 dark:border-green-400': loginForm.get('password')?.valid && (loginForm.get('password')?.dirty || loginForm.get('password')?.touched)}"
-                />
+              <div class="relative">
+                <input id="password" [type]="showPassword() ? 'text' : 'password'" formControlName="password" required placeholder="{{ 'LOGIN.PASSWORD_PLACEHOLDER' | translate }}" autocomplete="current-password"
+                  class="cc-input block w-full rounded-lg border border-slate-200 dark:border-gray-700 bg-slate-50/70 dark:bg-gray-800 px-2 py-1.5 pr-9 text-xs text-gray-900 dark:text-gray-100 placeholder-slate-400 shadow-sm transition-all duration-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500 outline-none hover:bg-slate-100 dark:hover:bg-gray-700/30 hover:border-indigo-400 dark:hover:border-indigo-400 hover:shadow-lg dark:hover:shadow-indigo-900/20"
+                  [ngClass]="{'border-red-500 dark:border-red-400': loginForm.get('password')?.invalid && (loginForm.get('password')?.dirty || loginForm.get('password')?.touched), 'border-green-500 dark:border-green-400': loginForm.get('password')?.valid && (loginForm.get('password')?.dirty || loginForm.get('password')?.touched)}"
+                  />
+                <button type="button" (click)="showPassword.set(!showPassword())"
+                  class="absolute inset-y-0 right-1 my-auto flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:text-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 dark:text-gray-500 dark:hover:text-indigo-400"
+                  [attr.aria-label]="(showPassword() ? 'COMMON.HIDE_PASSWORD' : 'COMMON.SHOW_PASSWORD') | translate"
+                  [attr.aria-pressed]="showPassword()">
+                  <mat-icon aria-hidden="true" style="font-size: 18px; width: 18px; height: 18px;">{{ showPassword() ? 'visibility_off' : 'visibility' }}</mat-icon>
+                </button>
+              </div>
                 @if (loginForm.get('password')?.invalid && (loginForm.get('password')?.dirty || loginForm.get('password')?.touched)) {
                   <small class="text-red-600 dark:text-red-300 font-medium mt-0.5 block text-xs">
                     @if (loginForm.get('password')?.errors?.['required']) {

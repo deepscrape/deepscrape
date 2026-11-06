@@ -1,4 +1,4 @@
-<div class="flex w-full flex-col gap-6">
+<div class="flex w-full flex-col gap-6 py-6">
   <header class="flex flex-col gap-1">
     <h2 class="text-lg font-semibold text-gray6 dark:text-white">
       {{ 'STORAGE.SETTINGS_TITLE' | translate }}
@@ -18,7 +18,7 @@
     </div>
   } @else {
     <section
-      class="flex flex-col gap-3 rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+      class="app-card flex flex-col gap-3">
       <app-dropdown
         [options]="modeOptions"
         [control]="modeControl | formControl"

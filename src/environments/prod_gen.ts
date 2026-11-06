@@ -63,16 +63,7 @@ const environment = {
     // Public Web Push certificate key (Firebase Console > Cloud Messaging).
     // Optional: NotificationService reports 'unconfigured' when absent.
     FIREBASE_VAPID_KEY: env["FIREBASE_VAPID_KEY"] || "",
-    OPENAI_API_KEY: "",// env["OPENAI_API_KEY"],
-    ANTHROPIC_API_KEY: "", // env["ANTHROPIC_API_KEY"],
-    JINAAI_API_KEY: "", // env["JINAAI_API_KEY"],
-    GROQ_API_KEY: "", // env["GROQ_API_KEY"],
-    GOOGLE_API_KEY: "", // env["GOOGLE_API_KEY"],
-    API_ARACHNEFLY_URL: env["API_ARACHNEFLY_URL"] || "https://arachnefly.fly.dev",
-    API_ANTHROPIC: "https://api.anthropic.com",
-    API_OPENAI: "https://api.openai.com",
-    API_GROQ: "https://api.groq.com",
-    API_JINAAI: "https://r.jina.ai",
+    API_ARACHNEFLY_URL: env["API_ARACHNEFLY_URL"] || "https://arachne.deepscrape.dev",
 }
 
 const content = `export const environment = ${JSON.stringify(environment, null, 2)};`

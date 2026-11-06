@@ -5,7 +5,7 @@ import {
   addDoc,
   collection, CollectionReference, connectFirestoreEmulator, deleteDoc, doc, docData, DocumentData, DocumentReference,
   FieldValue,
-  Firestore, getDoc, getDocs, getFirestore, increment, limit, orderBy, query, Query,
+  Firestore, getCountFromServer, getDoc, getDocs, getFirestore, increment, limit, orderBy, query, Query,
   QueryConstraint, QuerySnapshot, serverTimestamp, setDoc, SetOptions,
   Timestamp, writeBatch, WriteBatch,
   where
@@ -1736,28 +1736,31 @@ getMyLoginSessionStatus(loginId: string): Observable<{
  * Get total guest count efficiently
  */
   async getGuestCount(): Promise<number> {
-    const guestsCollection = this.collection(this.firestore, 'guests');
-    const q = this.query(guestsCollection);
-    let err, querySnapshot = await this.getDocs(q);
-    if (err) {
-      console.error("Failed to get guests count:", err);
-      return 0;
-    }
-    return querySnapshot.size;
+    return this.countCollection('guests', 'Failed to get guests count:');
   }
 
   /**
    * Get total authenticated user count efficiently
    */
   async getAuthenticatedUserCount(): Promise<number> {
-    const metricsCollection = this.collection(this.firestore, 'login_metrics');
-    const q = this.query(metricsCollection);
-    let err, querySnapshot = await this.getDocs(q);
-    if (err) {
-      console.error("Failed to get login_metrics count:", err);
+    return this.countCollection('login_metrics', 'Failed to get login_metrics count:');
+  }
+
+  /**
+   * One aggregation read. These two counts used to download every document in the
+   * collection just to read `.size` — a per-user billed read for a number the server
+   * already tracks.
+   */
+  private async countCollection(name: string, failure: string): Promise<number> {
+    try {
+      const snapshot = await getCountFromServer(
+        this.query(this.collection(this.firestore, name))
+      );
+      return snapshot.data().count;
+    } catch (error) {
+      console.error(failure, error);
       return 0;
     }
-    return querySnapshot.size;
   }
 
   /**

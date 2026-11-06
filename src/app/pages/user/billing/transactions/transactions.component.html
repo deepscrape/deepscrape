@@ -1,7 +1,7 @@
-<!-- `space-y-6` on the page root, not `container mx-auto px-4 py-6`: the layout above
-     already supplies the padding, and a second container inset every card on this page
-     by an amount no other page uses. -->
-<div class="space-y-6">
+<!-- `space-y-6 py-6` on the page root, not `container mx-auto px-4 py-6`: the shell above
+     already supplies the HORIZONTAL padding (`px-4 lg:px-20`), so a container double-inset
+     every card. It supplies almost no vertical padding, so the page owns that. -->
+<div class="space-y-6 py-6">
   <!-- Header with range selector -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
     <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">{{ 'BILLING_TRANSACTIONS.TITLE' | translate }}</h2>
@@ -39,12 +39,32 @@
         </p>
       </div>
     </div>
+  } @else {
+    <!-- Same two cards, at the same size, while the range is still loading. The page used
+         to paint the header and then nothing, which reads as "no data" for the length of
+         the request. -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6" aria-hidden="true">
+      @for (card of [1, 2]; track card) {
+        <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+          <div class="loading-key w-1/2"></div>
+          <div class="loading-key mt-3 w-2/3 h-7"></div>
+        </div>
+      }
+    </div>
   }
 
   <!-- Invoices -->
   <div class="mb-8">
     <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-3">{{ 'BILLING_TRANSACTIONS.INVOICES_TITLE' | translate }}</h3>
-    @if ((invoices$ | async)?.length === 0) {
+    <!-- `undefined` is "not answered yet"; the two branches below only cover 0 and >0, so
+         the loading window rendered nothing at all. -->
+    @if ((invoices$ | async) === undefined) {
+      <div class="space-y-3" aria-hidden="true">
+        <div class="loading-key"></div>
+        <div class="loading-key w-11/12"></div>
+        <div class="loading-key w-10/12"></div>
+      </div>
+    } @else if ((invoices$ | async)?.length === 0) {
       <div class="rounded-xl bg-gray-50 dark:bg-gray-800/30 p-6 text-center text-gray-500 dark:text-gray-400">
         <mat-icon fontSet="material-icons-outlined" class="text-4xl mb-2">receipt_long</mat-icon>
         <p>{{ 'BILLING_TRANSACTIONS.NO_INVOICES' | translate }}</p>
@@ -107,7 +127,13 @@
   <!-- Payments -->
   <div>
     <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-3">{{ 'BILLING_TRANSACTIONS.PAYMENTS_TITLE' | translate }}</h3>
-    @if ((payments$ | async)?.length === 0) {
+    @if ((payments$ | async) === undefined) {
+      <div class="space-y-3" aria-hidden="true">
+        <div class="loading-key"></div>
+        <div class="loading-key w-11/12"></div>
+        <div class="loading-key w-9/12"></div>
+      </div>
+    } @else if ((payments$ | async)?.length === 0) {
       <div class="rounded-xl bg-gray-50 dark:bg-gray-800/30 p-6 text-center text-gray-500 dark:text-gray-400">
         <mat-icon fontSet="material-icons-outlined" class="text-4xl mb-2">payments</mat-icon>
         <p>{{ 'BILLING_TRANSACTIONS.NO_PAYMENTS' | translate }}</p>

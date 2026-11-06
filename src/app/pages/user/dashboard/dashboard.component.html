@@ -7,7 +7,7 @@
   second implementation of another page: the figures are the ones that decide whether
   work can run and whether something is quietly costing money.
 -->
-<section class="space-y-6">
+<section class="space-y-6 py-6">
   <header>
     <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
       {{ 'ORG_HOME.TITLE' | translate }}
@@ -18,8 +18,8 @@
   </header>
 
   @if (billing$ | async; as billing) {
-    <div class="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-      <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+    <div class="grid gap-6 sm:grid-cols-2 xl:grid-cols-4" [@listStagger]="billing.credits.balance">
+      <div class="app-card">
         <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
           {{ 'ORG_HOME.CREDITS' | translate }}
         </p>
@@ -37,7 +37,7 @@
         </a>
       </div>
 
-      <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+      <div class="app-card">
         <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
           {{ 'ORG_HOME.SESSIONS' | translate }}
         </p>
@@ -55,7 +55,7 @@
         </a>
       </div>
 
-      <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+      <div class="app-card">
         <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
           {{ 'ORG_HOME.MACHINES' | translate }}
         </p>
@@ -77,7 +77,7 @@
         </a>
       </div>
 
-      <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+      <div class="app-card">
         <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
           {{ 'ORG_HOME.ALERTS' | translate }}
         </p>
@@ -98,7 +98,7 @@
   } @else {
     <div class="grid gap-6 sm:grid-cols-2 xl:grid-cols-4" aria-hidden="true">
       @for (tile of [1, 2, 3, 4]; track tile) {
-        <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+        <div class="app-card">
           <div class="loading-line-short"></div>
           <div class="loading-key mt-3"></div>
           <div class="loading-line-mid mt-3"></div>
@@ -107,7 +107,7 @@
     </div>
   }
 
-  <div class="rounded-2xl bg-gray-50 p-5 shadow-md dark:bg-gray6/80">
+  <div class="app-card">
     <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
       {{ 'ORG_HOME.TEAM' | translate }}
     </h2>

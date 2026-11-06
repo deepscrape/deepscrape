@@ -49,10 +49,24 @@ export class NotificationCenterService {
   private readonly platformId = inject(PLATFORM_ID);
   private readonly storage = inject(LocalStorage);
   private readonly itemsState = signal<PlatformNotification[]>([]);
+  private readonly hydratedState = signal(false);
   private readonly seen: Set<string> = this.readSeen();
   private seq = 0;
 
   readonly items = this.itemsState.asReadonly();
+  /**
+   * Whether the feed has answered at least once.
+   *
+   * An empty list means two very different things: "nothing has been written" and "the
+   * snapshot has not arrived yet". The alerts page rendered "You're all caught up" for the
+   * second one, which is a false statement, so the two are separated here.
+   */
+  readonly hydrated = this.hydratedState.asReadonly();
+
+  /** Called by whoever owns the snapshot, on its first callback - even an empty one. */
+  markHydrated(): void {
+    this.hydratedState.set(true);
+  }
   readonly unread = computed(() => this.items().reduce((count, item) => (item.read ? count : count + 1), 0));
 
   push(input: Omit<PlatformNotification, 'id' | 'at' | 'read'> & { id?: string }): void {

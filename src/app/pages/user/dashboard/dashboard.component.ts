@@ -1,5 +1,5 @@
 import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, HostBinding, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatIconModule } from '@angular/material/icon';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -11,6 +11,7 @@ import {
 } from 'src/app/core/services';
 import { BrowserSessionService } from 'src/app/core/services/browser-session.service';
 import { NotificationCenterService } from 'src/app/core/services/notification-center.service';
+import { listStaggerAnimation } from 'src/app/animations';
 
 /**
  * The org home page — `/{orgId}`, and bare `/dashboard` on the legacy tree.
@@ -42,9 +43,10 @@ import { NotificationCenterService } from 'src/app/core/services/notification-ce
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  animations: [listStaggerAnimation],
+  host: { class: 'grow' },
 })
 export class DashboardComponent {
-  @HostBinding('class') classes = 'grow';
 
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);

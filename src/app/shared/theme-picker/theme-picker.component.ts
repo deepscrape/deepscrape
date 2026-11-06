@@ -8,7 +8,11 @@ import { LocalStorage, STORAGE_PROVIDERS } from 'src/app/core/services/storage.s
 import { windowProvider, WindowToken } from 'src/app/core/services/window.service';
 import { ThemeService } from 'src/app/core/services/theme.service';
 
-export const themeStorageKey = 'app-theme-dark';
+import { themeStorageKey } from './theme-storage'
+
+// Re-exported so existing importers keep working. New code should import from
+// `./theme-storage` so this component stays out of its bundle.
+export { themeStorageKey }
 
 @Component({
     selector: 'app-theme-toggle',

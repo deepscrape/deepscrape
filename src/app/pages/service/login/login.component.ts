@@ -7,6 +7,7 @@ import {
   ChangeDetectorRef,
   ChangeDetectionStrategy,
   inject,
+  signal,
   DestroyRef,
   ViewChild,
   ElementRef,
@@ -90,6 +91,9 @@ type loginCredentials = {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class LoginComponent  {
+  /** Whether the password field currently renders as plain text. */
+  readonly showPassword = signal(false);
+
   // Injected services using Angular's inject function for better testability and type safety.
   @ViewChild('recaptchaContainer', { static: false }) recaptchaContainer!: ElementRef<HTMLDivElement>;
 

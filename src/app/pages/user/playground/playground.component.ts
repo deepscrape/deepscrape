@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, HostBinding, computed, inject, OnInit, ViewChild, ElementRef, AfterViewInit, DestroyRef } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, HostBinding, computed, inject, OnInit, ViewChild, ElementRef, AfterViewInit, DestroyRef, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { NgClass } from '@angular/common';
 import { toSignal } from '@angular/core/rxjs-interop';
@@ -170,6 +170,17 @@ export class PlaygroundComponent implements OnInit, AfterViewInit {
     });
   }
 
+  /**
+   * Edge affordances for the mode rail.
+   *
+   * The rail is `overflow-x-hidden` with drag-to-scroll: on a phone the last modes sat
+   * off-screen with no scrollbar, no chevron and nothing to hint they existed, so two of
+   * the seven modes were effectively invisible. The seeder rail already solved this; the
+   * same two signals drive the same two fades here.
+   */
+  protected readonly showLeftScroller = signal(false);
+  protected readonly showRightScroller = signal(false);
+
   ngAfterViewInit(): void {
     // Check for mobile device after view init
     timer(0)
@@ -177,7 +188,24 @@ export class PlaygroundComponent implements OnInit, AfterViewInit {
       .subscribe(() => {
         // Set initial scroll position to make the selected mode visible if needed
         this.scrollToActiveMode();
+        this.syncModeScrollers();
       });
+  }
+
+  /** Scroll the rail by one screenful, the way the chevrons promise. */
+  protected scrollModes(direction: 'left' | 'right'): void {
+    const el = this.modeScrollContainer?.nativeElement as HTMLElement | undefined;
+    if (!el) return;
+    const step = Math.max(120, Math.round(el.clientWidth * 0.7));
+    el.scrollBy({ left: direction === 'left' ? -step : step, behavior: 'smooth' });
+  }
+
+  private syncModeScrollers(): void {
+    const el = this.modeScrollContainer?.nativeElement as HTMLElement | undefined;
+    if (!el) return;
+    // 4px of slack: sub-pixel layout reports a fractional scrollLeft at both ends.
+    this.showLeftScroller.set(el.scrollLeft > 4);
+    this.showRightScroller.set(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
   }
 
   // Scroll to make the active mode button visible
@@ -205,7 +233,8 @@ export class PlaygroundComponent implements OnInit, AfterViewInit {
 
   // Handle scroll events
   onModeScroll(event: Event): void {
-    // Handle any scroll-related logic here if needed
+    void event;
+    this.syncModeScrollers();
   }
   changeMode(mode:string): void {
     if (this.currentMode === mode) return; // Don't navigate if already on this mode

@@ -1097,7 +1097,9 @@
       </h3>
 
       @if (sessionsLoading()) {
-        <div class="mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+        <div
+          role="status"
+          class="mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
           <mat-progress-spinner mode="indeterminate" [diameter]="16"></mat-progress-spinner>
           <span>{{ 'SETTINGS_SECURITY.LOADING_SESSIONS' | translate }}</span>
         </div>
@@ -1192,7 +1194,9 @@
       </h3>
 
       @if (trustedDevicesLoading()) {
-        <div class="mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+        <div
+          role="status"
+          class="mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
           <mat-progress-spinner mode="indeterminate" [diameter]="16"></mat-progress-spinner>
           <span>{{ 'SETTINGS_SECURITY.LOADING_TRUSTED' | translate }}</span>
         </div>
@@ -1364,7 +1368,9 @@
       </h3>
 
       @if (activityLoading()) {
-        <div class="mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+        <div
+          role="status"
+          class="mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
           <mat-progress-spinner mode="indeterminate" [diameter]="16"></mat-progress-spinner>
           <span>{{ 'SETTINGS_SECURITY.LOADING_ACTIVITY' | translate }}</span>
         </div>

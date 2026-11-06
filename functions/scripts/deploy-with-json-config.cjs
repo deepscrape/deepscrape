@@ -30,6 +30,19 @@ if (!fs.existsSync(configPath)) {
   process.exit(1)
 }
 
+// A publish REPLACES the whole secret, so the guard that matters is "never lose a
+// key". Runs before the set; every entry point (`npm run deploy`, `make
+// deploy-json`, `make deploy-functions`, `make deploy-all`) comes through here.
+const guard = spawnSync(
+  process.execPath,
+  [path.join(__dirname, "check-env-json.cjs")],
+  {cwd: rootDir, stdio: "inherit"},
+)
+if (guard.status !== 0) {
+  console.error("Refusing to publish: this JSON would drop keys production has.")
+  process.exit(guard.status || 1)
+}
+
 const run = (command, args, extraEnv = {}) => {
   const result = spawnSync(command, args, {
     cwd: rootDir,

@@ -1,0 +1,195 @@
+name: Release webrain
+
+# Ships the two coupled artifacts from ONE released engine image:
+#
+#   deepscrape-webrain             the shared engine SERVICE   (pulled at deploy)
+#   deepscrape-browser-session     the per-session machine IMAGE (Fly pulls it)
+#
+# They must move together. The adapter Dockerfile does `FROM ${WEBRAIN_IMAGE}`
+# and `COPY --from` the engine, so a session machine built from yesterday's
+# adapter runs yesterday's engine even after the service is upgraded — the same
+# class of drift as the hand-built tag this workflow replaces.
+#
+# `org` selects the REGISTRY the adapter lands in. All four apps live in `personal`
+# today — including the engine — so this is one token; the input exists because
+# Fly's registry is org-scoped and app names are globally unique, so a second
+# environment's adapter would need its own app in that org.
+# The engine itself is one app, `deepscrape-webrain`.
+#
+# This workflow never touches secrets. The one value it cannot publish is
+# `BROWSER_MACHINE_IMAGE` — it lives inside FUNCTIONS_ENV_JSON, whose values are
+# not in the checkout. The summary at the end prints the exact line to set.
+#
+# TRIGGER. A git TAG, not a merge. A merge to `main` carries no information about
+# which webrain release to ship — the version would have to be read back out of
+# fly.toml or a commit message, and every unrelated merge would republish a 2 GB
+# adapter under the same tag. A tag push states the version in the event, cannot
+# be re-fireable with a different one, and is one command:
+#
+#   git tag webrain-0.17.1 && git push origin webrain-0.17.1
+#
+# `workflow_dispatch` stays as the escape hatch — re-running an existing version,
+# publishing to another org, or building the adapter without touching the service.
+# Deliberately NOT `pull_request`: that would publish unmerged code to the
+# production registry, from a ref whose secrets a fork PR never receives.
+
+on:
+  push:
+    tags:
+      - "webrain-*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released ghcr tag, e.g. 0.17.1"
+        required: true
+      org:
+        description: "Registry org for the adapter image"
+        required: true
+        default: personal
+        type: choice
+        options:
+          - personal
+          - softmind
+      adapter_app:
+        description: "Fly app that receives the adapter image (must exist in that org)"
+        required: true
+        default: deepscrape-browser-session
+      deploy_engine:
+        description: "Also deploy the shared engine service (production only)"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+# One release at a time: two in flight would race on the same registry tag.
+concurrency:
+  group: webrain-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # The adapter bakes chromium + obscura + lightpanda on top of the engine.
+    timeout-minutes: 60
+    env:
+      # `inputs.*` are null on a tag push, so anything read from them needs a
+      # fallback that is still correct when nobody typed anything.
+      FLY_ORG: ${{ inputs.org || 'personal' }}
+      FLY_API_TOKEN: ${{ (inputs.org || 'personal') == 'softmind' && secrets.FLY_API_TOKEN_PROD || secrets.FLY_API_TOKEN }}
+      # Only needed if the ghcr package is private. Read:packages is enough.
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # ENGINE and ADAPTER are COMPUTED, never declared. On a tag push the version
+      # is the tag name, on a dispatch it is the input — a job-level `env` entry
+      # could only express one of those, and a blank one produces the tag
+      # `ghcr.io/prokopis3/webrain:` that fails deep inside `docker build`.
+      # Written to $GITHUB_ENV because every step below reads them from the shell.
+      - name: Resolve the version from the tag or the input
+        run: |
+          version="${{ inputs.version }}"
+          [ -n "$version" ] || version="${GITHUB_REF_NAME#webrain-}"
+          case "$version" in
+            "" | */* | *" "*)
+              echo "unusable version: tag '$GITHUB_REF_NAME', input '${{ inputs.version }}'"
+              exit 1
+              ;;
+          esac
+          {
+            echo "ENGINE=ghcr.io/prokopis3/webrain:$version"
+            echo "ADAPTER=registry.fly.io/${{ inputs.adapter_app || 'deepscrape-browser-session' }}:webrain-$version"
+          } >> "$GITHUB_ENV"
+          echo "resolved version $version"
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Both of these fail later and less clearly if left unchecked: an empty
+      # token surfaces as a 401 from the registry, an empty version as a bad tag.
+      - name: Fail fast on missing inputs
+        run: |
+          test -n "$ENGINE" || { echo "no engine tag"; exit 1; }
+          test -n "$FLY_API_TOKEN" || { echo "no Fly token for org $FLY_ORG"; exit 1; }
+          echo "engine:  $ENGINE"
+          echo "adapter: $ADAPTER"
+
+      - name: Log in to ghcr (only if the package is private)
+        if: env.GHCR_TOKEN != ''
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Log in to the Fly registry
+        run: flyctl auth docker
+
+      # Pull separately so a missing or private tag fails here, with the tag in
+      # the message, instead of inside a multi-stage build.
+      - name: Pull the released engine
+        run: docker pull "$ENGINE"
+
+      - name: Build the adapter on the released engine
+        run: |
+          docker build \
+            --build-arg WEBRAIN_IMAGE="$ENGINE" \
+            -t "$ADAPTER" \
+            -f deploy/browser-session/Dockerfile \
+            deploy/browser-session
+
+      - name: Push the adapter
+        run: docker push "$ADAPTER"
+
+      # The engine service takes its image from deploy/webrain-engine/fly.toml, whose
+      # tag is FLOATING (`registry.fly.io/deepscrape-webrain:webrain`) — the same tag
+      # `make webrain-engine` deploys. So this job has to WRITE that tag first.
+      # Passing `--image` here instead would ship an engine the Makefile path cannot
+      # reproduce, which is the drift this workflow exists to remove.
+      # Both apps are in org `personal`, so the `flyctl auth docker` above already
+      # authorised this push.
+      # `!= 'false'` rather than `== 'true'`: on a tag push the input is null, and a
+      # release tag SHOULD move the service. Only an explicit `false` on a dispatch
+      # builds the adapter without touching the engine.
+      - name: Publish the engine to the floating tag
+        if: inputs.deploy_engine != 'false'
+        run: |
+          docker tag  "$ENGINE" registry.fly.io/deepscrape-webrain:webrain
+          docker push registry.fly.io/deepscrape-webrain:webrain
+
+      - name: Deploy the shared engine
+        if: inputs.deploy_engine != 'false'
+        run: |
+          flyctl deploy \
+            --app deepscrape-webrain \
+            --config deploy/webrain-engine/fly.toml
+
+      # The tag in fly.toml is NOT evidence of what runs: flyctl derives release
+      # names from the app, not the image. Print the machines' image, and prove
+      # reachability — the surface is token-gated, so any status below 500 means
+      # the engine is serving; 000 means nothing answered.
+      - name: Verify what is actually running
+        if: inputs.deploy_engine != 'false'
+        run: |
+          flyctl status --app deepscrape-webrain
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://mcp.deepscrape.dev/ || true)
+          echo "engine answered $code"
+          test "$code" != "000"
+          test "$code" -lt 500
+
+      # The one value this workflow cannot publish, printed where it is read.
+      - name: What still has to be set by hand
+        run: |
+          {
+            echo "### Adapter image pushed"
+            echo ""
+            echo "Set this in functions/.deploy-secrets.json, then publish and restart the BFF:"
+            echo ""
+            echo "\`\`\`"
+            echo "BROWSER_MACHINE_IMAGE=$ADAPTER"
+            echo "\`\`\`"
+            echo ""
+            echo "Publish with \`make env-check && make deploy-json\`."
+            echo "Runtime read, so no rebuild is needed — the BFF restart is the whole rollout."
+          } >> "$GITHUB_STEP_SUMMARY"

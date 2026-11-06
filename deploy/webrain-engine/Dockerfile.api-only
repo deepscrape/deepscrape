@@ -86,7 +86,7 @@
 # engine every future request runs.
 #
 #   docker build -f deploy/webrain-engine/Dockerfile.api-only \
-#     --build-arg WEBRAIN_IMAGE=registry.fly.io/deepscrape-webrain:webrain-2026-10-28 \
+#     --build-arg WEBRAIN_IMAGE=registry.fly.io/deepscrape-webrain:webrain \
 #     -t registry.fly.io/deepscrape-webrain:webrain-2026-10-28-api .
 #
 # Note the source tag: the API-only image is built FROM an existing engine image,

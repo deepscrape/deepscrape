@@ -81,8 +81,8 @@ flyctl auth docker
 export DOCKER_CLIENT_TIMEOUT=900      # PowerShell: $env:DOCKER_CLIENT_TIMEOUT = 900
 
 docker tag browser-session:local \
-  registry.fly.io/deepscrape-browser-session:browser-session-<date-or-sha>
-docker push registry.fly.io/deepscrape-browser-session:browser-session-<date-or-sha>
+  registry.fly.io/deepscrape-browser-session:webrain-<date-or-sha>
+docker push registry.fly.io/deepscrape-browser-session:webrain-<date-or-sha>
 ```
 
 `DOCKER_CLIENT_TIMEOUT` is a **CLI** env var, not a daemon setting, so it must be set in the

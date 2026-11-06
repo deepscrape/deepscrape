@@ -36,7 +36,7 @@ primary_region = "iad"
   # `git worktree add … v0.12.1`, then `flyctl auth docker` + `docker push`.
   # `release.yml` publishes binaries and manifests only — it does NOT publish a
   # registry image, so this tag is hand-built and hand-pushed.
-  image = "registry.fly.io/deepscrape-webrain:webrain-0.12.1"
+  image = "registry.fly.io/deepscrape-webrain:webrain"
 
 [env]
   # A NON-LOOPBACK bind, which makes the token MANDATORY: webrain refuses to

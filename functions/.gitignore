@@ -20,3 +20,4 @@ dist
 .env.default
 .env.keys
 .deploy-secrets.json
+firebase-*

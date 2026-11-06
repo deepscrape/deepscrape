@@ -195,7 +195,7 @@ jobs:
             --concurrency 40 \
             --cpu-boost \
             --set-env-vars PRODUCTION=true \
-            --set-secrets FUNCTIONS_ENV_JSON=FUNCTIONS_ENV_JSON:latest,FIRE_SERVICE_ACCOUNT_KEY=FIRE_SERVICE_ACCOUNT_KEY:latest \
+            --set-secrets FUNCTIONS_ENV_JSON=FUNCTIONS_ENV_JSON:latest,FIRE_SERVICE_ACCOUNT_KEY=FIRE_SERVICE_ACCOUNT_KEY:latest,VAULT_DATA_KEY=VAULT_DATA_KEY:latest \
             --quiet
 
       # Deploy to Firebase Hosting
@@ -313,4 +313,13 @@ jobs:
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
           COOKIE_SECRET: ${{ secrets.COOKIE_SECRET }}
           CSRF_COOKIE_SECRET: ${{ secrets.CSRF_COOKIE_SECRET }}
+
+      # CI cannot publish the secret — the values are not in the checkout, only
+      # the live version has them. What it CAN prove is that production still
+      # covers every key this repo expects, so a truncated or stale secret turns
+      # a merge red instead of breaking the deployed platform silently.
+      - name: Verify live FUNCTIONS_ENV_JSON against env-keys.json
+        if: needs.detect_changes.outputs.functions == 'true'
+        working-directory: ./functions
+        run: bun scripts/check-env-json.cjs --live
 

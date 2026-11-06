@@ -5,23 +5,35 @@ BFF_DIR := bff
 IP2LOCATION_BIN := $(FUNCTIONS_DIR)/databases/IP2LOCATION-LITE-DB11.BIN
 MIGRATE_ENV_SCRIPT := $(FUNCTIONS_DIR)/scripts/migrate-env-to-json.cjs
 DEPLOY_JSON_SCRIPT := $(FUNCTIONS_DIR)/scripts/deploy-with-json-config.cjs
-
+ENGINE_SRC := ghcr.io/prokopis3/webrain:0.17.1
 BFF_DIR := bff
 HOSTING_PROJECT := libnet-d76db
 
-.PHONY: help lfs-install lfs-pull lfs-status lfs-refresh lfs-stage-bin ip2location-check ip2location-refresh ip2location-sync env-json deploy-json deploy-bff deploy-hosting deploy-hosting-marketing deploy-hosting-dashboard deploy-hosting-console deploy-functions deploy-all test-bff build hosting bff-image bff-local bff-push bff-deploy bff-release
+.PHONY: help lfs-install lfs-pull lfs-status lfs-refresh lfs-stage-bin ip2location-check ip2location-refresh ip2location-sync env-json env-check env-keys deploy-json deploy-bff deploy-hosting deploy-hosting-marketing deploy-hosting-dashboard deploy-hosting-console deploy-functions deploy-all test-bff test-functions test dev dev-bff webrain-engine build hosting bff-image bff-local bff-push bff-deploy bff-release
 
 help:
 	@echo "Available targets:"
+	@echo "  make dev                 - Angular dev server on :4200 (regenerates environment.ts first)"
+	@echo "  make dev-bff             - BFF (Elysia) with --watch on :8080"
+	@echo "  make test                - Angular unit tests, headless (what CI runs)"
+	@echo "  make test-functions      - Functions unit tests (tsx --test, 1000+ specs)"
+	@echo "  make test-bff            - Run the BFF (Bun + Elysia) unit tests"
+	@echo ""
+	@echo "  make env-check           - Guard: does the deploy JSON drop a key production has?"
+	@echo "  make env-keys            - Rewrite functions/env-keys.json from that JSON (commit it)"
+	@echo "  make env-json            - Run functions migrate-env-to-json script"
+	@echo ""
+	@echo "  make webrain-engine      - Deploy the shared engine (the image pinned in fly.toml)"
+	@echo ""
 	@echo "  make lfs-install         - Install Git LFS hooks locally"
 	@echo "  make lfs-pull            - Pull LFS files for the current checkout"
 	@echo "  make lfs-status          - Show Git LFS tracked files status"
 	@echo "  make lfs-refresh         - Install LFS hooks and pull the latest LFS content"
 	@echo "  make lfs-stage-bin       - Stage the local IP2Location BIN into Git LFS/Git index"
 	@echo "  make ip2location-check   - Verify the IP2Location BIN exists locally"
-	@echo "  make env-json            - Run functions migrate-env-to-json script"
 	@echo "  make ip2location-refresh - Pull LFS BIN and sync checksum/upload via migrate script"
 	@echo "  make ip2location-sync    - Stage changed local BIN in Git LFS and sync checksum/upload"
+	@echo ""
 	@echo "  make deploy-json         - Push FUNCTIONS_ENV_JSON and deploy using deploy-with-json-config script"
 	@echo "  make deploy-bff          - Build+push the BFF image and deploy it to Cloud Run"
 	@echo "  make deploy-hosting      - Deploy all three Hosting sites at once"
@@ -29,7 +41,6 @@ help:
 	@echo "  make deploy-hosting-console   - Deploy only console.deepscrape.dev"
 	@echo "  make deploy-hosting-marketing - Deploy only the apex, deepscrape.dev (301s)"
 	@echo "  make deploy-functions    - Push FUNCTIONS_ENV_JSON and deploy the functions"
-	@echo "  make test-bff            - Run the BFF (Bun + Elysia) unit tests"
 	@echo "  make deploy-all          - functions + BFF + hosting (JSON env first)"
 	@echo ""
 	@echo "Web app + BFF:"
@@ -139,3 +150,46 @@ bff-deploy:
 
 bff-release: build hosting bff-deploy
 	@echo "Web app and BFF released"
+
+# --- local dev + the config guard ---------------------------------------------
+# Two terminals: `make dev` (Angular, :4200) and `make dev-bff` (Elysia, :8080).
+# Both read the dotenvx files, so a value is changed in one place, not two.
+
+dev:
+	npm run dev
+
+dev-bff:
+	cd "$(BFF_DIR)" && bun run dev
+
+test:
+	npm run test:ci
+
+test-functions:
+	cd "$(FUNCTIONS_DIR)" && npm test
+
+# Publishing FUNCTIONS_ENV_JSON REPLACES the whole secret, so the only question
+# worth asking first is "does this drop a key production has?". Same script the
+# deploy runs before `secrets:set`, and the one CI runs against the live secret.
+env-check:
+	cd "$(FUNCTIONS_DIR)" && node scripts/check-env-json.cjs
+
+# Only after an intended removal, in the same commit as the removal.
+env-keys:
+	cd "$(FUNCTIONS_DIR)" && node scripts/check-env-json.cjs --generate
+
+# --- the shared webrain engine (Fly) -----------------------------------------
+# The image comes from deploy/webrain-engine/fly.toml and nowhere else, so there is
+# one place to change it and no flag to disagree with it. `flyctl status` afterwards
+# is the only evidence of what shipped — flyctl names releases after the app, not
+# the image.
+#
+# `flyctl auth docker` is a step, not a formality: the credential it mints expires in
+# about seven minutes, and a stale one makes the registry answer "app repository not
+# found" — which reads as a missing app rather than an expired token.
+webrain-engine:
+	docker pull "$(ENGINE_SRC)"
+	docker tag "$(ENGINE_SRC)" registry.fly.io/deepscrape-webrain:webrain
+	flyctl auth docker
+	docker push registry.fly.io/deepscrape-webrain:webrain
+	flyctl deploy --app deepscrape-webrain --config deploy/webrain-engine/fly.toml
+	flyctl status --app deepscrape-webrain

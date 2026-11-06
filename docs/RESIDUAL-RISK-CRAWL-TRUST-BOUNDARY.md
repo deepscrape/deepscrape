@@ -91,7 +91,7 @@ malformed"*).
 
 ```ts
 env.PRODUCTION === "true"
-  ? env.API_ARACHNEFLY_URL || "https://arachnefly.fly.dev"
+  ? env.API_ARACHNEFLY_URL || "https://arachne.deepscrape.dev"
   : "http://localhost:8080"
 ```
 

@@ -224,7 +224,7 @@ the loss more visible.
   expired `idleDeadline`, and none exists).
 - The worker pool has never been run against a live engine (needs Redis + a worker).
 - `BROWSER_MACHINE_IMAGE` must be repinned to the rebuilt adapter
-  (`registry.fly.io/deepscrape-browser-session:browser-session-2026-10-15`). **This is a
+  (`registry.fly.io/deepscrape-browser-session:webrain-2026-10-15`). **This is a
   secret write and cannot be done by the agent** — the security constraint forbids reading
   or writing those values.
 

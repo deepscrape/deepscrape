@@ -1,6 +1,6 @@
 # 26 — Chat frontend: build our own, in place
 
-Status: **plan; P0, P1 and the P2 status half applied.** P2 payload and P3 are open.
+Status: **plan; P0, P1, P2, P3 (text) and P4 applied.** P2 payload is open.
 Written 2026-10-30. Branch `next`.
 Answers: *"is it better to build our own chat frontend, in a new Angular library?"*
 
@@ -190,7 +190,49 @@ two amber notices survived into the next turn. Moved to `submit()`, the one path
 line finally names something. Stored transcripts written before the field normalise to `ok` on
 restore. Still open: `serp`/`search` URLs as links, and the payload itself, which §3b refuses.
 
-**P3 — attachments.** Reuse `POST /api/storage/payload`; the composer gains a picker, not a new service.
+**P3 — attachments (text, 2026-10-30).** The composer reads picked files with `File.text()` and
+folds them into the user turn as `<file name="…">` blocks, capped at 12,000 characters and four
+files. Tag-delimited rather than fenced: a file containing ``` would close a fence and turn the rest
+of the prompt into prose. A binary file decodes to replacement characters and is skipped, not
+clipped — twelve thousand of them is a prompt that costs money and says nothing.
+
+This is deliberately NOT `POST /api/storage/payload`. That route stores an object and returns a key;
+nothing in the chat can read a key back into a prompt, so using it here would have produced an
+attachment that reached storage and never reached the model. It stays the upgrade path for the two
+cases this cannot serve: files too large to inline, and a transcript that keeps attachments as
+addressable objects instead of folding them into the message text.
+
+**P4 — composer and rail (applied 2026-10-30).** The controls that decide a request moved out of the
+top bar and beside Send, into one row inside the input: attach/plugins, mode, model, effort, tools,
+send. Each is a 36px icon button with its value beside it from `sm` up, so the row reads as
+`Agent · deepseek-chat · default · 14` on a desktop and as icons on a phone.
+
+| Control | What it actually does |
+|---|---|
+| Mode (Ask / Plan / Agent) | `toolsForMode` narrows the offer list: Ask offers nothing, Plan drops everything with `requiresConfirm`, Agent is the old behaviour and the default. |
+| Model | The same `models()`/`modelAI` the house `app-dropdown` bound, re-rendered as a menu because that picker paints a floating label above its trigger, onto the textarea. |
+| Thinking effort | `reasoningParams(vendor, model, effort)` — DeepSeek `off` sends `thinking:{type:'disabled'}`; OpenAI o-series and gpt-5 take `reasoning_effort`; every other combination sends nothing. |
+| Tools | Checkboxes over the tier's list. What the user unchecks is REFUSED, not merely hidden. |
+
+Three rules this phase had to keep:
+
+1. **A mode may only narrow.** `resolveToolCall` is still the trust boundary, but a model can name a
+   tool it was never offered, so `execute()` gained a second check: a `requiresConfirm` tool in
+   non-agent mode is refused as text the model can read. Offering less without refusing is theatre.
+2. **Unchecked means refused.** `sessionTools` is the array `stream()` passes, so the offer list, the
+   panel's count, and the request cannot disagree.
+3. **The rail is page state.** It sits beside the app's own nav inside `/chatai`, inline at `lg` and
+   an overlay below it (a rail that stays inline on a phone squeezes the conversation), 300ms
+   width transition, the repo's `.scrollbar`, and it renders 12 conversations then grows on scroll.
+
+Also removed: `DropdownComponent` and `FormControlPipe` are no longer imported by this component.
+
+Two things this phase did NOT do, and why: **no per-tool schema validation** (that is vendor `strict`
+mode, and our schemas do not yet set `additionalProperties: false` and mark every property required),
+and **no reasoning display** — the effort switch exists partly because DeepSeek requires
+`reasoning_content` to be replayed on every tool round while this client carries none, so turning it
+OFF is the fix that costs nothing. Surfacing the reasoning to the user is a separate phase that has
+to decide retention first (§5).
 
 ## 8. Gates for every phase
 

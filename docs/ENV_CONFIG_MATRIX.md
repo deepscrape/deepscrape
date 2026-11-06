@@ -150,7 +150,7 @@ PRODUCTION === "true" ? <the configured URL> : <a localhost URL>
 
 | Service | Production | Local dev | Where the default lives |
 |---|---|---|---|
-| **arachnefly** | `API_ARACHNEFLY_URL` (default `https://arachnefly.fly.dev`) | `http://localhost:8080` | `config/upstreams.ts` |
+| **arachnefly** | `API_ARACHNEFLY_URL` (default `https://arachne.deepscrape.dev`) | `http://localhost:8080` | `config/upstreams.ts` |
 | **crawl agent** (crawl4ai) | `API_CRAWL4AI_URL` (default `https://crawlagent.fly.dev`) | `http://localhost:8000` | `config/upstreams.ts` |
 | **webrain** | `WEBRAIN_MCP_URL` — **no default, by policy** | `http://127.0.0.1:9223` (suggested) | `config/env.ts` |
 | **browser machine image** | `BROWSER_MACHINE_IMAGE` — **no default, by policy** | *the same value* — see §4.1 | `config/env.ts` |

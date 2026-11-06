@@ -35,6 +35,23 @@ The mood should say: **the fastest, most trustworthy web-data engine, wrapped in
 
 *Contrast note:* text is always `gray-900`/`white` for headings and `gray-600`/`gray-400` for body — AA compliant in both modes. Never introduce random blues/purples; when an interaction needs emphasis reach for cyan→rose first.
 
+**One meaning per hue.** The app reuses a small set of accents, and each owns exactly one job — a
+second meaning is how a palette starts to lie. The table below is what the code actually does
+(counted in `docs/UI-CONSISTENCY-AUDIT.md` §13), not what it was meant to do:
+
+| Hue | Means | Never |
+|---|---|---|
+| sky | **interactive** — links, focus rings, the button you press (`.cc-input` focus is `#0ea5e9`) | brand decoration, a status |
+| cyan | **brand and live** — the logo, the loading bar, "this is running right now" | an ordinary action |
+| violet | plans, credits, entitlement; also "scheduled" in the status map | an ordinary action |
+| rose | danger, failure, a thing that will be destroyed | a decorative gradient stop |
+| amber | waiting, paused, needs attention | an error |
+| emerald | finished successfully | in progress |
+
+Two blues, and the split is the point: **sky is what you click, cyan is what the product is.** A
+surface that needs a seventh hue needs a different *surface*, not a new colour.
+
+
 ---
 
 ## 3. Typography Rules

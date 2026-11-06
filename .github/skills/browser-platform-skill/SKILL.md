@@ -587,7 +587,7 @@ not by reading a deploy log:
 | custom domain | `mcp.deepscrape.dev` — Fly cert + Cloudflare **DNS-only** A `66.241.124.140` / AAAA `2a09:8280:1::1a6:1b87:0`. Orange-cloud proxying would intercept the ACME HTTP-01 challenge and the cert would never issue; `agent`/`ip` can stay proxied only because they use Fly's `flydns.net` CNAME delegation (DNS-01) instead |
 | engine app | `deepscrape-webrain` — `WEBRAIN_HTTP_TOKEN` set as a `fly secrets` entry |
 | engine image | `registry.fly.io/deepscrape-webrain:webrain-2026-10-04` |
-| **`BROWSER_MACHINE_IMAGE`** | **`registry.fly.io/deepscrape-browser-session:browser-session-2026-10-04`** |
+| **`BROWSER_MACHINE_IMAGE`** | **`registry.fly.io/deepscrape-browser-session:webrain-2026-10-04`** |
 | adapter app | `deepscrape-browser-session` — an IMAGE HOLDER and never deployed; arachnefly creates machines in it |
 
 Probes against the live engine: `GET /health` → **200**, `GET /mcp` → **401**, `GET /` → **401**. So
